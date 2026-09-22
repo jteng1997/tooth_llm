@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "symptoms",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "pain_present",
+    "swelling",
+    "fever",
+    "difficulty_swallowing_or_breathing",
+    "recent_trauma"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "pain_present": { "type": ["boolean", "null"] },
+    "pain_triggers": {
+      "type": ["array", "null"],
+      "items": {
+        "enum": ["cold", "hot", "sweet", "biting", "spontaneous", "unknown"]
+      },
+      "uniqueItems": true
+    },
+    "pain_lingers_over_30s": { "type": ["boolean", "null"] },
+    "pain_wakes_at_night": { "type": ["boolean", "null"] },
+    "pain_on_biting": { "type": ["boolean", "null"] },
+    "swelling": { "type": ["boolean", "null"] },
+    "fever": { "type": ["boolean", "null"] },
+    "difficulty_swallowing_or_breathing": { "type": ["boolean", "null"] },
+    "recent_trauma": { "type": ["boolean", "null"] },
+    "bleeding_gums": { "type": ["boolean", "null"] },
+    "location": {
+      "type": ["string", "null"],
+      "enum": ["upper_left", "upper_right", "lower_left", "lower_right",
+               "front", "generalised", "unknown", null]
+    },
+    "duration_days": { "type": ["integer", "null"], "minimum": 0 },
+    "notes": { "type": ["string", "null"] }
+  }
+}

@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dental screening demo</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:wght@600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400&display=swap">
+<style>
+  :root{
+    --ground:#F4F6F7; --surface:#FFFFFF; --ink:#16232B; --muted:#5B6C76;
+    --rule:#DCE3E7; --accent:#0E5E6E; --accent-soft:#E2EEF0;
+    --emergency:#A8503C; --urgent:#B0762A; --soon:#0E5E6E; --routine:#2F7D5B; --retake:#5B6C76;
+    --display:"Spectral",Georgia,serif; --body:"IBM Plex Sans",system-ui,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{--ground:#0F1519; --surface:#161F25; --ink:#E7EDF1; --muted:#95A5AF;
+          --rule:#25323A; --accent:#5FB9C8; --accent-soft:#16302F;
+          --emergency:#D9846F; --urgent:#D7A055; --soon:#5FB9C8; --routine:#5FB98C;}
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--body);line-height:1.6;}
+  .wrap{max-width:900px;margin:0 auto;padding:2rem 20px 4rem;}
+  h1{font-family:var(--display);font-size:1.9rem;margin:0 0 .2rem;}
+  .sub{color:var(--muted);margin:0 0 1.6rem;}
+  h2{font-family:var(--display);font-size:1.25rem;margin:0 0 .6rem;}
+  section{background:var(--surface);border:1px solid var(--rule);border-radius:4px;padding:1.1rem 1.2rem;margin-bottom:1.1rem;}
+  label{display:block;font-size:.85rem;font-weight:500;margin-bottom:.35rem;}
+  .row{display:flex;gap:1rem;flex-wrap:wrap;}
+  .row > div{flex:1 1 240px;}
+  input[type=file]{width:100%;font-size:.85rem;}
+  button{background:var(--accent);color:#fff;border:0;border-radius:3px;padding:.6rem 1.1rem;font:inherit;font-weight:600;cursor:pointer;}
+  button:disabled{opacity:.5;cursor:default;}
+  button.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent);}
+  .views{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem;}
+  .view img{width:100%;border:1px solid var(--rule);border-radius:3px;display:block;}
+  .meta{font-family:var(--mono);font-size:.72rem;color:var(--muted);margin-top:.3rem;}
+  .crops{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.6rem;}
+  .crop{width:104px;}
+  .crop img{width:100%;border:2px solid var(--emergency);border-radius:3px;display:block;}
+  .crop span{font-family:var(--mono);font-size:.66rem;color:var(--muted);display:block;}
+  .chat{display:flex;flex-direction:column;gap:.55rem;margin-bottom:.8rem;}
+  .msg{padding:.5rem .75rem;border-radius:10px;max-width:85%;font-size:.92rem;}
+  .msg.bot{background:var(--accent-soft);align-self:flex-start;}
+  .msg.me{background:var(--rule);align-self:flex-end;}
+  .ask{display:flex;gap:.5rem;}
+  .ask input{flex:1;padding:.55rem .7rem;border:1px solid var(--rule);border-radius:3px;background:var(--ground);color:var(--ink);font:inherit;}
+  .badge{display:inline-block;padding:.2rem .6rem;border-radius:999px;color:#fff;font-size:.75rem;font-weight:600;letter-spacing:.04em;}
+  .teeth{font-family:var(--mono);font-size:.8rem;color:var(--muted);margin-top:.4rem;}
+  .note{font-size:.8rem;color:var(--muted);}
+  pre{font-family:var(--mono);font-size:.72rem;background:var(--ground);border:1px solid var(--rule);border-radius:3px;padding:.7rem;overflow-x:auto;max-height:260px;}
+  .spinner{font-size:.85rem;color:var(--muted);}
+  [hidden]{display:none !important;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Dental screening demo</h1>
+  <p class="sub">Upload an upper and a lower occlusal photo. Everything runs on this machine — vision models locally, Qwen3 14B through Ollama.</p>
+
+  <section id="upload-card">
+    <h2>1 · Photos</h2>
+    <div class="row">
+      <div><label for="upper">Upper occlusal</label><input id="upper" type="file" accept="image/*"></div>
+      <div><label for="lower">Lower occlusal</label><input id="lower" type="file" accept="image/*"></div>
+    </div>
+    <p style="margin-top:.9rem"><button id="analyse">Analyse photos</button>
+      <span id="upload-status" class="spinner"></span></p>
+  </section>
+
+  <section id="vision-card" hidden>
+    <h2>2 · What the vision models found</h2>
+    <div class="views" id="views"></div>
+    <p class="note" id="vision-note"></p>
+    <details style="margin-top:.6rem"><summary class="note">findings JSON</summary><pre id="findings-json"></pre></details>
+  </section>
+
+  <section id="interview-card" hidden>
+    <h2>3 · A few questions</h2>
+    <div class="chat" id="chat"></div>
+    <div class="ask">
+      <input id="answer" placeholder="Type your answer…" autocomplete="off">
+      <button id="send">Send</button>
+      <button id="finish" class="ghost">Skip to result</button>
+    </div>
+    <p class="note">The questions stop by themselves once there's enough to go on. Answers are recorded only when your own words support them; anything you weren't asked stays blank.</p>
+  </section>
+
+  <section id="result-card" hidden>
+    <h2>4 · Result</h2>
+    <p><span id="badge" class="badge"></span> <strong id="headline"></strong></p>
+    <p id="explanation"></p>
+    <p class="teeth" id="flagged"></p>
+    <div class="ask" style="margin-top:.8rem">
+      <input id="question" placeholder="Ask a follow-up question…" autocomplete="off">
+      <button id="ask">Ask</button>
+    </div>
+    <div class="chat" id="followups" style="margin-top:.8rem"></div>
+    <details style="margin-top:.6rem"><summary class="note">symptoms + assessment JSON</summary><pre id="result-json"></pre></details>
+    <p class="note" style="margin-top:.8rem">Screening aid only. The urgency comes from fixed rules in Python, not from the language model. Not a diagnosis, and the clinical content has not yet been reviewed by a dentist.</p>
+  </section>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let session = null;
+
+function bubble(container, text, who){
+  const div = document.createElement("div");
+  div.className = "msg " + who;
+  div.textContent = text;
+  $(container).appendChild(div);
+  div.scrollIntoView({block:"nearest"});
+}
+
+async function post(url, form){
+  const res = await fetch(url, {method:"POST", body:form});
+  if(!res.ok) throw new Error((await res.json().catch(()=>({detail:res.statusText}))).detail);
+  return res.json();
+}
+
+// Start over: new photos mean a new screening, so nothing from the last one
+// may linger on the page or in the server's memory.
+let generation = 0;  // bumped on every reset; late responses from before it are dropped
+
+function resetPage(){
+  generation++;
+  if(session){
+    const form = new FormData(); form.append("session", session);
+    fetch("/api/reset", {method:"POST", body:form}).catch(() => {});
+  }
+  session = null;
+  for(const id of ["views", "chat", "followups"]) $(id).innerHTML = "";
+  for(const id of ["vision-note", "findings-json", "badge", "headline", "explanation",
+                   "flagged", "result-json", "upload-status"]) $(id).textContent = "";
+  $("badge").style.background = "";
+  for(const id of ["vision-card", "interview-card", "result-card"]) $(id).hidden = true;
+  $("answer").value = ""; $("question").value = "";
+  setInterviewEnabled(true);
+}
+
+function setInterviewEnabled(on){
+  for(const id of ["answer", "send", "finish"]) $(id).disabled = !on;
+}
+
+$("upper").addEventListener("change", resetPage);
+$("lower").addEventListener("change", resetPage);
+
+$("analyse").onclick = async () => {
+  const form = new FormData();
+  if($("upper").files[0]) form.append("upper", $("upper").files[0]);
+  if($("lower").files[0]) form.append("lower", $("lower").files[0]);
+  if(![...form.keys()].length){ $("upload-status").textContent = "Pick at least one photo."; return; }
+
+  resetPage();
+  const mine = generation;
+  $("analyse").disabled = true;
+  $("upload-status").textContent = "Segmenting teeth and checking for caries… (about a minute)";
+  try{
+    const data = await post("/api/analyse", form);
+    if(mine !== generation){  // new photos were picked while this ran
+      const stale = new FormData(); stale.append("session", data.session);
+      fetch("/api/reset", {method:"POST", body:stale}).catch(() => {});
+      return;
+    }
+    session = data.session;
+    renderVision(data);
+    $("vision-card").hidden = false;
+    $("interview-card").hidden = false;
+    bubble("chat", data.question, "bot");
+    $("upload-status").textContent = "";
+    $("answer").focus();
+  }catch(err){
+    $("upload-status").textContent = "Failed: " + err.message;
+  }finally{
+    $("analyse").disabled = false;
+  }
+};
+
+function renderVision(data){
+  $("views").innerHTML = "";
+  let flaggedCount = 0;
+  for(const [view, info] of Object.entries(data.views)){
+    flaggedCount += info.crops.length;
+    const box = document.createElement("div");
+    box.className = "view";
+    const reasons = info.quality.reasons.length ? info.quality.reasons.join(", ") : "no issues";
+    box.innerHTML = `<img src="${info.overlay}" alt="${view} arch with each tooth outlined and numbered">
+      <div class="meta">${view} · ${info.teeth_detected} teeth · ${reasons}</div>`;
+    if(info.crops.length){
+      const strip = document.createElement("div");
+      strip.className = "crops";
+      for(const crop of info.crops){
+        const c = document.createElement("div");
+        c.className = "crop";
+        c.innerHTML = `<img src="${crop.image}" alt="tooth ${crop.fdi}">
+          <span>${crop.fdi} · ${crop.confidence.toFixed(2)}</span><span>${crop.name}</span>`;
+        strip.appendChild(c);
+      }
+      box.appendChild(strip);
+    }
+    $("views").appendChild(box);
+  }
+  $("vision-note").textContent = flaggedCount
+    ? `${flaggedCount} ${flaggedCount === 1 ? "tooth" : "teeth"} flagged for a closer look. Boxes mark what the detector reacted to.`
+    : "No teeth flagged by the caries detector.";
+  $("findings-json").textContent = JSON.stringify(data.findings, null, 2);
+}
+
+$("send").onclick = async () => {
+  const text = $("answer").value.trim();
+  if(!text || !session) return;
+  const mine = session;
+  bubble("chat", text, "me");
+  $("answer").value = "";
+  setInterviewEnabled(false);
+  try{
+    const form = new FormData(); form.append("session", mine); form.append("message", text);
+    const data = await post("/api/answer", form);
+    if(mine !== session) return;  // page was reset while waiting
+    if(data.done){
+      bubble("chat", "Thanks — that's everything I need.", "bot");
+      await showResult();
+      return;
+    }
+    bubble("chat", data.question, "bot");
+    setInterviewEnabled(true);
+    $("answer").focus();
+  }catch(err){
+    bubble("chat", "Error: " + err.message, "bot");
+    setInterviewEnabled(true);
+  }
+};
+$("answer").addEventListener("keydown", e => { if(e.key === "Enter" && !$("send").disabled) $("send").click(); });
+
+$("finish").onclick = async () => {
+  if(!session) return;
+  setInterviewEnabled(false);
+  await showResult();
+};
+
+async function showResult(){
+  const mine = session;
+  bubble("chat", "Working out your result…", "bot");
+  try{
+    const form = new FormData(); form.append("session", mine);
+    const data = await post("/api/result", form);
+    if(mine !== session) return;
+    const urgency = data.assessment.urgency;
+    $("badge").textContent = urgency;
+    $("badge").style.background = `var(--${urgency.toLowerCase()})`;
+    $("headline").textContent = data.assessment.headline;
+    $("explanation").textContent = data.explanation;
+    $("flagged").textContent = data.assessment.flagged_teeth.length
+      ? "Flagged teeth: " + data.assessment.flagged_teeth.join(", ")
+      : "No teeth flagged.";
+    $("result-json").textContent = JSON.stringify(
+      {symptoms: data.symptoms, assessment: data.assessment}, null, 2);
+    $("result-card").hidden = false;
+    $("result-card").scrollIntoView({behavior:"smooth", block:"start"});
+  }catch(err){
+    bubble("chat", "Error: " + err.message, "bot");
+    setInterviewEnabled(true);  // let them retry; the interview itself isn't lost
+  }
+}
+
+$("ask").onclick = async () => {
+  const text = $("question").value.trim();
+  if(!text || !session) return;
+  bubble("followups", text, "me");
+  $("question").value = "";
+  $("ask").disabled = true;
+  try{
+    const form = new FormData(); form.append("session", session); form.append("message", text);
+    const data = await post("/api/ask", form);
+    bubble("followups", data.answer, "bot");
+  }catch(err){ bubble("followups", "Error: " + err.message, "bot"); }
+  finally{ $("ask").disabled = false; $("question").focus(); }
+};
+$("question").addEventListener("keydown", e => { if(e.key === "Enter") $("ask").click(); });
+</script>
+</body>
+</html>

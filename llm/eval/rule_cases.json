@@ -1,0 +1,234 @@
+{
+  "_comment": "Seed set. Expand to 50-100. dentist_label starts empty; the reviewing dentist fills it in blind, without seeing expected_urgency.",
+  "_good_findings": {
+    "image_quality": {"upper": {"usable": true, "reasons": []},
+                      "lower": {"usable": true, "reasons": []}},
+    "arches": {"upper": {"present": true, "teeth_detected": 14},
+               "lower": {"present": true, "teeth_detected": 14}},
+    "teeth": {}
+  },
+  "cases": [
+    {
+      "id": "C01",
+      "note": "swelling -> emergency regardless of clean photo",
+      "findings_base": "_good_findings",
+      "teeth": {},
+      "symptoms": {"swelling": true, "pain_present": true},
+      "expected_urgency": "EMERGENCY",
+      "expected_rule": "R1",
+      "dentist_label": ""
+    },
+    {
+      "id": "C02",
+      "note": "breathing difficulty, no other symptom",
+      "findings_base": "_good_findings",
+      "teeth": {},
+      "symptoms": {"difficulty_swallowing_or_breathing": true},
+      "expected_urgency": "EMERGENCY",
+      "expected_rule": "R1",
+      "dentist_label": ""
+    },
+    {
+      "id": "C03",
+      "note": "trauma",
+      "findings_base": "_good_findings",
+      "teeth": {},
+      "symptoms": {"recent_trauma": true},
+      "expected_urgency": "EMERGENCY",
+      "expected_rule": "R2",
+      "dentist_label": ""
+    },
+    {
+      "id": "C04",
+      "note": "red flag must survive an unusable photo",
+      "findings_base": "_bad_image",
+      "teeth": {},
+      "symptoms": {"swelling": true},
+      "expected_urgency": "EMERGENCY",
+      "expected_rule": "R1",
+      "dentist_label": ""
+    },
+    {
+      "id": "C05",
+      "note": "lingering cold pain, nothing visible",
+      "findings_base": "_good_findings",
+      "teeth": {},
+      "symptoms": {"pain_present": true, "pain_triggers": ["cold"],
+                   "pain_lingers_over_30s": true},
+      "expected_urgency": "URGENT",
+      "expected_rule": "R3",
+      "dentist_label": ""
+    },
+    {
+      "id": "C06",
+      "note": "night pain",
+      "findings_base": "_good_findings",
+      "teeth": {"16": {"present": true, "detections": [{"type": "caries", "confidence": 0.9}]}},
+      "symptoms": {"pain_present": true, "pain_wakes_at_night": true},
+      "expected_urgency": "URGENT",
+      "expected_rule": "R3",
+      "dentist_label": ""
+    },
+    {
+      "id": "C07",
+      "note": "caries + brief cold sensitivity only",
+      "findings_base": "_good_findings",
+      "teeth": {"26": {"present": true, "detections": [{"type": "caries", "confidence": 0.72}]}},
+      "symptoms": {"pain_present": true, "pain_triggers": ["cold"],
+                   "pain_lingers_over_30s": false},
+      "expected_urgency": "URGENT",
+      "expected_rule": "R4",
+      "dentist_label": ""
+    },
+    {
+      "id": "C08",
+      "note": "caries, no symptoms at all",
+      "findings_base": "_good_findings",
+      "teeth": {"36": {"present": true, "detections": [{"type": "caries", "confidence": 0.65}]}},
+      "symptoms": {"pain_present": false},
+      "expected_urgency": "SOON",
+      "expected_rule": "R5",
+      "dentist_label": ""
+    },
+    {
+      "id": "C09",
+      "note": "detection BELOW threshold must not count",
+      "findings_base": "_good_findings",
+      "teeth": {"46": {"present": true, "detections": [{"type": "caries", "confidence": 0.31}]}},
+      "symptoms": {"pain_present": false},
+      "expected_urgency": "ROUTINE",
+      "expected_rule": "R9",
+      "dentist_label": ""
+    },
+    {
+      "id": "C10",
+      "note": "symptoms but nothing visible",
+      "findings_base": "_good_findings",
+      "teeth": {},
+      "symptoms": {"pain_present": true, "pain_triggers": ["sweet"],
+                   "pain_lingers_over_30s": false},
+      "expected_urgency": "SOON",
+      "expected_rule": "R6",
+      "dentist_label": ""
+    },
+    {
+      "id": "C11",
+      "note": "blurry photo, no symptoms -> retake",
+      "findings_base": "_bad_image",
+      "teeth": {},
+      "symptoms": {"pain_present": false},
+      "expected_urgency": "RETAKE",
+      "expected_rule": "R7",
+      "dentist_label": ""
+    },
+    {
+      "id": "C12",
+      "note": "too few teeth detected = cropped arch",
+      "findings_base": "_few_teeth",
+      "teeth": {},
+      "symptoms": {},
+      "expected_urgency": "RETAKE",
+      "expected_rule": "R7",
+      "dentist_label": ""
+    },
+    {
+      "id": "C13",
+      "note": "missing molar, no symptoms",
+      "findings_base": "_good_findings",
+      "teeth": {"36": {"present": false, "detections": []}},
+      "symptoms": {"pain_present": false},
+      "expected_urgency": "SOON",
+      "expected_rule": "R8",
+      "dentist_label": ""
+    },
+    {
+      "id": "C14",
+      "note": "missing wisdom tooth must NOT be flagged",
+      "findings_base": "_good_findings",
+      "teeth": {"38": {"present": false, "detections": []}},
+      "symptoms": {"pain_present": false},
+      "expected_urgency": "ROUTINE",
+      "expected_rule": "R9",
+      "dentist_label": ""
+    },
+    {
+      "id": "C15",
+      "note": "all clear",
+      "findings_base": "_good_findings",
+      "teeth": {"16": {"present": true, "detections": []},
+                "26": {"present": true, "detections": []}},
+      "symptoms": {"pain_present": false, "swelling": false},
+      "expected_urgency": "ROUTINE",
+      "expected_rule": "R9",
+      "dentist_label": ""
+    },
+    {
+      "id": "C16",
+      "note": "no symptoms object at all (user skipped interview)",
+      "findings_base": "_good_findings",
+      "teeth": {"16": {"present": true, "detections": [{"type": "caries", "confidence": 0.88}]}},
+      "symptoms": null,
+      "expected_urgency": "SOON",
+      "expected_rule": "R5",
+      "dentist_label": ""
+    },
+    {
+      "id": "C17",
+      "note": "many teeth affected, no symptoms",
+      "findings_base": "_good_findings",
+      "teeth": {"16": {"present": true, "detections": [{"type": "caries", "confidence": 0.8}]},
+                "26": {"present": true, "detections": [{"type": "caries", "confidence": 0.7}]},
+                "36": {"present": true, "detections": [{"type": "caries", "confidence": 0.9}]},
+                "46": {"present": true, "detections": [{"type": "caries", "confidence": 0.6}]}},
+      "symptoms": {"pain_present": false},
+      "expected_urgency": "SOON",
+      "expected_rule": "R5",
+      "dentist_label": ""
+    },
+    {
+      "id": "C18",
+      "note": "unassigned detection only; no tooth-level finding",
+      "findings_base": "_good_findings",
+      "teeth": {},
+      "unassigned_detections": [{"type": "caries", "confidence": 0.7, "reason": "no_tooth_overlap"}],
+      "symptoms": {"pain_present": false},
+      "expected_urgency": "ROUTINE",
+      "expected_rule": "R9",
+      "dentist_label": ""
+    },
+    {
+      "id": "C19",
+      "note": "restoration is not caries",
+      "findings_base": "_good_findings",
+      "teeth": {"16": {"present": true, "detections": [{"type": "restoration", "confidence": 0.95}]}},
+      "symptoms": {"pain_present": false},
+      "expected_urgency": "ROUTINE",
+      "expected_rule": "R9",
+      "dentist_label": ""
+    },
+    {
+      "id": "C20",
+      "note": "pain on biting with no detection",
+      "findings_base": "_good_findings",
+      "teeth": {},
+      "symptoms": {"pain_present": true, "pain_on_biting": true},
+      "expected_urgency": "URGENT",
+      "expected_rule": "R3",
+      "dentist_label": ""
+    }
+  ],
+  "_bad_image": {
+    "image_quality": {"upper": {"usable": false, "reasons": ["blurry"]},
+                      "lower": {"usable": true, "reasons": []}},
+    "arches": {"upper": {"present": true, "teeth_detected": 12},
+               "lower": {"present": true, "teeth_detected": 14}},
+    "teeth": {}
+  },
+  "_few_teeth": {
+    "image_quality": {"upper": {"usable": true, "reasons": []},
+                      "lower": {"usable": true, "reasons": []}},
+    "arches": {"upper": {"present": true, "teeth_detected": 4},
+               "lower": {"present": true, "teeth_detected": 14}},
+    "teeth": {}
+  }
+}

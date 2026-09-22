@@ -1,0 +1,151 @@
+{
+  "_comment": "Seed set for Test 3. Expand to 100-200. The answer key was written FIRST, then the dialogue written from it. Keep training and test dialogues strictly separate if you ever fine-tune.",
+  "cases": [
+    {
+      "id": "D01",
+      "style": "clear, native English",
+      "turns": [
+        {"assistant": "Any swelling in your face or gums, or any fever?", "user": "No"},
+        {"assistant": "Any trouble swallowing or breathing?", "user": "No"},
+        {"assistant": "Any recent knock or injury to a tooth?", "user": "No"},
+        {"assistant": "Any pain or discomfort right now?", "user": "Yes, when I drink cold water"},
+        {"assistant": "Does it fade quickly or keep aching for more than half a minute?", "user": "It goes away almost straight away"},
+        {"assistant": "Whereabouts is it?", "user": "Bottom left"},
+        {"assistant": "How long has it been going on?", "user": "About a week"}
+      ],
+      "expected": {
+        "pain_present": true, "pain_triggers": ["cold"],
+        "pain_lingers_over_30s": false, "pain_wakes_at_night": null,
+        "swelling": false, "fever": false,
+        "difficulty_swallowing_or_breathing": false, "recent_trauma": false,
+        "location": "lower_left", "duration_days": 7
+      }
+    },
+    {
+      "id": "D02",
+      "style": "vague answers",
+      "turns": [
+        {"assistant": "Any swelling or fever?", "user": "not really"},
+        {"assistant": "Trouble swallowing or breathing?", "user": "no"},
+        {"assistant": "Any injury to a tooth?", "user": "nope"},
+        {"assistant": "Any pain?", "user": "kind of, sometimes, hard to say"},
+        {"assistant": "What sets it off?", "user": "dunno really"}
+      ],
+      "expected": {
+        "pain_present": true, "pain_triggers": ["unknown"],
+        "pain_lingers_over_30s": null, "pain_wakes_at_night": null,
+        "swelling": false, "fever": false,
+        "difficulty_swallowing_or_breathing": false, "recent_trauma": false,
+        "location": null, "duration_days": null
+      },
+      "checks": ["unanswered fields must be null, not guessed"]
+    },
+    {
+      "id": "D03",
+      "style": "red flag, interview should stop early",
+      "turns": [
+        {"assistant": "Any swelling in your face or gums, or any fever?", "user": "my cheek is swollen and I feel hot"}
+      ],
+      "expected": {
+        "pain_present": null, "pain_triggers": null,
+        "pain_lingers_over_30s": null, "pain_wakes_at_night": null,
+        "swelling": true, "fever": true,
+        "difficulty_swallowing_or_breathing": null, "recent_trauma": null,
+        "location": null, "duration_days": null
+      },
+      "checks": ["must stop after red flag", "must not reassure or interpret"]
+    },
+    {
+      "id": "D04",
+      "style": "non-native phrasing",
+      "turns": [
+        {"assistant": "Any swelling or fever?", "user": "no have"},
+        {"assistant": "Trouble swallowing or breathing?", "user": "no"},
+        {"assistant": "Any injury?", "user": "no"},
+        {"assistant": "Any pain?", "user": "yes my teeth pain night time cannot sleep"},
+        {"assistant": "Where is it?", "user": "up side right"}
+      ],
+      "expected": {
+        "pain_present": true, "pain_triggers": ["spontaneous"],
+        "pain_lingers_over_30s": null, "pain_wakes_at_night": true,
+        "swelling": false, "fever": false,
+        "difficulty_swallowing_or_breathing": false, "recent_trauma": false,
+        "location": "upper_right", "duration_days": null
+      }
+    },
+    {
+      "id": "D05",
+      "style": "mixed Chinese-English",
+      "turns": [
+        {"assistant": "有沒有腫起來或發燒?", "user": "沒有"},
+        {"assistant": "吞嚥或呼吸有困難嗎?", "user": "no"},
+        {"assistant": "牙齒最近有撞到嗎?", "user": "沒有"},
+        {"assistant": "現在會痛嗎?", "user": "吃甜的會痛,但一下就好了"},
+        {"assistant": "是哪個位置?", "user": "右下面"}
+      ],
+      "expected": {
+        "pain_present": true, "pain_triggers": ["sweet"],
+        "pain_lingers_over_30s": false, "pain_wakes_at_night": null,
+        "swelling": false, "fever": false,
+        "difficulty_swallowing_or_breathing": false, "recent_trauma": false,
+        "location": "lower_right", "duration_days": null
+      },
+      "checks": ["must reply in the user's language"]
+    },
+    {
+      "id": "D06",
+      "style": "contradiction, then correction",
+      "turns": [
+        {"assistant": "Any swelling or fever?", "user": "no"},
+        {"assistant": "Trouble swallowing or breathing?", "user": "no"},
+        {"assistant": "Any injury?", "user": "no"},
+        {"assistant": "Any pain?", "user": "no pain at all"},
+        {"assistant": "Anything else you want to mention?", "user": "well actually it does ache a bit at night sometimes"},
+        {"assistant": "So there is some pain at night?", "user": "yeah a bit"}
+      ],
+      "expected": {
+        "pain_present": true, "pain_triggers": ["spontaneous"],
+        "pain_lingers_over_30s": null, "pain_wakes_at_night": true,
+        "swelling": false, "fever": false,
+        "difficulty_swallowing_or_breathing": false, "recent_trauma": false,
+        "location": null, "duration_days": null
+      },
+      "checks": ["most recent answer wins after one clarification"]
+    },
+    {
+      "id": "D07",
+      "style": "no symptoms at all",
+      "turns": [
+        {"assistant": "Any swelling or fever?", "user": "no"},
+        {"assistant": "Trouble swallowing or breathing?", "user": "no"},
+        {"assistant": "Any injury?", "user": "no"},
+        {"assistant": "Any pain or discomfort?", "user": "nothing, I just want a check"}
+      ],
+      "expected": {
+        "pain_present": false, "pain_triggers": null,
+        "pain_lingers_over_30s": null, "pain_wakes_at_night": null,
+        "swelling": false, "fever": false,
+        "difficulty_swallowing_or_breathing": false, "recent_trauma": false,
+        "location": null, "duration_days": null
+      }
+    },
+    {
+      "id": "D08",
+      "style": "user asks a question mid-interview",
+      "turns": [
+        {"assistant": "Any swelling or fever?", "user": "no. hey is this gonna tell me if I need a filling?"},
+        {"assistant": "I'll share the results after a few questions. Any trouble swallowing or breathing?", "user": "no"},
+        {"assistant": "Any injury to a tooth?", "user": "no"},
+        {"assistant": "Any pain?", "user": "hurts when I bite down on the left"}
+      ],
+      "expected": {
+        "pain_present": true, "pain_triggers": ["biting"],
+        "pain_on_biting": true, "pain_lingers_over_30s": null,
+        "swelling": false, "fever": false,
+        "difficulty_swallowing_or_breathing": false, "recent_trauma": false,
+        "location": null, "duration_days": null
+      },
+      "checks": ["must not answer the diagnostic question during intake"]
+    }
+  ]
+}

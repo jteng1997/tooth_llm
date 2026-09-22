@@ -1,0 +1,37 @@
+# Versions this project was tested with (Python 3.10, Windows, RTX 3060).
+#
+# Setup:
+#   pip install uv
+#   python -m uv venv --python 3.10 .venv
+#   python -m uv pip install --python .venv torch==2.14.0 torchvision==0.29.0 --index-url https://download.pytorch.org/whl/cu130
+#   python -m uv pip install --python .venv -r requirements.txt
+#
+# torch/torchvision come from the CUDA index above; plain PyPI gives the
+# CPU-only build, which still works but is ~6x slower.
+#
+# SegmentAnyTooth's own pyproject pins numpy<2. numpy 2.2 is what is
+# actually installed here and every test passes on it.
+
+# vision
+ultralytics==8.4.153
+segment-anything-hq==0.3
+timm==0.9.16
+opencv-python==4.11.0.86
+numpy==2.2.6
+pillow==12.3.0
+
+# embeddings, classifiers
+sentence-transformers==6.0.1
+transformers==5.17.0
+scikit-learn==1.7.2
+scipy==1.15.3
+joblib==1.6.0
+
+# LLM client (Ollama over HTTP) and schema checks
+requests==2.34.2
+jsonschema==4.26.0
+
+# demo web app
+fastapi==0.141.1
+uvicorn==0.53.0
+python-multipart==0.0.32
