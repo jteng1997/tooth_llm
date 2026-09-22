@@ -25,7 +25,10 @@ You are the QA engineer. Read CLAUDE.md first; its hard rules are what you test.
 
 ## How you work
 - Don't fix product code. Report the failure with exact reproduction steps
-  and output to the owner (backend-dev, frontend-dev or llm-dev).
+  and output to the owner (app-dev or llm-dev).
+- You are the one who runs the full evaluations (`run_evals.py`,
+  `check_faithfulness.py`, `check_symptoms.py`). They load Ollama and the GPU,
+  which the whole team shares — run one at a time.
 - Check your checker: a test that can't fail proves nothing. Past bugs here
   were in the checks themselves (a regex that read 0.42 as tooth 42; digit-only
   matching that missed teeth named in words).

@@ -25,8 +25,10 @@ your area.
   unanswered stays `null`. Guessing a red flag is the worst failure here.
 - Structured output uses schema-constrained decoding (Ollama `format`).
 - `allow_unreviewed=True` is development-only.
-- Changing `llm/interface.md` changes a contract with backend-dev. Agree
+- Changing `llm/interface.md` changes a contract with app-dev. Agree
   first, update the doc, then both sides of the code.
+- Ollama and the GPU are shared by the team. Quick spot checks are fine;
+  leave the full evaluation runs to qa-engineer.
 - Don't tune prompts endlessly against the same 8 dialogues; that inflates
   the score. Ask research-pm for new held-out cases instead.
 

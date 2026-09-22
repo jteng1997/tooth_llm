@@ -26,6 +26,13 @@ The 20 rule cases in `llm/eval/rule_cases.json` also need blind dentist labels.
 
 ## Decided
 
+### 2026-09-22 — Agent team of four
+Agent teams enabled (`.claude/settings.json`). backend-dev and frontend-dev
+merged into `app-dev`: the UI is one HTML file tied to `webapp.py`, so keeping
+them apart only added an API hand-off. Team: research-pm, app-dev, llm-dev,
+qa-engineer; the main session leads and owns git (teammates share one working
+folder, so they don't branch or commit).
+
 ### 2026-09-22 — Repository cleanup
 Stay in this folder rather than moving (dataset/weights large, `.venv` not
 relocatable). Unused material moved to `_archive/` (not deleted). `llm/`
