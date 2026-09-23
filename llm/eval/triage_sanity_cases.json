@@ -1,0 +1,826 @@
+{
+ "schema_version": "1.0",
+ "split": "sanity",
+ "protocol_version": "0.1",
+ "note": "Checker self-test, not a benchmark. Keys follow triage_protocol.yaml v0.1; each rationale states what rules.py returns, worked out by hand. check_triage.py on rules.py must find exactly: 11 under-triage (7 severe), 1 over-triage, 8 agree (one of them the correct RETAKE). A checker that reports otherwise is broken.",
+ "cases": [
+  {
+   "id": "S001",
+   "key": {
+    "level": "EMERGENCY",
+    "criteria_met": [
+     "E3",
+     "R0"
+    ],
+    "emergency_route": "medical",
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "fever_alone",
+    "rationale": "Fever alone is a floor item; rules.py R1 ignores fever alone -> R9 ROUTINE (severe under)."
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": true,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": false
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S002",
+   "key": {
+    "level": "EMERGENCY",
+    "criteria_met": [
+     "E6",
+     "S1",
+     "R0"
+    ],
+    "emergency_route": "medical",
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "chest_pain",
+    "rationale": "Jaw/tooth pain with chest pain; rules.py never asks -> R6 SOON (severe under)."
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": true,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": true,
+    "pain_relief_effect": "helped",
+    "pain_severity": "mild",
+    "pain_triggers": [
+     "cold"
+    ],
+    "pain_lingers_over_30s": false,
+    "pain_wakes_at_night": false,
+    "pain_on_biting": false,
+    "recent_extraction": false,
+    "location": "lower_left",
+    "duration_days": 5
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S003",
+   "key": {
+    "level": "EMERGENCY",
+    "criteria_met": [
+     "E7",
+     "R0"
+    ],
+    "emergency_route": "dental",
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "bleeding_uncontrolled",
+    "rationale": "Uncontrolled bleeding; rules.py -> R9 ROUTINE (severe under)."
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": true,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": false
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S004",
+   "key": {
+    "level": "URGENT",
+    "criteria_met": [
+     "U1",
+     "S1",
+     "R0"
+    ],
+    "emergency_route": null,
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "pain_relief_not_helped",
+    "rationale": "Pain relief tried and failed; rules.py -> R6 SOON (under)."
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": true,
+    "pain_relief_effect": "not_helped",
+    "pain_severity": "moderate",
+    "pain_triggers": [
+     "cold"
+    ],
+    "pain_lingers_over_30s": false,
+    "pain_wakes_at_night": false,
+    "pain_on_biting": false,
+    "recent_extraction": false,
+    "location": "lower_left",
+    "duration_days": 5
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S005",
+   "key": {
+    "level": "URGENT",
+    "criteria_met": [
+     "U2",
+     "S1",
+     "R0"
+    ],
+    "emergency_route": null,
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "severe_pain",
+    "rationale": "Severe pain, relief helped; rules.py -> R6 SOON (under)."
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": true,
+    "pain_relief_effect": "helped",
+    "pain_severity": "severe",
+    "pain_triggers": [
+     "cold"
+    ],
+    "pain_lingers_over_30s": false,
+    "pain_wakes_at_night": false,
+    "pain_on_biting": false,
+    "recent_extraction": false,
+    "location": "lower_left",
+    "duration_days": 5
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S006",
+   "key": {
+    "level": "URGENT",
+    "criteria_met": [
+     "U4",
+     "S1",
+     "R0"
+    ],
+    "emergency_route": null,
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "post_extraction_pain",
+    "rationale": "Pain after a recent extraction; rules.py -> R6 SOON (under)."
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": true,
+    "pain_relief_effect": "helped",
+    "pain_severity": "mild",
+    "pain_triggers": [
+     "cold"
+    ],
+    "pain_lingers_over_30s": false,
+    "pain_wakes_at_night": false,
+    "pain_on_biting": false,
+    "recent_extraction": true,
+    "location": "lower_left",
+    "duration_days": 5
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S007",
+   "key": {
+    "level": "URGENT",
+    "criteria_met": [
+     "U5",
+     "S1",
+     "R0"
+    ],
+    "emergency_route": null,
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "lingering_pain",
+    "rationale": "Lingering pain; rules.py R3 URGENT (agree)."
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": true,
+    "pain_relief_effect": "helped",
+    "pain_severity": "mild",
+    "pain_triggers": [
+     "cold"
+    ],
+    "pain_lingers_over_30s": true,
+    "pain_wakes_at_night": false,
+    "pain_on_biting": false,
+    "recent_extraction": false,
+    "location": "lower_left",
+    "duration_days": 5
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S008",
+   "key": {
+    "level": "EMERGENCY",
+    "criteria_met": [
+     "E2",
+     "R0"
+    ],
+    "emergency_route": "either",
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "swelling",
+    "rationale": "Swelling; rules.py R1 EMERGENCY (agree)."
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": true,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": false
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S009",
+   "key": {
+    "level": "SOON",
+    "criteria_met": [
+     "S2",
+     "R0"
+    ],
+    "emergency_route": null,
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "photo_only_finding",
+    "rationale": "Flagged tooth, no symptoms; rules.py R5 SOON (agree)."
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": false
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [
+     "16"
+    ],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S010",
+   "key": {
+    "level": "ROUTINE",
+    "criteria_met": [
+     "R1",
+     "R0"
+    ],
+    "emergency_route": null,
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "missing_tooth_only",
+    "rationale": "Missing tooth, no symptoms is ROUTINE (decision 7); rules.py R8 SOON (over)."
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": false
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": [
+     "36"
+    ]
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S011",
+   "key": {
+    "level": "ROUTINE",
+    "criteria_met": [
+     "R0"
+    ],
+    "emergency_route": null,
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "nothing",
+    "rationale": "Nothing found; rules.py R9 ROUTINE (agree)."
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": false
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S012",
+   "key": {
+    "level": "ROUTINE",
+    "criteria_met": [],
+    "emergency_route": null,
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "bad_photo_no_symptoms",
+    "rationale": "Unusable photos, no symptoms: level ROUTINE, shown as RETAKE; rules.py R7 RETAKE (agree)."
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": false
+   },
+   "visual_summary": {
+    "images_usable": false,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S013",
+   "key": {
+    "level": "EMERGENCY",
+    "criteria_met": [
+     "E3"
+    ],
+    "emergency_route": "medical",
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "bad_photo_red_flag",
+    "rationale": "Fever with unusable photos: the red flag must survive the bad photo; rules.py R7 RETAKE (severe under)."
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": true,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": false
+   },
+   "visual_summary": {
+    "images_usable": false,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S014",
+   "key": {
+    "level": "URGENT",
+    "criteria_met": [
+     "U3",
+     "U7",
+     "S1",
+     "S2",
+     "R0"
+    ],
+    "emergency_route": null,
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "biting_pain_with_finding",
+    "rationale": "Pain on biting + flagged tooth; rules.py R3 URGENT (agree)."
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": true,
+    "pain_relief_effect": "helped",
+    "pain_severity": "mild",
+    "pain_triggers": [
+     "biting"
+    ],
+    "pain_lingers_over_30s": false,
+    "pain_wakes_at_night": false,
+    "pain_on_biting": true,
+    "recent_extraction": false,
+    "location": "lower_left",
+    "duration_days": 5
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [
+     "36"
+    ],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S015",
+   "key": {
+    "level": "URGENT",
+    "criteria_met": [
+     "U7",
+     "S1",
+     "S2",
+     "R0"
+    ],
+    "emergency_route": null,
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "finding_with_mild_pain",
+    "rationale": "Flagged tooth with pain, relief not tried; rules.py R4 URGENT (agree)."
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": true,
+    "pain_relief_effect": "not_tried",
+    "pain_severity": "mild",
+    "pain_triggers": [
+     "sweet"
+    ],
+    "pain_lingers_over_30s": false,
+    "pain_wakes_at_night": false,
+    "pain_on_biting": false,
+    "recent_extraction": false,
+    "location": "upper_left",
+    "duration_days": 5
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [
+     "26"
+    ],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S016",
+   "key": {
+    "level": "SOON",
+    "criteria_met": [
+     "S3",
+     "R0"
+    ],
+    "emergency_route": null,
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "narrative_broken_filling",
+    "rationale": "Broken filling, no pain: narrative criterion only; rules.py R9 ROUTINE (under). Code-only protocol level is ROUTINE too."
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": false
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [
+    "No, nothing hurts.",
+    "A piece of my filling broke off yesterday, but it doesn't hurt at all."
+   ],
+   "style": "plain",
+   "dentist_label": null
+  },
+  {
+   "id": "S017",
+   "key": {
+    "level": "EMERGENCY",
+    "criteria_met": [
+     "E8",
+     "U1",
+     "U2",
+     "S1",
+     "R0"
+    ],
+    "emergency_route": "medical",
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "pain_relief_overdose",
+    "rationale": "More pain relief than the packet allows, still in pain; rules.py -> R6 SOON (severe under)."
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": true,
+    "pain_present": true,
+    "pain_relief_effect": "not_helped",
+    "pain_severity": "severe",
+    "pain_triggers": [
+     "cold"
+    ],
+    "pain_lingers_over_30s": false,
+    "pain_wakes_at_night": false,
+    "pain_on_biting": false,
+    "recent_extraction": false,
+    "location": "lower_left",
+    "duration_days": 5
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S018",
+   "key": {
+    "level": "EMERGENCY",
+    "criteria_met": [
+     "E5",
+     "R0"
+    ],
+    "emergency_route": "medical",
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "systemically_unwell",
+    "rationale": "Very unwell without fever; rules.py R9 ROUTINE (severe under)."
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": true,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": false
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S019",
+   "key": {
+    "level": "URGENT",
+    "criteria_met": [
+     "U1",
+     "S1"
+    ],
+    "emergency_route": null,
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "bad_photo_urgent_pain",
+    "rationale": "Uncontrolled pain with unusable photos must stay URGENT, not RETAKE; rules.py R7 RETAKE (severe under)."
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": true,
+    "pain_relief_effect": "not_helped",
+    "pain_severity": "moderate",
+    "pain_triggers": [
+     "cold"
+    ],
+    "pain_lingers_over_30s": false,
+    "pain_wakes_at_night": false,
+    "pain_on_biting": false,
+    "recent_extraction": false,
+    "location": "lower_left",
+    "duration_days": 5
+   },
+   "visual_summary": {
+    "images_usable": false,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S020",
+   "key": {
+    "level": "EMERGENCY",
+    "criteria_met": [
+     "E4",
+     "R0"
+    ],
+    "emergency_route": "either",
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "trauma",
+    "rationale": "Recent injury; rules.py R2 EMERGENCY (agree)."
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": true,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": false
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  }
+ ]
+}

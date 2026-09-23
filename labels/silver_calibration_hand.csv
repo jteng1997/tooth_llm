@@ -1,0 +1,81 @@
+audit,id,hand_label,note
+silver_calibration,cd005399,UNSPECIFIED,answer truncated mid-sentence
+silver_calibration,cd049735,ROUTINE,
+silver_calibration,cd049600,EMERGENCY,
+silver_calibration,cd109950,UNSPECIFIED,"""consult ER surgeon"" reads as a garble of ENT surgeon"
+silver_calibration,cd080468,UNSPECIFIED,
+silver_calibration,cd048016,URGENT,
+silver_calibration,cd079436,UNSPECIFIED,answer truncated
+silver_calibration,cd020998,UNSPECIFIED,
+silver_calibration,cd092768,EMERGENCY,
+silver_calibration,cd029164,UNSPECIFIED,"""consult ER ENT"" - same garble"
+silver_calibration,cd047666,UNSPECIFIED,answer truncated
+silver_calibration,cd054180,UNSPECIFIED,
+silver_calibration,cd048011,UNSPECIFIED,
+silver_calibration,cd012996,URGENT,
+silver_calibration,cd053077,EMERGENCY,
+silver_calibration,cd098491,EMERGENCY,
+silver_calibration,cd052278,UNSPECIFIED,
+silver_calibration,cd002850,UNSPECIFIED,
+silver_calibration,cd029613,ROUTINE,
+silver_calibration,cd108705,ROUTINE,
+silver_calibration,cd098020,UNSPECIFIED,
+silver_calibration,cd015685,UNSPECIFIED,
+silver_calibration,cd108891,EMERGENCY,
+silver_calibration,cd033950,URGENT,
+silver_calibration,cd028692,ROUTINE,
+silver_calibration,cd032638,UNSPECIFIED,"""consult an Emergency room or an Oral Physician"" for TMJ evaluation"
+silver_calibration,cd089403,UNSPECIFIED,
+silver_calibration,cd079499,URGENT,
+silver_calibration,cd087515,URGENT,
+silver_calibration,cd097759,ROUTINE,
+silver_calibration,cd009622,EMERGENCY,
+silver_calibration,cd067898,UNSPECIFIED,"""see a dermatologist for immediate relief"" - immediacy is the relief, not the visit"
+silver_calibration,cd046663,UNSPECIFIED,
+silver_calibration,cd103288,UNSPECIFIED,
+silver_calibration,cd097731,UNSPECIFIED,
+silver_calibration,cd078824,URGENT,
+silver_calibration,cd073753,EMERGENCY,
+silver_calibration,cd104556,UNSPECIFIED,
+silver_calibration,cd060386,ROUTINE,
+silver_calibration,cd058388,UNSPECIFIED,
+silver_calibration,cd036664,ROUTINE,
+silver_calibration,cd086864,SOON,
+silver_calibration,cd106179,EMERGENCY,ER recommended if diarrhoea does not resolve
+silver_calibration,cd109657,URGENT,
+silver_calibration,cd065833,ROUTINE,
+silver_calibration,cd078197,ROUTINE,
+silver_calibration,cd026818,UNSPECIFIED,
+silver_calibration,cd010290,URGENT,
+silver_calibration,cd029271,ROUTINE,
+silver_calibration,cd000803,UNSPECIFIED,
+silver_calibration,cd073260,UNSPECIFIED,
+silver_calibration,cd014567,UNSPECIFIED,
+silver_calibration,cd011025,UNSPECIFIED,
+silver_calibration,cd030810,ROUTINE,
+silver_calibration,cd041311,UNSPECIFIED,answer truncated
+silver_calibration,cd087948,URGENT,
+silver_calibration,cd081165,UNSPECIFIED,
+silver_calibration,cd053229,UNSPECIFIED,"""go to ER Surgeon"" for a months-old cheek cyst"
+silver_calibration,cd006607,ROUTINE,"""I do not see anything to go to ER ... wait for your dentist next appointment"""
+silver_calibration,cd047437,URGENT,
+silver_calibration,cd046157,UNSPECIFIED,
+silver_calibration,cd049239,URGENT,
+silver_calibration,cd042453,URGENT,
+silver_calibration,cd055066,URGENT,
+silver_calibration,cd086725,URGENT,"URGENTLY and ASAP, with ""ER Surgeon"" as a garble"
+silver_calibration,cd072108,UNSPECIFIED,"""stop it immediately"" is about cocaine, not a visit"
+silver_calibration,cd035675,ROUTINE,ER only if symptoms worsen
+silver_calibration,cd005708,ROUTINE,dentist immediately only if symptoms worsen
+silver_calibration,cd012778,UNSPECIFIED,
+silver_calibration,cd035331,URGENT,
+silver_calibration,cd084930,UNSPECIFIED,
+silver_calibration,cd062075,ROUTINE,
+silver_calibration,cd007009,UNSPECIFIED,"""Immediately start"" attaches to salt rinses; the visit has no timing"
+silver_calibration,cd107806,UNSPECIFIED,
+silver_calibration,cd056546,UNSPECIFIED,
+silver_calibration,cd086440,URGENT,
+silver_calibration,cd078563,EMERGENCY,
+silver_calibration,cd068986,UNSPECIFIED,Emergency room named as a place to get a laryngoscopy
+silver_calibration,cd048155,URGENT,
+silver_calibration,cd100215,UNSPECIFIED,

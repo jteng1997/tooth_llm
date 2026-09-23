@@ -6,7 +6,11 @@ Wires the existing pieces together and adds nothing clinical of its own:
 
     upload      -> pipeline.build_findings() + segmentation/caries overlays
     interview   -> interview.Interview (questions, then evidence-checked JSON)
-    result      -> rules.assess() decides urgency, explain.Explanation words it
+    result      -> triage.assess() decides urgency (assessment 2.0),
+                   explain.Explanation words it
+
+Any EMERGENCY result is the one fixed emergency screen: no explanation call,
+so a red-flag stop never waits on the language model.
 
 Everything runs on this machine: Ollama for the language model, the local
 weights for vision. Sessions are kept in memory, so restarting the server
@@ -32,10 +36,15 @@ from interview import DEFAULT_MODEL, Interview
 from pipeline import build_findings
 from retrieval import Knowledge
 from segment_tool import segment_teeth_mask
+import triage
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 UPLOADS = REPO_ROOT / "runs" / "webapp_uploads"
 INDEX_HTML = Path(__file__).resolve().parent / "webapp_index.html"
+
+# Fixed patient-facing wording is triage.py's, never this file's or the page's.
+DISCLAIMER = triage.DISCLAIMER
+FINDING_PHRASE = triage.FINDING_PHRASE
 
 app = FastAPI(title="Dental screening demo")
 SESSIONS = {}
@@ -124,24 +133,59 @@ async def analyse(upper: UploadFile = None, lower: UploadFile = None):
             "quality": findings["image_quality"][view],
         }
 
-    session = Interview(DEFAULT_MODEL)
-    question = session.start()
+    # allow_unreviewed: the triage protocol is DRAFT-UNREVIEWED (development only).
+    session = Interview(DEFAULT_MODEL, allow_unreviewed=True)
+    step = session.start()
     SESSIONS[session_id] = {"findings": findings, "interview": session}
 
     return JSONResponse({"session": session_id, "findings": findings,
-                         "views": views, "question": question})
+                         "views": views, "step": step,
+                         "disclaimer": DISCLAIMER})
 
 
 @app.post("/api/answer")
 def answer(session: str = Form(...), message: str = Form(...)):
-    """One interview turn. Returns {"done": false, "question"} or, once the
-    planner has everything it needs, {"done": true} — the page then asks
-    for the result on its own."""
+    """The answer to the open chat question. Returns the next step
+    (interface.md 2.1); on "done" the page asks for the result itself."""
+    interview = _interview(session)
+    if not _pending(interview, "chat"):
+        raise HTTPException(409, "no chat question is open")
+    return JSONResponse({"step": interview.reply(message)})
+
+
+@app.post("/api/checklist")
+def checklist(session: str = Form(...), group: str = Form(...), answers: str = Form(...)):
+    """One whole checklist. `answers` is JSON, {question_id: true|false|null}
+    for every row, where null is "not sure" on a row that offers it. The page
+    enforces this too, but the server never trusts it: an unanswered row must
+    not reach the interview as a "no" (hard rule 7)."""
+    interview = _interview(session)
+    pending = _pending(interview, "checklist")
+    if not pending or pending[1] != group:
+        raise HTTPException(409, f"checklist {group} is not the open step")
+    try:
+        parsed = json.loads(answers)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(400, f"answers is not valid JSON: {exc}")
+    if not isinstance(parsed, dict):
+        raise HTTPException(400, "answers must be an object of question id -> answer")
+    try:
+        step = interview.submit_checklist(group, parsed)
+    except ValueError as exc:  # missing row, null, or a value that isn't allowed
+        raise HTTPException(400, str(exc))
+    return JSONResponse({"step": step})
+
+
+def _interview(session: str) -> Interview:
     state = SESSIONS.get(session)
     if state is None:
         raise HTTPException(404, "unknown session — reload and analyse again")
-    step = state["interview"].reply(message)
-    return JSONResponse({"done": step["done"], "question": step.get("question")})
+    return state["interview"]
+
+
+def _pending(interview: Interview, kind: str):
+    pending = interview.pending
+    return pending if pending and pending[0] == kind else None
 
 
 @app.post("/api/reset")
@@ -158,17 +202,37 @@ def result(session: str = Form(...)):
         raise HTTPException(404, "unknown session — reload and analyse again")
 
     interview = state["interview"]
+    if _pending(interview, "checklist"):
+        # No result, and no "skip to result", before a checklist is answered:
+        # skipping checklist A would skip every red-flag question.
+        raise HTTPException(409, "answer the open checklist first")
     # A finished interview already extracted on its last turn; only an early
-    # "skip to result" still needs one.
-    symptoms = interview.symptoms if interview.done else interview.extract()
+    # "skip to result" still needs one. extract() refuses before checklist A,
+    # which the 409 above already covers — this keeps any other refusal a 400
+    # rather than a 500.
+    try:
+        symptoms = interview.symptoms if interview.done else interview.extract()
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    # allow_unreviewed: the triage protocol is DRAFT-UNREVIEWED (development only).
+    assessment = triage.assess(state["findings"], symptoms, interview.messages,
+                               DEFAULT_MODEL, allow_unreviewed=True)
+    state["assessment"] = assessment
+    state.pop("explanation", None)
+    reply = {"symptoms": symptoms, "assessment": assessment, "explanation": None,
+             "flagged_names": [f"{fdi_label(t)} ({t})" for t in assessment["flagged_teeth"]],
+             "finding_phrase": FINDING_PHRASE, "disclaimer": DISCLAIMER}
+    if assessment["urgency"] == "EMERGENCY":
+        return JSONResponse(reply)  # the fixed emergency screen: no prose, no follow-ups
+
     # allow_unreviewed: the knowledge files are still DRAFT-UNREVIEWED, and
     # this is a development demo. A real deployment must not pass this.
     explanation = Explanation(state["findings"], symptoms, DEFAULT_MODEL,
-                              allow_unreviewed=True, knowledge=knowledge())
-    text = explanation.first_response()
+                              allow_unreviewed=True, knowledge=knowledge(),
+                              assessment=assessment)
+    reply["explanation"] = explanation.first_response()
     state["explanation"] = explanation
-    return JSONResponse({"symptoms": symptoms, "assessment": explanation.assessment,
-                         "explanation": text})
+    return JSONResponse(reply)
 
 
 @app.post("/api/ask")
@@ -176,7 +240,16 @@ def ask(session: str = Form(...), message: str = Form(...)):
     state = SESSIONS.get(session)
     if state is None or "explanation" not in state:
         raise HTTPException(404, "get the result first")
-    return JSONResponse({"answer": state["explanation"].ask(message)})
+    explanation = state["explanation"]
+    answer = explanation.ask(message)
+    # A red flag raised during follow-up questions recomputes the assessment
+    # (triage design section 1.6); hand the new one back so the page switches.
+    latest = explanation.assessment
+    if (latest.get("schema_version") == "2.0"
+            and latest["urgency"] != state["assessment"]["urgency"]):
+        state["assessment"] = latest
+        return JSONResponse({"answer": answer, "assessment": latest})
+    return JSONResponse({"answer": answer})
 
 
 if __name__ == "__main__":

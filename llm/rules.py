@@ -32,6 +32,23 @@ EXPECTED_ADULT_FDI = {
     "lower": [f"3{i}" for i in range(1, 9)] + [f"4{i}" for i in range(1, 9)],
 }
 
+# Red-flag floor: any of these reported true forces EMERGENCY, whatever the
+# LLM triage proposes. The first four are the user's decision "Triage moves
+# to the LLM"; the last four were added by "Phase 1–2 plan decisions" #3
+# (docs/decisions.md, 2026-09-22), per SDCEP 2nd ed. and NHS England 2025.
+# Clinical list: changing it needs a decision-log entry and the user's
+# sign-off. assess() below does not use it; it is the unchanged baseline.
+RED_FLAG_FIELDS = (
+    "difficulty_swallowing_or_breathing",
+    "chest_pain_or_breathless",
+    "swelling",
+    "fever",
+    "systemically_unwell",
+    "recent_trauma",
+    "bleeding_uncontrolled",
+    "exceeded_pain_relief_dose",
+)
+
 URGENCY_RANK = {
     "RETAKE": 0, "EMERGENCY": 1, "URGENT": 2, "SOON": 3, "ROUTINE": 4,
 }
@@ -44,6 +61,11 @@ HEADLINES = {
     "RETAKE": "Please retake the photos",
 }
 
+# Baseline only, never shown to a patient. The wording the patient reads is
+# `limitations` in llm/protocol/triage_protocol.yaml, which the dentist signs
+# off; assess() below is the frozen comparison baseline and keeps its own copy
+# so it stays independent of the protocol (test_triage asserts the 2.0
+# assessment uses the protocol's).
 LIMITATIONS = [
     "Occlusal photos cannot show surfaces between teeth.",
     "They cannot show anything below the gum line or inside the tooth.",
@@ -120,6 +142,21 @@ def missing_teeth(findings: dict) -> list:
 
 def any_pain(s: dict) -> bool:
     return bool(_get(s, "pain_present")) or bool(_get(s, "pain_triggers"))
+
+
+# --- Red-flag floor -----------------------------------------------------
+
+def red_flag_floor(symptoms: dict | None) -> dict:
+    """The floor under LLM triage: EMERGENCY if any red flag is true.
+
+    Only an explicit `True` counts. `None` (unanswered) is not a red flag:
+    guessing one is the failure the interview is built to avoid, and an
+    unanswered red-flag question is covered by re-asking and by the safety
+    net line instead. Returns {"level": "EMERGENCY" | None, "red_flags": [...]}.
+    The caller may only use this to raise urgency, never to lower it.
+    """
+    flags = [f for f in RED_FLAG_FIELDS if _get(symptoms, f) is True]
+    return {"level": "EMERGENCY" if flags else None, "red_flags": flags}
 
 
 # --- Main entry point ---------------------------------------------------

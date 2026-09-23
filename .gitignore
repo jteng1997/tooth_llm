@@ -12,3 +12,6 @@ _archive/
 
 # rebuilt automatically from llm/knowledge/
 models/knowledge_index.npz
+
+# Held-out answer keys: never commit, never shown to llm-dev
+labels/heldout/

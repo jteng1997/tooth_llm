@@ -1,20 +1,29 @@
-"""Symptom interview: conversation -> symptoms JSON.
+"""Symptom interview: checklists + fixed questions -> symptoms JSON.
 
-Step 3 of llm/README.md. The model asks the questions in
-llm/prompts/system_symptoms.md, then the answers are extracted into the object in
-llm/prompts/symptoms_schema.json with schema-constrained decoding, so the result
-is valid JSON by construction rather than by parsing hope.
+Step 3 of llm/README.md. Python runs the whole interview; the model only
+reads the patient's chat answers (docs/decisions.md 2026-09-22: fixed
+question text, #11; yes/no questions on a checklist, protocol v0.1 #5):
 
-Two calls per interview, not one: asking questions needs prose, and
-constrained decoding would force JSON on every turn. So the same
-transcript is replayed once more with the schema attached to extract the
-object. The extraction call is told to use null for anything unanswered.
+- Checklist A: the eight red flags and "any pain", all rows at once, each
+  needing an explicit Yes or No. Any red-flag Yes ends the interview at
+  once; no pain ends it too.
+- Checklist B, with pain: night pain, pain on biting, recent extraction.
+- Chat, with pain: pain relief, severity, triggers, lingering, where, how
+  long. Each answer is extracted into llm/prompts/symptoms_schema.json with
+  schema-constrained decoding, and every value needs the patient's own
+  words as a quote, checked against the transcript. An answer that settles
+  nothing is asked once more, then left null.
+
+The question text, the checklist rows and when each applies come from
+llm/protocol/triage_protocol.yaml; the order and the stopping rule are
+QUESTION_PLAN below.
 
 Runs against Ollama (llama.cpp underneath, same GBNF grammar path).
 
-    python src/interview.py                     # talk to it yourself
+    python src/interview.py --allow-unreviewed   # answer it yourself
 
-Replaying the scripted dialogues is Test 3, in src/check_symptoms.py.
+Replaying the scripted dialogues is Test 3, in src/check_symptoms.py; it
+uses record() and extract() and never starts the planned interview.
 """
 import argparse
 import json
@@ -23,6 +32,9 @@ from pathlib import Path
 
 import requests
 
+import protocol as protocol_mod
+from assess import rules
+
 for stream in (sys.stdout, sys.stderr):  # dialogues carry non-Latin text
     stream.reconfigure(encoding="utf-8", errors="replace")
 
@@ -30,31 +42,40 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 LLM_DIR = REPO_ROOT / "llm"
 SYSTEM_PROMPT = (LLM_DIR / "prompts" / "system_symptoms.md").read_text(encoding="utf-8")
 SCHEMA = json.loads((LLM_DIR / "prompts" / "symptoms_schema.json").read_text(encoding="utf-8"))
+SCHEMA_VERSION = SCHEMA["properties"]["schema_version"]["const"]
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
 DEFAULT_MODEL = "qwen3:14b"
 
-# Extraction asks for {value, quote} per field, so each value can be checked
-# against the transcript before it is kept.
+# Every symptom field. Extraction asks for {value, quote} per field, so each
+# value can be checked against the transcript before it is kept.
 EVIDENCE_FIELDS = [f for f in SCHEMA["properties"] if f not in ("schema_version", "notes")]
-EVIDENCE_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": EVIDENCE_FIELDS + ["notes"],
-    "properties": {
-        **{field: {"type": "object",
-                   "additionalProperties": False,
-                   "required": ["value", "quote"],
-                   "properties": {"value": SCHEMA["properties"][field],
-                                  "quote": {"type": ["string", "null"]}}}
-           for field in EVIDENCE_FIELDS},
-        "notes": {"type": "object",
-                  "additionalProperties": False,
-                  "required": ["value", "quote"],
-                  "properties": {"value": {"type": ["string", "null"]},
-                                 "quote": {"type": ["string", "null"]}}},
-    },
-}
+
+
+def evidence_schema(fields: list) -> dict:
+    """The constrained-decoding schema for extracting `fields`, each as
+    {value, quote}, plus free-text notes."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": list(fields) + ["notes"],
+        "properties": {
+            **{field: {"type": "object",
+                       "additionalProperties": False,
+                       "required": ["value", "quote"],
+                       "properties": {"value": SCHEMA["properties"][field],
+                                      "quote": {"type": ["string", "null"]}}}
+               for field in fields},
+            "notes": {"type": "object",
+                      "additionalProperties": False,
+                      "required": ["value", "quote"],
+                      "properties": {"value": {"type": ["string", "null"]},
+                                     "quote": {"type": ["string", "null"]}}},
+        },
+    }
+
+
+EVIDENCE_SCHEMA = evidence_schema(EVIDENCE_FIELDS)
 
 
 def _normalize(text: str) -> str:
@@ -63,54 +84,60 @@ def _normalize(text: str) -> str:
     return "".join(ch for ch in (text or "").lower() if ch.isalnum())
 
 
-# The interview plan, in the order llm/prompts/system_symptoms.md prescribes: red
-# flags first, then pain, and pain details only if there is pain. Python
-# walks this list and decides when the interview is over; the model only
-# phrases the question it is handed. Left to itself the model repeated
-# questions and never stopped.
+# The interview plan. Python owns the order and when to stop (hard rule 6);
+# the protocol owns the wording, which rows sit in which checklist, and the
+# asked_if conditions. Every protocol question must appear here exactly once
+# (check_plan), so a question added to the protocol cannot be silently skipped.
 QUESTION_PLAN = [
-    (("swelling", "fever"), "any swelling in the face or gums, and any fever", False),
-    (("difficulty_swallowing_or_breathing",), "any difficulty swallowing or breathing", False),
-    (("recent_trauma",), "any recent knock or injury to a tooth", False),
-    (("pain_present",), "any pain or discomfort in the teeth or gums right now", False),
-    (("pain_triggers",), "what sets the pain off: cold, hot, sweet, biting, or whether "
-                         "it comes on by itself", True),
-    (("pain_lingers_over_30s",), "whether the pain fades quickly or keeps aching for "
-                                 "more than about half a minute", True),
-    (("pain_wakes_at_night",), "whether the pain ever wakes them at night", True),
-    (("location",), "where the pain is: upper or lower, left or right side, or the front", True),
-    (("duration_days",), "how long the pain has been going on", True),
+    ("checklist", "A"),   # red flags + any pain; a red-flag Yes stops here
+    ("checklist", "B"),   # with pain: lingering, night pain, biting, recent extraction
+    ("chat", "Q10"),      # pain relief tried, and did it help
+    ("chat", "Q11"),      # severity
+    ("chat", "Q12"),      # triggers
+    ("chat", "Q17"),      # where
+    ("chat", "Q18"),      # how long
 ]
-RED_FLAGS = ("swelling", "fever", "difficulty_swallowing_or_breathing", "recent_trauma")
-MAX_QUESTIONS = len(QUESTION_PLAN) + 2  # headroom, never unbounded
-FIELD_ITEM = {f: i for i, (fields, _, _) in enumerate(QUESTION_PLAN) for f in fields}
+
+# The same eight fields as the red-flag floor in llm/rules.py.
+RED_FLAGS = rules.RED_FLAG_FIELDS
+
+NOT_ENGLISH_NOTICE = "This assistant works in English only. Please answer in English if you can."
 
 # A bare yes/no only answers the question it was a reply to. Without this
 # the extractor let the "no" given to the injury question also settle
 # pain_present — the quote genuinely is in the transcript — so the pain
 # question was skipped and a patient in pain was never asked about it.
+# In the planned interview every chat question asks which, how, where or
+# how long, so there a bare answer settles nothing at all.
 BARE_ANSWERS = {"no", "nope", "nah", "none", "notreally", "never", "yes", "yeah", "yep",
-                "yup", "sure", "ok", "okay", "没有", "沒有", "有", "是", "不是", "不", "对", "對"}
+                "yup", "sure", "ok", "okay", "uhhuh", "没有", "沒有", "有", "是", "不是",
+                "不", "对", "對"}
 
 
 def _is_bare(quote: str) -> bool:
     return _normalize(quote) in BARE_ANSWERS
 
-ASK_INSTRUCTION = (
-    "This is a question turn. Ask the user about exactly this, and nothing else: {topic}. "
-    "One short, plain question in the language the user is writing in. Do not output "
-    "JSON, do not repeat earlier questions, and do not give results or opinions."
-)
+
+def _not_latin(text: str) -> bool:
+    """Letters outside the Latin script: the answer is not in English.
+    Romanised non-English text is not caught; that only costs the notice."""
+    return any(ch.isalpha() and ord(ch) > 0x24F for ch in text or "")
+
+
 EXTRACTION_INSTRUCTION = (
-    "The interview is over. Fill in the symptoms for this conversation.\n"
-    "For every field give two things: the value, and `quote` — the user's own "
+    "Fill in the symptoms for this conversation.\n"
+    "For every field give two things: the value, and `quote` — the patient's own "
     "words that support it, copied exactly from their messages.\n"
-    "- If the user's words do not settle a field, set value null and quote null. "
+    "- If the patient's words do not settle a field, set value null and quote null. "
     "Never reason a value out from another field; an unasked question stays null.\n"
     "- A denial is support: 'no swelling or fever' supports false for both.\n"
     "- pain_triggers: list what they named (cold, hot, sweet, biting). Pain that "
     "arrives on its own, including at night, is 'spontaneous'. 'Dunno', 'hard to "
     "say' when asked what sets it off is itself an answer — ['unknown'], not null.\n"
+    "- pain_relief_effect: 'helped' or 'not_helped' if they took something; "
+    "'not_tried' if they say they have not taken anything.\n"
+    "- pain_severity: 'severe' when it stops them sleeping or eating or they call "
+    "it unbearable; otherwise 'mild' or 'moderate' as they describe it.\n"
     "- location needs arch and side together: 'bottom left' is lower_left, "
     "'on the left' alone is not enough.\n"
     "- If they corrected themselves, the later answer wins.\n"
@@ -134,88 +161,183 @@ def chat(messages: list, model: str = DEFAULT_MODEL, schema: dict = None,
     return r.json()["message"]["content"]
 
 
-def next_topic(symptoms: dict, asked: set):
-    """Index of the next plan item to ask about, or None when the interview
-    is complete. Pure function of what is known — no model involved.
-
-    Stops when a red flag is reported (the rule engine takes it from there),
-    and skips pain details unless pain is confirmed. An item already asked
-    is never asked again: if the answer didn't settle it, the field stays
-    null, which is the spec's "unanswered", not a reason to loop.
-    """
-    if any(symptoms.get(f) is True for f in RED_FLAGS):
-        return None
-    for index, (fields, _, needs_pain) in enumerate(QUESTION_PLAN):
-        if index in asked:
-            continue
-        if needs_pain and symptoms.get("pain_present") is not True:
-            continue
-        if any(symptoms.get(f) is None for f in fields):
-            return index
-    return None
+def check_plan(protocol) -> None:
+    """Every protocol question is reached by QUESTION_PLAN exactly once:
+    checklist rows through their group, chat questions by id."""
+    planned_groups = {key for kind, key in QUESTION_PLAN if kind == "checklist"}
+    planned_chat = [key for kind, key in QUESTION_PLAN if kind == "chat"]
+    problems = []
+    for q in protocol.questions:
+        if q.input == "yesno_checklist" and q.group not in planned_groups:
+            problems.append(f"{q.id}: checklist group {q.group!r} is not in QUESTION_PLAN")
+        if q.input == "chat" and planned_chat.count(q.id) != 1:
+            problems.append(f"{q.id}: chat question must appear once in QUESTION_PLAN")
+    known = {q.id for q in protocol.questions if q.input == "chat"}
+    problems += [f"{key}: in QUESTION_PLAN but not a chat question in the protocol"
+                 for key in planned_chat if key not in known]
+    if problems:
+        raise protocol_mod.ProtocolError("interview plan and protocol disagree:\n  "
+                                         + "\n  ".join(problems))
 
 
 class Interview:
-    def __init__(self, model: str = DEFAULT_MODEL):
+    def __init__(self, model: str = DEFAULT_MODEL, allow_unreviewed: bool = False,
+                 protocol=None, llm=None):
+        """llm: a callable (messages, schema) -> str, for tests; defaults to Ollama."""
         self.model = model
+        self.allow_unreviewed = allow_unreviewed
+        self.protocol = protocol
+        self.llm = llm or (lambda messages, schema: chat(messages, model, schema=schema))
         self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-        self.asked = set()
         self.symptoms = {}
+        self.checklist = {}     # field -> the patient's explicit Yes/No
+        self.completed = set()  # QUESTION_PLAN items that are finished
+        self.reasked = set()
+        self.pending = None     # ("checklist", group, rows) or ("chat", question)
+        self.notice = None
+        self.notice_shown = False
         self.done = False
-        self.planned = False  # True once start() runs; replayed transcripts stay False
+        self.planned = False    # True once start() runs; replayed transcripts stay False
 
-    def start(self) -> str:
-        """First question. Nothing is known yet, so no extraction needed."""
+    # --- the planned interview ---------------------------------------------
+
+    def start(self) -> dict:
+        """The first step: checklist A."""
+        if self.protocol is None:
+            self.protocol = protocol_mod.load(allow_unreviewed=self.allow_unreviewed)
+        check_plan(self.protocol)
         self.planned = True
-        return self._ask(next_topic({}, self.asked))
+        return self._next_step()
+
+    def submit_checklist(self, group: str, answers: dict) -> dict:
+        """The patient's answer for every row of the open checklist, as
+        {question_id: True | False | None}, where None is "not sure" and is
+        only valid on a row that offers it. Refused unless every row carries
+        an answer the row allows: an untouched row must never be read as
+        "no" (hard rule 7)."""
+        if not self.pending or self.pending[0] != "checklist" or self.pending[1] != group:
+            raise ValueError(f"checklist {group!r} is not the open step")
+        rows = self.pending[2]
+        expected = {q.id for q in rows}
+        missing, extra = expected - set(answers), set(answers) - expected
+        if missing or extra:
+            raise ValueError(f"checklist {group}: missing {sorted(missing)}, "
+                             f"unexpected {sorted(extra)}")
+        unanswered = [q.id for q in rows if not q.allows(answers[q.id])]
+        if unanswered:
+            raise ValueError(f"checklist {group}: rows {unanswered} need an answer the row "
+                             "offers; a row left untouched is never read as no")
+        for q in rows:
+            self.checklist[q.fields[0]] = answers[q.id]
+            self.symptoms[q.fields[0]] = answers[q.id]
+        self.completed.add(("checklist", group))
+        self.pending = None
+        return self._next_step()
+
+    @property
+    def checklist_a_done(self) -> bool:
+        return ("checklist", "A") in self.completed
 
     def reply(self, answer: str) -> dict:
-        """Take the user's answer. Returns {"done": False, "question": ...}
-        or {"done": True, "symptoms": ...} once nothing needed is missing."""
+        """The patient's answer to the open chat question; returns the next step."""
+        if not self.pending or self.pending[0] != "chat":
+            raise ValueError("no chat question is open")
+        question = self.pending[1]
         self.messages.append({"role": "user", "content": answer})
+        if _not_latin(answer) and not self.notice_shown:
+            self.notice, self.notice_shown = NOT_ENGLISH_NOTICE, True
         self.symptoms = self.extract()
-        index = next_topic(self.symptoms, self.asked)
-        if index is None or len(self.asked) >= MAX_QUESTIONS:
-            self.done = True
-            return {"done": True, "symptoms": self.symptoms}
-        return {"done": False, "question": self._ask(index)}
+        unsettled = all(self.symptoms.get(f) is None for f in question.fields)
+        if unsettled and question.id not in self.reasked:
+            self.reasked.add(question.id)
+            return self._ask(question, again=True)
+        self.completed.add(("chat", question.id))
+        self.pending = None
+        return self._next_step()
 
-    def _ask(self, index: int) -> str:
-        """Have the model phrase plan item `index`. The system prompt ends by
-        demanding JSON, so the turn-level instruction keeps this to prose."""
-        topic = QUESTION_PLAN[index][1]
-        prompt = self.messages + [{"role": "system", "content": ASK_INSTRUCTION.format(topic=topic)}]
-        question = chat(prompt, self.model).strip()
-        self.messages.append({"role": "assistant", "content": question})
-        self.asked.add(index)
-        return question
+    def _next_step(self) -> dict:
+        """The next plan item that applies and is still open. Pure function of
+        what is known — no model involved."""
+        if any(self.symptoms.get(f) is True for f in RED_FLAGS):
+            return self._finish(red_flag=True)
+        for kind, key in QUESTION_PLAN:
+            if (kind, key) in self.completed:
+                continue
+            if kind == "checklist":
+                rows = [q for q in self.protocol.questions
+                        if q.input == "yesno_checklist" and q.group == key
+                        and q.applies(self.symptoms) and self.symptoms.get(q.fields[0]) is None]
+                if not rows:
+                    continue
+                self.pending = ("checklist", key, rows)
+                return {"type": "checklist", "group": key,
+                        "intro": self.protocol.fixed_text.get("checklist_intro"),
+                        "items": [{"id": q.id, "field": q.fields[0], "text": q.text,
+                                   "options": q.option_items()} for q in rows]}
+            question = next(q for q in self.protocol.questions if q.id == key)
+            if not question.applies(self.symptoms):
+                continue
+            if all(self.symptoms.get(f) is not None for f in question.fields):
+                continue  # already settled by an earlier answer
+            return self._ask(question)
+        return self._finish(red_flag=False)
+
+    def _ask(self, question, again: bool = False) -> dict:
+        text = (self.protocol.reask_template.format(question=question.text) if again
+                else question.text)
+        self.messages.append({"role": "assistant", "content": text})
+        self.pending = ("chat", question)
+        notice, self.notice = self.notice, None
+        return {"type": "question", "id": question.id, "text": text, "notice": notice}
+
+    def _finish(self, red_flag: bool) -> dict:
+        self.done = True
+        self.pending = None
+        return {"type": "done", "symptoms": self.symptoms, "red_flag": red_flag}
+
+    # --- extraction ----------------------------------------------------------
 
     def record(self, question: str, answer: str) -> None:
         """Add an already-asked question and its answer (for replay)."""
         self.messages.append({"role": "assistant", "content": question})
         self.messages.append({"role": "user", "content": answer})
 
+    def _chat_fields(self) -> list:
+        return [f for q in self.protocol.questions if q.input == "chat" for f in q.fields]
+
     def extract(self) -> dict:
         """Constrained-decode the transcript into the symptoms object.
 
-        Every field must come with the user's own words. A field whose quote
-        isn't actually in the transcript is dropped to null, which is what
-        stops the model inferring one field from another."""
+        Every field must come with the patient's own words. A field whose
+        quote isn't actually in the transcript is dropped to null, which is
+        what stops the model inferring one field from another. In the planned
+        interview only the chat fields are extracted; checklist answers are
+        the patient's clicks and are never overwritten."""
+        if self.planned and not self.checklist_a_done:
+            # No result before the red-flag rows are answered (lead, 2026-09-22),
+            # so "skip to result" can never skip checklist A.
+            raise ValueError("checklist A must be answered before a result")
+        fields = self._chat_fields() if self.planned else EVIDENCE_FIELDS
         messages = self.messages + [{"role": "user", "content": EXTRACTION_INSTRUCTION}]
-        raw = json.loads(chat(messages, self.model, schema=EVIDENCE_SCHEMA))
+        raw = json.loads(self.llm(messages, evidence_schema(fields)))
         said = _normalize(" ".join(m["content"] for m in self.messages if m["role"] == "user"))
 
-        symptoms = {"schema_version": "1.0"}
-        for field in EVIDENCE_FIELDS:
+        symptoms = {"schema_version": SCHEMA_VERSION}
+        symptoms.update({f: None for f in EVIDENCE_FIELDS})
+        symptoms.update(self.checklist)
+        for field in fields:
             entry = raw.get(field) or {}
             value, quote = entry.get("value"), entry.get("quote")
-            supported = bool(quote) and _normalize(quote) in said
-            if (supported and self.planned and _is_bare(quote)
-                    and FIELD_ITEM.get(field) not in self.asked):
-                supported = False  # a yes/no given to a different question
-            symptoms[field] = value if supported else None
-            if symptoms[field] == []:
-                symptoms[field] = None
+            supported = bool(quote) and _normalize(quote) in said and value not in (None, [])
+            if supported and self.planned and _is_bare(quote):
+                supported = False  # no chat question is answered by a bare yes/no
+            if supported:
+                symptoms[field] = value
+            elif self.planned:
+                # Re-extraction runs on every turn; a value verified on an
+                # earlier turn is kept rather than lost to a later miss. A new
+                # supported value still replaces it (the later answer wins).
+                symptoms[field] = self.symptoms.get(field)
         symptoms["notes"] = (raw.get("notes") or {}).get("value")
         return symptoms
 
@@ -223,25 +345,30 @@ class Interview:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default=DEFAULT_MODEL)
+    ap.add_argument("--allow-unreviewed", action="store_true",
+                    help="use the DRAFT-UNREVIEWED protocol (development only)")
     ap.add_argument("--out", help="Write the symptoms JSON here")
     args = ap.parse_args()
 
-    session = Interview(args.model)
-    print("(the interview ends by itself; type 'done' to stop early)\n")
-    question = session.start()
-    while True:
-        print(f"> {question}")
-        answer = input("  ")
-        if answer.strip().lower() in {"done", "quit", "exit"}:
-            symptoms = session.extract()
-            break
-        step = session.reply(answer)
-        if step["done"]:
-            symptoms = step["symptoms"]
-            break
-        question = step["question"]
+    session = Interview(args.model, allow_unreviewed=args.allow_unreviewed)
+    step = session.start()
+    while step["type"] != "done":
+        if step["type"] == "checklist":
+            answers = {}
+            for item in step["items"]:
+                reply = ""
+                while reply not in ("y", "n"):
+                    reply = input(f"[{step['group']}] {item['text']} (y/n) ").strip().lower()[:1]
+                answers[item["id"]] = reply == "y"
+            step = session.submit_checklist(step["group"], answers)
+        else:
+            if step["notice"]:
+                print(step["notice"])
+            step = session.reply(input(f"> {step['text']}\n  "))
+    if step["red_flag"]:
+        print("\n" + session.protocol.headlines["EMERGENCY"])
 
-    text = json.dumps(symptoms, indent=2, ensure_ascii=False)
+    text = json.dumps(step["symptoms"], indent=2, ensure_ascii=False)
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8")
         print(f"\nwrote {args.out}")

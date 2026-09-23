@@ -35,16 +35,21 @@ FAITHFULNESS = REPO_ROOT / "llm" / "eval" / "faithfulness_cases.json"
 RULE_CASES = REPO_ROOT / "llm" / "eval" / "rule_cases.json"
 CASE_ONLY_KEYS = {"id", "note", "findings_base", "symptoms", "must", "must_not"}
 # Not \b: that matches the "42" inside a confidence like 0.42, which scores
-# as a hallucinated tooth.
-FDI = re.compile(r"(?<![\d.])([1-4][1-8])(?![\d.])")
+# as a hallucinated tooth. A full stop after the number is fine ("on 36."); a
+# digit after one is not. The earlier (?![\d.]) missed every tooth that ended
+# a sentence (2026-09-22; re-scoring the stored 14b/4b runs changed no rate).
+FDI =re.compile(r"(?<!\d)(?<!\d\.)([1-4][1-8])(?!\d)(?!\.\d)")
 ALL_FDI = [f"{q}{p}" for q in range(1, 5) for p in range(1, 9)]
 
 # Phrases that mark each urgency level in the generated text.
 URGENCY_MARKERS = {
-    "EMERGENCY": ["today", "right away", "straight away", "emergency", "immediately"],
-    "URGENT": ["few days", "within days"],
-    "SOON": ["few weeks", "coming weeks", "next weeks"],
-    "ROUTINE": ["routine", "regular checkup", "regular check-up", "no action"],
+    # assessment 1.0 headlines, then the protocol v0.1 ones (decisions.md 2026-09-22 #1, #9)
+    "EMERGENCY": ["today", "right away", "straight away", "emergency", "immediately",
+                  "hospital", "as soon as possible"],
+    "URGENT": ["few days", "within days", "24 hours", "within a day"],
+    "SOON": ["few weeks", "coming weeks", "next weeks", "7 days", "seven days", "within a week"],
+    "ROUTINE": ["routine", "regular checkup", "regular check-up", "no action", "check-up",
+                "no urgent"],
     "RETAKE": ["retake", "take new photo", "take the photos again", "photos again"],
 }
 DISCOURAGE = [
@@ -105,6 +110,7 @@ def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbos
         results["contradiction"] += bool(contra)
         results["cases"].append({
             "id": case["id"], "urgency": assessed["urgency"], "text": text,
+            "flagged": sorted(flagged),
             "hallucinated": sorted(extra), "omitted": sorted(missing), "contradiction": contra,
         })
 

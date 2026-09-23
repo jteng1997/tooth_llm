@@ -7,9 +7,13 @@ questions only from the retrieved passages.
     python src/explain.py --findings findings.json \
                           [--symptoms s.json] [--ask "is it definitely a cavity?"]
 
-The assessment is computed here from findings + symptoms rather than
-passed in, so the text can never describe an urgency that rules.py did
-not produce.
+The assessment is handed in from src/triage.py (assessment 2.0), so the
+text restates an urgency that code has already checked. Without one, the
+rules.py result is computed here: that is the Test 2 baseline. Every reply
+is checked against the brief's guardrails (no medicine names or doses, no
+diagnosis, no home procedures, the "Based on the image, there is an
+indication of" wording); a reply that still breaks one after a single
+rewrite is replaced by fixed text.
 
 Knowledge passages carry their file's review_status. llm/README.md says
 not to ship anything still marked DRAFT-UNREVIEWED, so unreviewed
@@ -18,10 +22,13 @@ development only.
 """
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
-from assess import assess
+import interview
+import triage
+from assess import assess, rules
 from interview import chat, DEFAULT_MODEL
 from retrieval import Knowledge
 
@@ -69,16 +76,107 @@ def _first_query(findings: dict, assessment: dict) -> str:
     anything: the urgency being explained plus the kinds of finding."""
     types = sorted({d["type"] for t in findings.get("teeth", {}).values()
                     for d in t.get("detections", [])})
-    return " ".join([assessment["urgency"], assessment["rule_reason"].replace("_", " "),
-                     *types, "what this means and what to do"]).strip()
+    if "reasons" in assessment:  # assessment 2.0, from triage.py
+        why = [r["statement"] for r in assessment["reasons"]]
+    else:                        # 1.0, from rules.py
+        why = [assessment["rule_reason"].replace("_", " ")]
+    return " ".join([assessment["urgency"], *why, *types,
+                     "what this means and what to do"]).strip()
+
+
+# The brief's guardrails, checked on the text itself, because a prompt rule
+# alone is a request, not a guarantee. Conservative on purpose: every
+# medicine name is refused, over-the-counter ones included, since the brief
+# allows only a general mention of pain relief.
+_MEDICINES = ("amoxicillin", "amoxycillin", "penicillin", "metronidazole", "clindamycin",
+              "azithromycin", "erythromycin", "doxycycline", "cephalexin", "cefalexin",
+              "co-amoxiclav", "augmentin", "antibiotic", "codeine", "tramadol", "oxycodone",
+              "hydrocodone", "morphine", "diclofenac", "naproxen", "ibuprofen", "paracetamol",
+              "acetaminophen", "aspirin", "chlorhexidine", "benzocaine", "lidocaine",
+              "fluconazole", "nystatin", "prednisolone", "steroid")
+# A name list alone is not enough: research-pm's audit of "clean" ChatDoctor
+# answers found 8 of 15 medicine leaks under names the dataset's own spelling
+# correction had mangled ("petrol DT", "erosion forte", "stolen gum paint",
+# "President 5000 plus"). The shape survives even when the name does not, so
+# these match the shape of a prescription instead.
+#
+# Deliberately still missed: "Evil, Lyrics & Polite", "Mention violet",
+# "Metro lag". They carry no medicine shape at all, and a pattern loose
+# enough to catch them fires on ordinary words. Measured, not assumed: the
+# rules below flag 0 of the 60 stored qwen3:14b explanations. Do not widen
+# them without re-running that check (research-pm, 2026-09-23).
+_PRODUCT_SHAPES = (
+    r"\bforte\b|\bDT\b",                                   # erosion forte, petrol DT
+    r"\b(?:[A-Z][\w-]+|\d+)\s+(?:plus|XR|SR)\b",           # President 5000 plus
+    r"\b(?:tab|tablet|cap|capsule|syp|syrup|inj|injection)\.?\s+[A-Z][\w-]+",  # Tab Diploma
+    r"\b[\w-]+\s+(?:gel|ointment|paint|mouthwash|lozenges?|antiseptic)\b",     # gum paint
+    r"\b[A-Z][a-z]+\s+[A-Z]{2,}\s*\d+\b",                  # Humor HP 75
+)
+GUARDRAILS = [
+    ("names a medicine", re.compile(r"\b(" + "|".join(map(re.escape, _MEDICINES)) + r")s?\b", re.I)),
+    ("names a medicine by its shape", re.compile("|".join(_PRODUCT_SHAPES))),
+    ("gives a dose", re.compile(r"\b\d+(\.\d+)?\s?(mg|milligrams?|ml|mcg|g)\b"
+                                r"|\b(times|x) (a|per) day\b|\bevery \d+ hours\b"
+                                r"|\b(once|twice|three times) (a day|daily)\b", re.I)),
+    ("sounds like a diagnosis", re.compile(
+        r"\byou (definitely |clearly )?(have|'ve got|have got) (an? )?"
+        r"(cavity|cavities|caries|tooth decay|decay|abscess|infection|pulpitis|gum disease)\b"
+        r"|\bdefinitely (an? )?(cavity|cavities|caries|decay|abscess|infection)\b"
+        r"|\bis definitely\b|\bthis is (an? )?(cavity|caries|abscess)\b|\bi diagnose\b", re.I)),
+    ("suggests a home procedure", re.compile(
+        r"\b(pull|drain|pop|lance|file|drill)\w*\b[^.]{0,40}\b(yourself|at home)\b"
+        r"|\b(yourself|at home)\b[^.]{0,40}\b(pull|drain|pop|lance|file|drill)", re.I)),
+]
+FINDING_PHRASE = "based on the image, there is an indication of"
+
+# Words that make a follow-up message worth checking for a red flag. Like the
+# interview's keyword rule, a hit only starts a check: it never sets a field.
+RED_FLAG_KEYWORDS = re.compile(
+    r"\bswell\w*|\bpuffy\b|\bfever\b|\btemperature\b|\bshiver\w*|\bunwell\b|\bfaint\w*\b"
+    r"|\bbreath\w*|\bbreathe\b|\bswallow\w*|\bchok\w*|\bbleed\w*|\bblood\b"
+    r"|\bknocked\b|\bhit\b|\bfell\b|\binjur\w*|\bpassed out\b|\bchest pain\b"
+    r"|\btoo many\b|\boverdose\b|\bmore than the packet\b", re.I)
+
+
+def guardrail_violations(text: str, flagged_teeth: list = ()) -> list:
+    """What the text does that the brief forbids; empty when it is fine."""
+    found = [name for name, pattern in GUARDRAILS if pattern.search(text or "")]
+    if flagged_teeth and FINDING_PHRASE not in " ".join((text or "").lower().split()):
+        found.append('does not use "Based on the image, there is an indication of"')
+    return found
+
+
+def fallback_text(assessment: dict) -> str:
+    """Deterministic first response, used when the model's text keeps
+    breaking a guardrail. Plain, and built only from the assessment."""
+    parts = ["We looked at your two photos of the biting surfaces of your teeth."]
+    if assessment["retake_required"] and assessment["urgency"] == "RETAKE":
+        parts.append("The photos could not be used, so please take them again: good "
+                     "light, the whole arch in view, and the camera held still.")
+    elif assessment["flagged_teeth"]:
+        teeth = ", ".join(f"tooth {t} ({fdi_label(t)})" for t in assessment["flagged_teeth"])
+        parts.append(f"Based on the image, there is an indication of tooth decay on {teeth}.")
+    else:
+        parts.append("Nothing in these photos reached the level we report. That does not "
+                     "rule anything out.")
+    headline = assessment["headline"].strip()
+    # The protocol's headlines already end in a full stop; older 1.0 ones don't.
+    parts.append(headline if headline.endswith((".", "!", "?")) else headline + ".")
+    parts += assessment["limitations"]
+    parts.append("You can ask me questions about this result.")
+    return " ".join(parts)
 
 
 class Explanation:
     def __init__(self, findings: dict, symptoms: dict = None, model: str = DEFAULT_MODEL,
-                 allow_unreviewed: bool = False, knowledge: Knowledge = None):
+                 allow_unreviewed: bool = False, knowledge: Knowledge = None,
+                 assessment: dict = None):
+        """assessment: the 2.0 object from triage.assess(). Without one, the
+        rules.py result is explained — the Test 2 baseline."""
         self.findings = findings
         self.symptoms = symptoms
-        self.assessment = assess(findings, symptoms)
+        self.assessment = assessment or assess(findings, symptoms)
+        self.guardrail_log = []
         self.model = model
         self.allow_unreviewed = allow_unreviewed
         self.knowledge = knowledge or Knowledge()
@@ -107,7 +205,8 @@ class Explanation:
             _passages_block(passages),
             self._scope_instruction(),
         ])
-        return self._turn(content)
+        return self._checked_turn(content, self.assessment["flagged_teeth"],
+                                  fallback=fallback_text(self.assessment))
 
     def _scope_instruction(self) -> str:
         """What may be reported at all.
@@ -132,13 +231,68 @@ class Explanation:
         return (scope + "Any other detection in findings was below the reporting threshold "
                 "and must not be mentioned at all. Write the first response now.")
 
-    def ask(self, question: str) -> str:
-        passages = self._retrieve(question)
-        return self._turn(_passages_block(passages) + f"\n\nUser asks: {question}")
+    def red_flag_raised(self, text: str) -> bool:
+        """Did the patient just report a red flag in a follow-up message?
 
-    def _turn(self, content: str) -> str:
+        Design §1.6: a red flag reported after the result must still reach
+        EMERGENCY. Two stages, so a normal question costs nothing: a keyword
+        scan that only decides whether to look closer, then the same
+        evidence-checked extraction the interview uses, over this message
+        alone. The keywords never set a field — only the patient's quoted
+        words do, and only for the eight floor fields."""
+        if not RED_FLAG_KEYWORDS.search(text or ""):
+            return False
+        fields = list(rules.RED_FLAG_FIELDS)
+        messages = [{"role": "system", "content": interview.SYSTEM_PROMPT},
+                    {"role": "user", "content": text},
+                    {"role": "user", "content": interview.EXTRACTION_INSTRUCTION}]
+        try:
+            raw = json.loads(chat(messages, self.model, schema=interview.evidence_schema(fields)))
+        except (ValueError, KeyError):
+            return False
+        said = interview._normalize(text)
+        found = {}
+        for field in fields:
+            entry = raw.get(field) or {}
+            quote = entry.get("quote")
+            if (entry.get("value") is True and quote
+                    and interview._normalize(quote) in said and not interview._is_bare(quote)):
+                found[field] = True
+        if not found:
+            return False
+        self.symptoms = {**(self.symptoms or {}), **found}
+        # The floor fires on these, so this recomputation makes no model call.
+        self.assessment = triage.assess(self.findings, self.symptoms,
+                                        [{"role": "user", "content": text}], self.model,
+                                        allow_unreviewed=self.allow_unreviewed)
+        return True
+
+    def ask(self, question: str) -> str:
+        if self.red_flag_raised(question):
+            # The fixed emergency wording, not prose: the page switches to the
+            # emergency screen on the new assessment.
+            return self.assessment["headline"] + " " + self.assessment["safety_net"]
+        passages = self._retrieve(question)
+        return self._checked_turn(
+            _passages_block(passages) + f"\n\nUser asks: {question}",
+            fallback="I can't answer that safely here. Please ask a dentist or pharmacist.")
+
+    def _checked_turn(self, content: str, flagged_teeth=(), fallback: str = "") -> str:
+        """One turn, with the guardrails checked on the reply: one
+        regeneration that names the problem, then the fixed fallback."""
         self.messages.append({"role": "user", "content": content})
         reply = chat(self.messages, self.model)
+        problems = guardrail_violations(reply, flagged_teeth)
+        if problems:
+            retry = self.messages + [
+                {"role": "assistant", "content": reply},
+                {"role": "user", "content": "Rewrite your reply. It " + "; it ".join(problems)
+                                            + ". Follow the hard rules."}]
+            reply = chat(retry, self.model)
+            later = guardrail_violations(reply, flagged_teeth)
+            self.guardrail_log.append({"first": problems, "after_retry": later})
+            if later:
+                reply = fallback
         self.messages.append({"role": "assistant", "content": reply})
         return reply
 

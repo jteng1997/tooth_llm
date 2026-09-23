@@ -5,6 +5,11 @@ out: which teeth were found, which may have a cavity, how soon to see a dentist,
 and why. Research prototype — **a screening aid, not a diagnosis**. Runs fully
 local on one Windows machine; nothing leaves it.
 
+**Language: English only** for everything the project produces — the web app,
+all LLM interaction with users, prompts, knowledge, reports and docs. (The
+user may chat with the lead in Indonesian; that never carries into project
+output.)
+
 ## Architecture — hard rules
 
 ```
@@ -15,17 +20,25 @@ findings + symptoms + assessment + knowledge -> LLM (src/explain.py) -> text
 ```
 
 1. **The LLM never sees a photo** — only the JSON objects above.
-2. **The LLM never decides urgency.** `llm/rules.py` does. The LLM restates the
-   assessment and may not contradict, soften, escalate, add or drop teeth.
+2. **Urgency: the LLM decides, code guards the floor.** *(Being redesigned —
+   `docs/decisions.md`, 2026-09-22.)* The LLM will determine the triage level from
+   the patient's complaints and the findings, following a literature-based
+   triage protocol. A deterministic red-flag floor in code (swelling,
+   difficulty breathing or swallowing, fever, trauma → EMERGENCY) can only raise
+   urgency, never lower it. The LLM may never add, drop or contradict teeth in
+   the findings. Until the new design ships, `llm/rules.py` still decides.
 3. **JSON shapes live in `llm/interface.md`.** Change it first, then both sides.
 4. **`llm/rules.py` thresholds are clinical parameters.** Never change one
    without an entry in `docs/decisions.md` and the user's sign-off.
 5. **`llm/knowledge/` is `DRAFT-UNREVIEWED`** until a dentist signs it off.
    `allow_unreviewed=True` is development-only — never ship with it.
-6. **Python owns the interview plan** (`QUESTION_PLAN` in `src/interview.py`);
-   the model only phrases the question it is handed.
+6. **Python owns the interview** — the plan, the order, when to stop, and the
+   question text itself (fixed English wording from the triage protocol;
+   decided 2026-09-22). The LLM no longer phrases questions.
 7. **Never guess a symptom.** Each extracted field needs the patient's own words
-   as a quote checked against the transcript; unanswered means `null`.
+   as a quote checked against the transcript; unanswered means `null`. Yes/no
+   questions are answered on a checklist (decided 2026-09-22): each row needs an
+   explicit Yes or No, with no default, so an untouched row is never read as "no".
 8. **Compute deterministic facts, don't generate them** — e.g. tooth names from
    FDI numbers (`fdi_label` in `src/explain.py`).
 

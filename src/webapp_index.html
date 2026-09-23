@@ -50,6 +50,32 @@
   .note{font-size:.8rem;color:var(--muted);}
   pre{font-family:var(--mono);font-size:.72rem;background:var(--ground);border:1px solid var(--rule);border-radius:3px;padding:.7rem;overflow-x:auto;max-height:260px;}
   .spinner{font-size:.85rem;color:var(--muted);}
+  .disclaimer{font-size:.85rem;border-left:3px solid var(--accent);padding:.35rem .7rem;background:var(--accent-soft);margin:0 0 .9rem;}
+  .disclaimer:empty,.safety:empty{display:none;}
+  .safety{font-size:.9rem;border-left:3px solid var(--urgent);padding:.35rem .7rem;margin:.8rem 0;}
+  .checklist{margin:0 0 1rem;}
+  .checklist fieldset{border:0;border-bottom:1px solid var(--rule);margin:0;padding:.6rem 0;
+    display:grid;grid-template-columns:1fr auto;gap:.4rem 1rem;align-items:center;}
+  .checklist legend{float:left;padding:0;font-size:.95rem;}  /* float lets legend sit in the grid */
+  .checklist .yn{display:flex;gap:.4rem;}
+  .checklist .yn label{display:flex;align-items:center;justify-content:center;gap:.35rem;margin:0;
+    min-width:4.5rem;min-height:44px;padding:0 .8rem;border:1px solid var(--rule);border-radius:3px;
+    font-size:.95rem;font-weight:500;cursor:pointer;background:var(--ground);}
+  .checklist .yn input{margin:0;width:1.1rem;height:1.1rem;accent-color:var(--accent);}
+  .checklist .yn label:has(input:checked){border-color:var(--accent);background:var(--accent-soft);}
+  .checklist .yn label:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:2px;}
+  .checklist .actions{display:flex;align-items:center;gap:.8rem;margin-top:.9rem;flex-wrap:wrap;}
+  @media (max-width:560px){
+    .wrap{padding:1.2rem 12px 3rem;}
+    section{padding:.9rem .8rem;}
+    .checklist fieldset{grid-template-columns:1fr;}
+    .checklist .yn label{flex:1;min-width:0;padding:0 .4rem;white-space:nowrap;}
+    .checklist .actions button{width:100%;}
+    .ask{flex-wrap:wrap;}
+    .ask input{flex:1 1 100%;}
+  }
+  #emergency-card{border:2px solid var(--emergency);}
+  #emergency-card .headline{font-family:var(--display);font-size:1.6rem;line-height:1.3;margin:.5rem 0 1rem;}
   [hidden]{display:none !important;}
 </style>
 </head>
@@ -68,6 +94,13 @@
       <span id="upload-status" class="spinner"></span></p>
   </section>
 
+  <section id="emergency-card" role="alert" hidden>
+    <span class="badge" id="emergency-badge" style="background:var(--emergency)"></span>
+    <p class="headline" id="emergency-headline"></p>
+    <p class="disclaimer" id="emergency-disclaimer"></p>
+    <details><summary class="note">symptoms + assessment JSON</summary><pre id="emergency-json"></pre></details>
+  </section>
+
   <section id="vision-card" hidden>
     <h2>2 · What the vision models found</h2>
     <div class="views" id="views"></div>
@@ -77,27 +110,38 @@
 
   <section id="interview-card" hidden>
     <h2>3 · A few questions</h2>
+    <p class="disclaimer" id="interview-disclaimer"></p>
+    <form class="checklist" id="checklist" hidden novalidate>
+      <p class="note" id="checklist-intro"></p>
+      <div id="checklist-rows"></div>
+      <div class="actions">
+        <button type="submit" id="checklist-submit" disabled>Submit answers</button>
+        <span class="note" id="checklist-status" aria-live="polite"></span>
+      </div>
+    </form>
     <div class="chat" id="chat"></div>
-    <div class="ask">
+    <div class="ask" id="chat-input">
       <input id="answer" placeholder="Type your answer…" autocomplete="off">
       <button id="send">Send</button>
       <button id="finish" class="ghost">Skip to result</button>
     </div>
-    <p class="note">The questions stop by themselves once there's enough to go on. Answers are recorded only when your own words support them; anything you weren't asked stays blank.</p>
+    <p class="note">The questions stop by themselves once there's enough to go on. Checklist answers are recorded as you click them; typed answers are recorded only when your own words support them. Anything you weren't asked stays blank.</p>
   </section>
 
   <section id="result-card" hidden>
     <h2>4 · Result</h2>
     <p><span id="badge" class="badge"></span> <strong id="headline"></strong></p>
+    <p class="disclaimer" id="result-disclaimer"></p>
     <p id="explanation"></p>
     <p class="teeth" id="flagged"></p>
+    <p class="safety" id="safety-net"></p>
     <div class="ask" style="margin-top:.8rem">
       <input id="question" placeholder="Ask a follow-up question…" autocomplete="off">
       <button id="ask">Ask</button>
     </div>
     <div class="chat" id="followups" style="margin-top:.8rem"></div>
     <details style="margin-top:.6rem"><summary class="note">symptoms + assessment JSON</summary><pre id="result-json"></pre></details>
-    <p class="note" style="margin-top:.8rem">Screening aid only. The urgency comes from fixed rules in Python, not from the language model. Not a diagnosis, and the clinical content has not yet been reviewed by a dentist.</p>
+    <p class="note" style="margin-top:.8rem">Screening aid only, not a diagnosis. The urgency is proposed by the language model following a written triage protocol; fixed checks in Python can raise it but never lower it. The protocol and the clinical content have not yet been reviewed by a dentist.</p>
   </section>
 </div>
 
@@ -132,15 +176,140 @@ function resetPage(){
   session = null;
   for(const id of ["views", "chat", "followups"]) $(id).innerHTML = "";
   for(const id of ["vision-note", "findings-json", "badge", "headline", "explanation",
-                   "flagged", "result-json", "upload-status"]) $(id).textContent = "";
+                   "flagged", "safety-net", "result-json", "upload-status",
+                   "interview-disclaimer", "result-disclaimer", "emergency-badge",
+                   "emergency-headline", "emergency-disclaimer", "emergency-json"]) $(id).textContent = "";
   $("badge").style.background = "";
-  for(const id of ["vision-card", "interview-card", "result-card"]) $(id).hidden = true;
+  for(const id of ["emergency-card", "vision-card", "interview-card", "result-card"]) $(id).hidden = true;
   $("answer").value = ""; $("question").value = "";
+  hideChecklist();
   setInterviewEnabled(true);
 }
 
 function setInterviewEnabled(on){
   for(const id of ["answer", "send", "finish"]) $(id).disabled = !on;
+}
+
+// Checklist: closed questions answered all at once. Rows, their text and their
+// options come from the server; nothing is pre-selected, and Submit stays
+// disabled until every row has an answer. The server re-checks on its side.
+const YES_NO = [{label: "Yes", value: true}, {label: "No", value: false}];
+let checklistRows = [];
+let checklistGroup = null;
+
+function showChecklist(rows, intro, group){
+  checklistRows = rows;
+  checklistGroup = group || null;
+  $("checklist-intro").textContent = intro || "Please answer every question.";
+  const box = $("checklist-rows");
+  box.innerHTML = "";
+  rows.forEach((row, i) => {
+    const fs = document.createElement("fieldset");
+    const legend = document.createElement("legend");
+    legend.textContent = row.text;
+    const yn = document.createElement("div");
+    yn.className = "yn";
+    rowOptions(row).forEach((option, k) => {
+      const lab = document.createElement("label");
+      const input = document.createElement("input");
+      input.type = "radio";
+      input.name = `cl-${i}`;
+      input.value = k;  // index into the row's options; the value itself may be null
+      input.required = true;
+      input.addEventListener("change", updateChecklistState);
+      lab.append(input, document.createTextNode(option.label));
+      yn.appendChild(lab);
+    });
+    fs.append(legend, yn);
+    box.appendChild(fs);
+  });
+  $("checklist").hidden = false;
+  $("chat-input").hidden = true;  // one way to answer at a time
+  setChecklistEnabled(true);
+  updateChecklistState();
+  box.querySelector("input")?.focus();
+}
+
+function rowOptions(row){
+  return (row.options && row.options.length) ? row.options : YES_NO;
+}
+
+function checklistAnswers(){
+  // {row id: the option's value} for answered rows only, as the interview
+  // expects (interface.md 2.1). A missing key means unanswered; a present
+  // null is the patient picking "Not sure", which records null.
+  const answers = {};
+  checklistRows.forEach((row, i) => {
+    const picked = document.querySelector(`input[name="cl-${i}"]:checked`);
+    if(picked) answers[row.id] = rowOptions(row)[Number(picked.value)].value;
+  });
+  return answers;
+}
+
+function updateChecklistState(){
+  const left = checklistRows.length - Object.keys(checklistAnswers()).length;
+  $("checklist-submit").disabled = left > 0;
+  $("checklist-status").textContent = left > 0
+    ? `${left} ${left === 1 ? "question" : "questions"} still to answer.` : "";
+}
+
+function setChecklistEnabled(on){
+  for(const el of $("checklist").querySelectorAll("input")) el.disabled = !on;
+  $("checklist-submit").disabled = !on || Object.keys(checklistAnswers()).length < checklistRows.length;
+}
+
+function hideChecklist(){
+  checklistRows = [];
+  checklistGroup = null;
+  $("checklist-rows").innerHTML = "";
+  $("checklist-intro").textContent = "";
+  $("checklist-status").textContent = "";
+  $("checklist").hidden = true;
+  $("chat-input").hidden = false;
+}
+
+$("checklist").addEventListener("submit", async e => {
+  e.preventDefault();
+  const answers = checklistAnswers();
+  if(Object.keys(answers).length < checklistRows.length) return;
+  const mine = session, group = checklistGroup;
+  setChecklistEnabled(false);
+  $("checklist-status").textContent = "Sending…";
+  try{
+    const form = new FormData();
+    form.append("session", mine); form.append("group", group);
+    form.append("answers", JSON.stringify(answers));
+    const data = await post("/api/checklist", form);
+    if(mine !== session) return;  // page was reset while waiting
+    hideChecklist();
+    await renderStep(data.step);
+  }catch(err){
+    if(mine !== session) return;
+    $("checklist-status").textContent = "Error: " + err.message;
+    setChecklistEnabled(true);
+  }
+});
+
+// One step at a time, as the server hands it over (interface.md 2.1):
+// a checklist to fill in, a chat question to answer, or done.
+async function renderStep(step){
+  if(step.type === "checklist"){
+    showChecklist(step.items, step.intro, step.group);
+    return;
+  }
+  if(step.type === "question"){
+    hideChecklist();
+    if(step.notice) bubble("chat", step.notice, "bot");
+    bubble("chat", step.text, "bot");
+    setInterviewEnabled(true);
+    $("answer").focus();
+    return;
+  }
+  // done: a red flag goes straight to the emergency screen, with no wind-down.
+  hideChecklist();
+  setInterviewEnabled(false);
+  if(!step.red_flag) bubble("chat", "Thanks — that’s everything I need.", "bot");
+  await showResult();
 }
 
 $("upper").addEventListener("change", resetPage);
@@ -164,13 +333,14 @@ $("analyse").onclick = async () => {
       return;
     }
     session = data.session;
+    $("interview-disclaimer").textContent = data.disclaimer;
     renderVision(data);
     $("vision-card").hidden = false;
     $("interview-card").hidden = false;
-    bubble("chat", data.question, "bot");
     $("upload-status").textContent = "";
-    $("answer").focus();
+    await renderStep(data.step);
   }catch(err){
+    if(mine !== generation) return;  // a newer screening owns the page now
     $("upload-status").textContent = "Failed: " + err.message;
   }finally{
     $("analyse").disabled = false;
@@ -179,9 +349,9 @@ $("analyse").onclick = async () => {
 
 function renderVision(data){
   $("views").innerHTML = "";
-  let flaggedCount = 0;
+  let reactedCount = 0;
   for(const [view, info] of Object.entries(data.views)){
-    flaggedCount += info.crops.length;
+    reactedCount += info.crops.length;
     const box = document.createElement("div");
     box.className = "view";
     const reasons = info.quality.reasons.length ? info.quality.reasons.join(", ") : "no issues";
@@ -194,16 +364,18 @@ function renderVision(data){
         const c = document.createElement("div");
         c.className = "crop";
         c.innerHTML = `<img src="${crop.image}" alt="tooth ${crop.fdi}">
-          <span>${crop.fdi} · ${crop.confidence.toFixed(2)}</span><span>${crop.name}</span>`;
+          <span>${crop.fdi}</span><span>${crop.name}</span>`;
         strip.appendChild(c);
       }
       box.appendChild(strip);
     }
     $("views").appendChild(box);
   }
-  $("vision-note").textContent = flaggedCount
-    ? `${flaggedCount} ${flaggedCount === 1 ? "tooth" : "teeth"} flagged for a closer look. Boxes mark what the detector reacted to.`
-    : "No teeth flagged by the caries detector.";
+  // The crops include weak detections; only teeth that reach the reporting
+  // threshold are named in the result, so this note makes no finding itself.
+  $("vision-note").textContent = reactedCount
+    ? `The detector reacted to ${reactedCount} ${reactedCount === 1 ? "tooth" : "teeth"} (boxes). The result lists only the teeth that reach the reporting threshold.`
+    : "The detector did not react to any tooth. This does not rule out a problem.";
   $("findings-json").textContent = JSON.stringify(data.findings, null, 2);
 }
 
@@ -218,15 +390,9 @@ $("send").onclick = async () => {
     const form = new FormData(); form.append("session", mine); form.append("message", text);
     const data = await post("/api/answer", form);
     if(mine !== session) return;  // page was reset while waiting
-    if(data.done){
-      bubble("chat", "Thanks — that's everything I need.", "bot");
-      await showResult();
-      return;
-    }
-    bubble("chat", data.question, "bot");
-    setInterviewEnabled(true);
-    $("answer").focus();
+    await renderStep(data.step);
   }catch(err){
+    if(mine !== session) return;
     bubble("chat", "Error: " + err.message, "bot");
     setInterviewEnabled(true);
   }
@@ -246,35 +412,62 @@ async function showResult(){
     const form = new FormData(); form.append("session", mine);
     const data = await post("/api/result", form);
     if(mine !== session) return;
-    const urgency = data.assessment.urgency;
-    $("badge").textContent = urgency;
-    $("badge").style.background = `var(--${urgency.toLowerCase()})`;
-    $("headline").textContent = data.assessment.headline;
+    if(data.assessment.urgency === "EMERGENCY"){
+      showEmergency(data.assessment, data.symptoms, data.disclaimer);
+      return;
+    }
+    const a = data.assessment;
+    $("badge").textContent = a.urgency;
+    $("badge").style.background = `var(--${a.urgency.toLowerCase()})`;
+    $("headline").textContent = a.headline;
+    $("result-disclaimer").textContent = data.disclaimer;
     $("explanation").textContent = data.explanation;
-    $("flagged").textContent = data.assessment.flagged_teeth.length
-      ? "Flagged teeth: " + data.assessment.flagged_teeth.join(", ")
-      : "No teeth flagged.";
-    $("result-json").textContent = JSON.stringify(
-      {symptoms: data.symptoms, assessment: data.assessment}, null, 2);
+    $("flagged").textContent = a.retake_required
+      ? "The photos could not be used, so no tooth was assessed. Please retake them."
+      : data.flagged_names.length
+        ? `${data.finding_phrase} ${data.flagged_names.join(", ")}.`
+        : "Nothing in the photos reached the reporting threshold. This does not rule out a problem.";
+    $("safety-net").textContent = a.safety_net || "";
+    $("result-json").textContent = JSON.stringify({symptoms: data.symptoms, assessment: a}, null, 2);
     $("result-card").hidden = false;
     $("result-card").scrollIntoView({behavior:"smooth", block:"start"});
   }catch(err){
+    if(mine !== session) return;
     bubble("chat", "Error: " + err.message, "bot");
     setInterviewEnabled(true);  // let them retry; the interview itself isn't lost
   }
 }
 
+// The one emergency screen: everything else on the page goes away, and the
+// only way on is new photos (which reset the page as usual).
+function showEmergency(assessment, symptoms, disclaimer){
+  setInterviewEnabled(false);
+  for(const id of ["vision-card", "interview-card", "result-card"]) $(id).hidden = true;
+  $("emergency-badge").textContent = assessment.urgency;
+  $("emergency-headline").textContent = assessment.headline;
+  $("emergency-disclaimer").textContent = disclaimer;
+  $("emergency-json").textContent = JSON.stringify({symptoms, assessment}, null, 2);
+  $("emergency-card").hidden = false;
+  $("emergency-card").scrollIntoView({behavior:"smooth", block:"start"});
+}
+
 $("ask").onclick = async () => {
   const text = $("question").value.trim();
   if(!text || !session) return;
+  const mine = session;
   bubble("followups", text, "me");
   $("question").value = "";
   $("ask").disabled = true;
   try{
-    const form = new FormData(); form.append("session", session); form.append("message", text);
+    const form = new FormData(); form.append("session", mine); form.append("message", text);
     const data = await post("/api/ask", form);
+    if(mine !== session) return;  // page was reset while waiting
+    if(data.assessment && data.assessment.urgency === "EMERGENCY"){
+      showEmergency(data.assessment, null, $("result-disclaimer").textContent);
+      return;
+    }
     bubble("followups", data.answer, "bot");
-  }catch(err){ bubble("followups", "Error: " + err.message, "bot"); }
+  }catch(err){ if(mine === session) bubble("followups", "Error: " + err.message, "bot"); }
   finally{ $("ask").disabled = false; $("question").focus(); }
 };
 $("question").addEventListener("keydown", e => { if(e.key === "Enter") $("ask").click(); });
