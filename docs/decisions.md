@@ -44,6 +44,109 @@ The 20 rule cases in `llm/eval/rule_cases.json` also need blind dentist labels.
 
 ## Decided
 
+### 2026-09-23 — Test 5 pre-scoring amendments (research-pm)
+Made before any held-out LLM scoring, in answer to qa-engineer; details in
+`docs/plans/test5-analysis-spec.md` §9.
+1. **Unwarranted RETAKE.** No held-out key pairs unusable photos with SOON or
+   ROUTINE, so a RETAKE on those keys is never called for. It now stays in
+   the denominator as a miss (exact agreement, recall), not an exclusion.
+   RETAKE on EMERGENCY/URGENT is unchanged (under-triage, severe). Why:
+   excluding it let a system drop hard cases from every metric.
+2. **Underpowered McNemar** (< 10 discordant pairs): report b, c, each
+   system's under-triage with a Clopper-Pearson CI on the common set, and the
+   exact CI for b/(b+c); no p-value.
+3. **Stability list fixed** to 20 cases where the model is called (all 8
+   narrative cases, 2 injection, 10 seeded others). The code's seeded
+   5-per-level pick spent 5 slots on floor-decided EMERGENCY cases with no
+   model call and drew no narrative case. Two paraphrases each are written in
+   P7.
+4. **Dev set:** research-pm writes 100 fresh keys (`labels/dev/`, seed
+   20260924, no fact copied from held-out); qa-engineer writes the text in P7
+   (dev first) and converts it to `llm/eval/triage_vignettes_dev.json`.
+   Built the same day: `labels/dev/triage_dev_keys.json`, 100 keys (25 per
+   level, 45 boundary, 5 SOON/ROUTINE with unusable photos), 0 protocol
+   mismatches; `check_triage.py --validate-only` 0 errors. In git: dev is
+   not secret and llm-dev may read it.
+   **No held-out copies, how checked:** the builder compares every dev fact
+   with every held-out fact (triage and end-to-end keys, 33 distinct) by
+   token Jaccard and refuses to write at ≥ 0.5 (P7's own near-duplicate bar
+   is 0.8). Result: 46 distinct dev facts, highest overlap 0.35. Tooth sets,
+   durations and styles come from a different seed (20260924).
+   Also checked: no dev fact names a trigger its key's `pain_triggers` lacks
+   (0 of the reached dev keys; 3 found and reworded before this count).
+
+### 2026-09-23 — Test 5 run log: baseline `rules`, config f8adf24e3fd9360a
+Run by qa-engineer, 2026-09-23 16:56, `check_triage.py --system rules` on the
+200 held-out triage keys (cases sha256 dfe0229d…, protocol v0.1, commit
+6bf9bcf with a dirty tree). No model involved. Result identical to the dry run
+(§8 of the spec): `rules` under-triage 51/200 = 25.5% (CI 19.6–32.1), severe
+31, missed EMERGENCY 25, over 10, κ 0.595 (CI 0.50–0.68); `protocol_check`
+8/200 = 4.0% (CI 1.7–7.7), κ 0.967 (CI 0.94–0.99). No RETAKE was excluded,
+so the §9.1 amendment does not change these numbers. This is the baseline,
+not an LLM configuration; the held-out LLM scoring has not happened.
+
+### 2026-09-23 — P7: one more prompt-input rewrite (research-pm)
+qa-engineer's prompt dry run found the fact "short twinge with cold or sweet
+things…" on 18 reached keys (14 triage: 7 `["cold"]`, 7 `["sweet"]`; 4
+end-to-end, all `["sweet"]`) whose `pain_triggers` holds only one of the two.
+Carrying the fact would make every one a triggers disagreement (14/420 = 3.3%
+of triage chat cells, above the 2% bar) through a key-authoring slip, not a
+text error. Fixed in the prompt input only (`p7_fact_rewrites.json`): the
+fact loses the trigger words and the single trigger comes from the "must get
+across" line. Keys unchanged, so no level can move.
+No other fact/trigger conflict among reached held-out keys (research-pm's and
+qa-engineer's scans agree).
+Evidence: key-field counts only (4 unusable-photo keys, all URGENT or
+EMERGENCY; 155 non-floor keys; 8 narrative). No held-out outcome seen.
+
+### 2026-09-23 — Wave 2 plan: GPU queue order (research-pm, for the lead)
+One heavy job at a time, in this order:
+1. Test 2 / Test 3 verification of llm-dev's extraction fixes.
+2. P7 generation, then P7 blind extraction (model B).
+3. Held-out Test 5, once `check_triage.py` is aligned with the pre-registered
+   spec and P7's residual disagreement is ≤ 2%.
+4. Topic-cleanup run (2.5 h, the 2,388 `oral_soft_tissue` rows) — lowest.
+
+On item 4: **deferred until Test 5 has been scored** (research-pm's
+proposal, accepted by the lead 2026-09-23; not cancelled). The filtered corpus now feeds nothing:
+the silver labels are closed, and the only other planned use is the QLoRA
+fine-tune, which happens only if measured results fall short (2026-09-22).
+If a fine-tune is ever started, run the cleanup first: ~80% of those 2,388
+rows are not dental (topic-classifier trial, 20/20 against hand labels) and
+would pollute the training set.
+Status at the start of wave 2: the run never happened (`dataset/dental_qa/`
+has only the 15:08 trial file); P7 had not started.
+
+### 2026-09-23 — P7 models and generation prompt
+Generator: **llama3.1:8b** (Meta). Model B for the blind extraction:
+**gemma3:12b** (Google). System under test: qwen3:14b (Alibaba). Three
+different families, as spec §4/§6 ask; each fits the 12 GB RTX 3060 alone
+(about 4.9 GB and 8.1 GB at Q4). Not used: the `oralgpt` models (base family
+unconfirmed, so they may be Qwen) and qwen3:4b (same family as the system
+under test).
+Why B is the larger model: B's own misreads count against the ≤ 2% residual
+disagreement bar, so the stronger extractor goes there. Generator mistakes
+are caught by the automatic checks and regenerated.
+Threat, stated either way: the text is written by one model family, so its
+phrasing habits are part of the test. Report it in the methods.
+Prompt and settings: `docs/plans/p7-generation-prompt.md` (temperature 0.8,
+seed 20260923 + attempt, batched by style). Three method calls made there,
+none clinical:
+- **Chat fields where the chat was never reached** (no pain, or a checklist-A
+  red flag: 116/200 triage, 35/60 end-to-end keys) are null because the
+  question was never asked. For these, spec §2.4 (carry every fact) wins over
+  §2.3, and §6 does not score their chat fields: a time a patient mentions
+  with a red flag stays in the text although `duration_days` is null.
+- **Three facts are rewritten in the prompt input only** (the key is
+  unchanged): two describe checklist clicks, one refers to the photo result,
+  none of which a patient would type. Mapping kept with the keys
+  (`labels/heldout/p7_fact_rewrites.json`), out of git.
+- **Field values reach the generator as plain-English lines**, never as field
+  names or enum strings, and the chat questions as our paraphrased topics,
+  never the fixed question text.
+Also: the level-name and 5-gram checks exempt the verbatim injection lines,
+which contain "routine" and "emergency" by design.
+
 ### 2026-09-23 — Criterion R0 removed from the protocol
 R0 (ROUTINE, `images_usable == true`) was "none of the above" written as a
 criterion: it held on every usable photo. llm-dev measured the cost — the

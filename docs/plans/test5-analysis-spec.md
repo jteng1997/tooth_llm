@@ -17,7 +17,7 @@ it is otherwise too easy to pick the flattering cut after the fact.
 |---|---|---|---|
 | Held-out, triage-level | `labels/heldout/triage_heldout_keys.json` | 200 (EMERGENCY 45, URGENT 55, SOON 55, ROUTINE 45; 84 boundary) | qa-engineer, to run. Never llm-dev. |
 | Held-out, end-to-end | `labels/heldout/e2e_keys.json` | 60 (15 per level) | same |
-| Dev | qa-engineer + llm-dev's set | 100 | anyone; all tuning happens here |
+| Dev | `llm/eval/triage_vignettes_dev.json` (built as in §9.4) | 100 | anyone; all tuning happens here |
 
 The key is the level the protocol gives, computed from the criteria and
 checked against the loader (0 mismatches at v0.1). **It is not a dentist's
@@ -65,10 +65,12 @@ Also report, as pre-declared sub-counts:
 fixed here (added 2026-09-23 after the dry run, §8): with an EMERGENCY or
 URGENT key, a RETAKE counts as **under-triage and as severe** — asking for new
 photos when the patient needs care today delays it, and names no urgency at
-all. With a SOON or ROUTINE key it is neither under- nor over-triage: the case
-is excluded from the level metrics and the exclusions are reported as a count.
-Without this rule a system could dodge the primary endpoint by asking for
-photos.
+all. With a SOON or ROUTINE key it is neither under- nor over-triage; what
+happens next depends on the photos (amended before scoring, §9.1): if they were
+unusable, RETAKE is the designed output and the case is excluded from the
+level metrics and counted; if they were usable, it is an **unwarranted
+RETAKE** and stays in the denominator as a miss. Without this rule a system
+could dodge the primary endpoint by asking for photos.
 
 **Paired tests** are computed only on cases scored for both systems (the two
 may exclude different RETAKE cases).
@@ -83,13 +85,14 @@ may exclude different RETAKE cases).
 **Head-to-head (`final` vs `rules`).** Exact McNemar on the discordant pairs
 for under-triage, two-sided, α = 0.05. If fewer than 10 discordant pairs,
 report the counts and the exact CI only and say the comparison is
-underpowered; do not report a p-value alone.
+underpowered; do not report a p-value alone. What "the counts and the exact
+CI" means is fixed in §9.2.
 
 **Operational.** Valid-output rate, retry rate, fallback-to-rules rate (bar:
 ≤ 1%), the `decided_by` distribution (how often the LLM's own level decided
 the outcome), latency p50/p95 for the triage call, and stability: each of 20
 pre-chosen held-out cases run 3 times plus 2 paraphrases, reporting the share
-with an identical level.
+with an identical level. The 20 cases and the paraphrases are fixed in §9.3.
 
 **End-to-end set.** Same metrics, plus error attribution for every case that
 misses the key, into exactly one bucket:
@@ -206,3 +209,95 @@ and `rules.py`, with no model. Three things it changed:
 The dry run is scratch, not the implementation; `src/check_triage.py` is
 qa-engineer's and should reproduce these numbers on the same inputs as its
 first sanity check.
+
+## 9. Pre-scoring amendments, 2026-09-23
+
+Made by research-pm in answer to qa-engineer's questions while aligning
+`check_triage.py`, **before any held-out LLM scoring** and before P7 text
+exists. Logged in `docs/decisions.md`. Nothing here was chosen after seeing a
+held-out result; the only held-out runs so far are the no-model dry run in §8.
+
+### 9.1 RETAKE with a SOON or ROUTINE key
+
+No held-out key, triage-level or end-to-end, has unusable photos with a SOON
+or ROUTINE level (the 4 unusable-photo keys are 3 URGENT, 1 EMERGENCY). So on
+held-out, **every** RETAKE with a SOON or ROUTINE key is one the photos did
+not call for. Excluding those would let a system make hard cases disappear
+from every denominator, which is the dodge §3 exists to stop.
+
+| Key | Photos | System says RETAKE → |
+|---|---|---|
+| EMERGENCY / URGENT | any | under-triage, severe (unchanged) |
+| SOON / ROUTINE | unusable | designed output: excluded from level metrics, counted as a correct RETAKE in the photo-quality table (unchanged; only dev can have these) |
+| SOON / ROUTINE | usable | **unwarranted RETAKE**: stays in n; counts as a disagreement in exact agreement and as a miss in that level's recall; is neither under- nor over-triage; is left out of weighted κ (it has no place on the scale) with the κ n stated. Reported as its own count with an exact CI. |
+
+A system that returns a level where RETAKE was designed is scored on that
+level against the key, as now.
+
+### 9.2 The underpowered head-to-head
+
+With fewer than 10 discordant pairs, report, on the common case set:
+- n_common;
+- b = cases only `final` under-triaged, c = cases only `rules`
+  under-triaged;
+- each system's under-triage count and Clopper-Pearson 95% CI on n_common;
+- the Clopper-Pearson 95% CI for b / (b + c), the share of discordant pairs
+  that go against `final` — the exact interval behind McNemar's test. Omit it
+  when b + c = 0 and say so.
+
+No p-value, and the sentence: "underpowered: fewer than 10 discordant pairs,
+so no test of a difference is reported." Two per-system CIs that overlap do
+not show the systems are equal, and the report must not say they do.
+Expected in practice: the triage-level set will not be underpowered (the dry
+run has `rules` under-triaging 51/200); the 60-case end-to-end set and dev
+subsets may be.
+
+### 9.3 The 20 stability cases and their paraphrases
+
+The seeded pick in `check_triage.py` (5 per level) would spend 5 of 20
+slots on EMERGENCY cases that the red-flag floor decides with no model call,
+so they are stable by construction, and it drew none of the 8 narrative
+cases, the only ones where the model can change the outcome (§3a). Replaced
+by a stratified list of cases where the model is actually called, chosen
+from key fields only (`labels/heldout/pick_stability.py`, seed 20260923):
+
+- all 8 narrative-criterion cases (5 × S3, 3 × U8);
+- 2 injection cases (1 SOON, 1 ROUTINE);
+- 4 URGENT and 3 SOON boundary cases, seeded;
+- 3 ROUTINE cases, one each of missing tooth, old fillings, all clear
+  (no ROUTINE case outside the injection set is marked boundary).
+
+Fixed list: `H032 H081 H095 H104 H108 H134 H178 H198 H080 H070 H115 H136 H101
+H170 H090 H047 H010 H008 H124 H062` (SOON 9, URGENT 7, ROUTINE 4).
+
+Stability is reported for `llm_proposed` and for `final`, as the share of the
+20 whose five runs (3 repeats of `patient_words`, then 2 paraphrases) all give
+the same level; repeats-only and paraphrases-only shares also reported. It
+does not describe EMERGENCY cases, which never reach the model; say so.
+
+Paraphrases are written in P7 by the same generator, prompt and style as the
+case's `patient_words`, with seeds 20260923 + 1000 and + 2000, stored in the
+key as `paraphrases`. They pass every P7 automatic check and the §6 blind
+extraction, and are regenerated if their token Jaccard with the case's own
+`patient_words` or the other paraphrase is above 0.8 (a near-copy measures
+nothing).
+
+### 9.4 The dev set (`llm/eval/triage_vignettes_dev.json`)
+
+- **Keys: research-pm.** `labels/dev/build_dev_keys.py` →
+  `labels/dev/triage_dev_keys.json`, tracked in git, same shape and the same
+  protocol-consistency check as the held-out builder. 100 keys, 25 per level,
+  ids `V001`–`V100`, seed 20260924. Same archetype coverage as held-out (the
+  archetypes follow the protocol's criteria, which are public), plus at least
+  4 SOON/ROUTINE keys with unusable photos so the designed RETAKE is
+  exercised on dev. **Facts are newly written**: no fact string, tooth set or
+  duration pattern is copied from held-out, and the builder refuses to write
+  if any fact matches a held-out fact exactly.
+- **Patient words: qa-engineer, inside the P7 run**, same generator, prompt,
+  checks and §6 blind extraction, generator seeds 20260924 + attempt. Dev goes
+  **first** in the GPU queue so llm-dev can tune on it while held-out text is
+  being written.
+- **Conversion: qa-engineer** writes `llm/eval/triage_vignettes_dev.json`
+  from the dev keys plus text, to `llm/eval/triage_vignettes.schema.json`.
+- llm-dev may read everything about dev. Nothing moves from held-out to dev:
+  no text, no facts, no ids.
