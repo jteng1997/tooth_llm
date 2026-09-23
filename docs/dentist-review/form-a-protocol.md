@@ -1,7 +1,7 @@
 # Form A — triage protocol review
 
-Protocol: `llm/protocol/triage_protocol.yaml` v0.1, review_status `DRAFT-UNREVIEWED`.
-Generated from the file on 2026-09-23 by research-pm. Do not edit the YAML;
+Protocol: `docs/plans/protocol-v0.2/triage_protocol.yaml` v0.2, review_status `DRAFT-UNREVIEWED`.
+Generated from the file on 2026-09-23 by `make_form_a.py` (research-pm). Do not edit the YAML;
 write in this form and we will apply the changes.
 
 For each row: **Agree / Change / Remove**, and if Change, what it should say.
@@ -26,49 +26,51 @@ dental care guidance §3. EMERGENCY shows one screen with no phone number
 ## 2. Criteria
 
 Level = how soon. **floor** means code forces EMERGENCY on this alone, before
-the model sees anything.
+the model sees anything. **checklist** means the criterion is decided by a
+Yes/No row the patient answers; **narrative** means the model must find it in
+the patient's own words.
 
 
 ### EMERGENCY
 
-| id | Statement | Decided from | floor | Agree / Change / Remove |
-|---|---|---|---|---|
-| E1 | Difficulty breathing or swallowing | SDCEP 2026 Swelling pathway (difficulty breathing / swallowing -> Emergency Medical Care); SDCEP 2026 Acute apical abscess (airway compromise -> emerg… | yes | |
-| E2 | Swelling of the face, jaw or gums | project owner, 22 Sep 2026 (decision 4) (any swelling stays EMERGENCY). SDCEP 2026 Swelling pathway grades swelling: only rapidly increasing / airway / eye-closing / system… | yes | |
-| E3 | Fever with a dental problem | project owner, 22 Sep 2026 (red-flag floor). SDCEP 2026 Swelling pathway ('increasing temperature' as a sign of being systemically unwell -> Emergency Medical Care); SDCEP-… | yes | |
-| E4 | A recent knock or injury to the mouth or teeth | project owner, 22 Sep 2026 (decision 4) (any trauma stays EMERGENCY). SDCEP 2026 Trauma pathway grades trauma: head injury, loss of consciousness, significant facial trauma… | yes | |
-| E5 | Feeling very unwell, shivery or very tired along with the dental problem | project owner, 22 Sep 2026 (decision 3). SDCEP 2026 Swelling pathway (systemically unwell: rigors, dehydrated, lethargic -> Emergency Medical Care); SDCEP 2026 Management o… | yes | |
-| E6 | Chest pain or shortness of breath along with jaw or tooth pain | project owner, 22 Sep 2026 (decision 3). SDCEP 2026 Pain pathway, first step (atypical jaw pain with signs of myocardial infarction -> Emergency Medical Care). | yes | |
-| E7 | Bleeding in the mouth that does not stop with pressure | project owner, 22 Sep 2026 (decision 3). SDCEP 2026 Bleeding pathway (bleeding after dental treatment not stopped by pressure -> Emergency Care: Dental or NHS24/111; brisk … | yes | |
-| E8 | More pain relief taken than the packet says is safe | project owner, 22 Sep 2026 (decision 3). SDCEP 2026 Pain pathway, first step (exceeded the recommended dose of pain relief -> Emergency Medical Care). | yes | |
+| id | Statement | Decided from | floor | how | Agree / Change / Remove |
+|---|---|---|---|---|---|
+| E1 | Difficulty breathing or swallowing | SDCEP 2026 Swelling pathway (difficulty breathing / swallowing -> Emergency Medical Care); SDCEP 2026 Acute apical abscess (airway compromise -> emergency department); NHS England 2025 §3.2 | yes | checklist / photo | |
+| E2 | Swelling of the face, jaw or gums | project owner, 22 Sep 2026 (decision 4) (any swelling stays EMERGENCY). SDCEP 2026 Swelling pathway grades swelling: only rapidly increasing / airway / eye-closing / systemically unwell is Emergency; slowly increasing, hot or firm is Urgent; otherwise Non-urgent. Deliberate over-triage, to revisit with a dentist. | yes | checklist / photo | |
+| E3 | Fever with a dental problem | project owner, 22 Sep 2026 floor. SDCEP 2026 Swelling pathway ('increasing temperature' as a sign of being systemically unwell -> Emergency Medical Care); SDCEP 2026 Management of spreading or systemic infection; SDCEP 2007 §2.1.1 ('raised temperature as a result of dental infection' is a dental emergency). | yes | checklist / photo | |
+| E4 | A recent knock or injury to the mouth or teeth | project owner, 22 Sep 2026 (decision 4) (any trauma stays EMERGENCY). SDCEP 2026 Trauma pathway grades trauma: head injury, loss of consciousness, significant facial trauma, uncontrollable bleeding, airway -> Emergency Medical; bite changed, inhaled tooth, large lacerations -> Emergency Care (NHS24/111); knocked-out adult tooth -> Emergency Care: Dental; moved adult tooth or pulp exposed -> Urgent; fracture into dent… | yes | checklist / photo | |
+| E5 | Feeling very unwell, shivery or very tired along with the dental problem | project owner, 22 Sep 2026 (decision 3). SDCEP 2026 Swelling pathway (systemically unwell: rigors, dehydrated, lethargic -> Emergency Medical Care); SDCEP 2026 Management of spreading or systemic infection (sepsis signs). | yes | checklist / photo | |
+| E6 | Chest pain or shortness of breath along with jaw or tooth pain | project owner, 22 Sep 2026 (decision 3). SDCEP 2026 Pain pathway, first step (atypical jaw pain with signs of myocardial infarction -> Emergency Medical Care). | yes | checklist / photo | |
+| E7 | Bleeding in the mouth that does not stop with pressure | project owner, 22 Sep 2026 (decision 3). SDCEP 2026 Bleeding pathway (bleeding after dental treatment not stopped by pressure -> Emergency Care: Dental or NHS24/111; brisk and persistent bleeding -> Emergency Care); SDCEP 2007 §2.1.1; NHS England 2025 §3.2 (intra-oral bleeding the patient cannot control with local measures). | yes | checklist / photo | |
+| E8 | More pain relief taken than the packet says is safe | project owner, 22 Sep 2026 (decision 3). SDCEP 2026 Pain pathway, first step (exceeded the recommended dose of pain relief -> Emergency Medical Care). | yes | checklist / photo | |
 
 ### URGENT
 
-| id | Statement | Decided from | floor | Agree / Change / Remove |
-|---|---|---|---|---|
-| U1 | Tooth pain that pain relief has not controlled | SDCEP 2026 Pain pathway ('Has analgesic controlled the pain?' No -> Urgent Care: Dental); SDCEP 2026 Pulpitis (urgent if analgesia ineffective); SDCEP… |  | |
-| U2 | Severe pain that stops normal sleeping or eating | project owner, 22 Sep 2026 (decision 2) (unbearable pain is URGENT, not the emergency department). NHS England 2025 §3.3 lists severe pain not controlled by self-help as Urgent; s… |  | |
-| U3 | Pain when biting on or pressing a tooth | SDCEP 2026 Symptomatic apical periodontitis (tender to pressing; seek urgent dental care); AAE 2009 terminology Symptomatic apical periodontitis (painful response… |  | |
-| U4 | Pain after a tooth was taken out recently | SDCEP 2026 Pain pathway ('Has the patient recently had a tooth extracted?' Yes -> Urgent Care: Dental). |  | |
-| U5 | Pain that keeps aching after the hot, cold or sweet trigger has gone | project owner, 22 Sep 2026 (decision 5) (stays URGENT for now). OUR CALL - no source sets this: SDCEP 2026 Pulpitis gives Non-urgent when pain relief works; AAE 2009 terminology 'lingering thermal pai… |  | |
-| U6 | Pain that starts on its own or wakes you at night | project owner, 22 Sep 2026 (decision 5) (stays URGENT for now). OUR CALL - no source sets this: SDCEP 2026 Pulpitis (pain may keep the patient awake at night) gives Non-urgent when pain re… |  | |
-| U7 | A possible cavity seen in the photo, together with tooth pain | OUR CALL - no source sets this. Kept from rules.py R4 so the protocol is not less urgent than the rules baseline. SDCEP 2026 would give Non-urgent (7 days) when pain … |  | |
-| U8 | Pus, a gum boil or a bad taste coming from around a painful tooth | SDCEP 2026 Acute apical abscess (without airway compromise: seek urgent dental care); AAE 2009 terminology Acute apical abscess (pus formation). |  | |
-| U9 | A mouth ulcer, sore or lump that has lasted more than 3 weeks | project owner, 22 Sep 2026 (ulcer question added). SDCEP 2026 Ulceration pathway (ulcer present more than 3 weeks -> dental assessment for possible urgent-suspic… |  | |
+| id | Statement | Decided from | floor | how | Agree / Change / Remove |
+|---|---|---|---|---|---|
+| U1 | Tooth pain that pain relief has not controlled | SDCEP 2026 Pain pathway ('Has analgesic controlled the pain?' No -> Urgent Care: Dental); SDCEP 2026 Pulpitis (urgent if analgesia ineffective); SDCEP 2007 §2.1.2; NHS England 2025 §3.3. |  | checklist / photo | |
+| U2 | Severe pain that stops normal sleeping or eating | project owner, 22 Sep 2026 (decision 2) (unbearable pain is URGENT, not the emergency department). NHS England 2025 §3.3 lists severe pain not controlled by self-help as Urgent; severity alone, without relief tried, is the user's extension. |  | checklist / photo | |
+| U3 | Pain when biting on or pressing a tooth | SDCEP 2026 Symptomatic apical periodontitis (tender to pressing; seek urgent dental care); AAE 2009 terminology Symptomatic apical periodontitis (painful response to biting). |  | checklist / photo | |
+| U4 | Pain after a tooth was taken out recently | SDCEP 2026 Pain pathway ('Has the patient recently had a tooth extracted?' Yes -> Urgent Care: Dental). |  | checklist / photo | |
+| U5 | Pain that keeps aching after the hot, cold or sweet trigger has gone | project owner, 22 Sep 2026 (decision 5) (stays URGENT for now). OUR CALL - no source sets this: SDCEP 2026 Pulpitis gives Non-urgent when pain relief works; AAE 2009 terminology 'lingering thermal pain' gives no duration, so the 30 s is a project convention. |  | checklist / photo | |
+| U6 | Pain that starts on its own or wakes you at night | project owner, 22 Sep 2026 (decision 5) (stays URGENT for now). OUR CALL - no source sets this: SDCEP 2026 Pulpitis (pain may keep the patient awake at night) gives Non-urgent when pain relief works; AAE 2009 terminology spontaneous pain is a descriptor of irreversible pulpitis. |  | checklist / photo | |
+| U7 | A possible cavity seen in the photo, together with tooth pain | OUR CALL - no source sets this. Kept from rules.py R4 so the protocol is not less urgent than the rules baseline. SDCEP 2026 would give Non-urgent (7 days) when pain relief works. |  | checklist / photo | |
+| U8 | Pus, a gum boil or a bad-tasting discharge from the gum or a tooth | SDCEP 2026 Acute apical abscess (without airway compromise: seek urgent dental care); AAE 2009 terminology Acute apical abscess (pus formation). OUR CALL - no source sets this: v0.2 applies it with or without pain; a painless draining sinus may be chronic apical abscess, which SDCEP may place lower. Deliberate over-triage until a dentist decides. |  | checklist / photo | |
+| U9 | A mouth ulcer, sore or lump that has lasted more than 3 weeks | project owner, 22 Sep 2026 (ulcer question added). SDCEP 2026 Ulceration pathway (ulcer present more than 3 weeks -> dental assessment for possible urgent-suspicion-of-cancer referral -> Urgent Care: Dental); SDCEP 2013 Altered sensation or abnormal appearance pathway (red, white or pigmented lesion present more than 3 weeks -> Urgent Care: local rapid access pathway). |  | checklist / photo | |
 
 ### SOON
 
-| id | Statement | Decided from | floor | Agree / Change / Remove |
-|---|---|---|---|---|
-| S1 | Tooth pain or sensitivity | SDCEP 2026 Pain pathway (analgesic controlled the pain, or not yet taken -> Non-urgent Care: Dental); NHS England 2025 §3.4 (mild or moderate pain that respo… |  | |
-| S2 | A possible cavity seen in the photo | project owner, 22 Sep 2026 (decision 6) (photo-only finding with no symptoms: SOON). OUR CALL - no source sets this: no guideline gives a time frame for a symptom-free finding. |  | |
-| S3 | A broken, chipped or lost filling, crown or tooth, without pain | NHS England 2025 §3.4 (fractured, loose or displaced fillings; loose or displaced crowns); SDCEP 2026 Trauma pathway (fracture involving dentine -> Non-urgen… |  | |
+| id | Statement | Decided from | floor | how | Agree / Change / Remove |
+|---|---|---|---|---|---|
+| S1 | Tooth pain or sensitivity | SDCEP 2026 Pain pathway (analgesic controlled the pain, or not yet taken -> Non-urgent Care: Dental); NHS England 2025 §3.4 (mild or moderate pain that responds to pain relief). |  | checklist / photo | |
+| S2 | A possible cavity seen in the photo | project owner, 22 Sep 2026 (decision 6) (photo-only finding with no symptoms: SOON). OUR CALL - no source sets this: no guideline gives a time frame for a symptom-free finding. |  | checklist / photo | |
+| S3 | A broken, chipped, loose or lost filling, crown or tooth | NHS England 2025 §3.4 (fractured, loose or displaced fillings; loose or displaced crowns); SDCEP 2026 Trauma pathway (fracture involving dentine -> Non-urgent); SDCEP 2007 §2.1.3. |  | checklist / photo | |
 
 ### ROUTINE
 
-| id | Statement | Decided from | floor | Agree / Change / Remove |
-|---|---|---|---|---|
-| R1 | A tooth appears to be missing in the photo | project owner, 22 Sep 2026 (decision 7) (missing tooth, no symptoms: ROUTINE). OUR CALL - no source sets this. |  | |
+| id | Statement | Decided from | floor | how | Agree / Change / Remove |
+|---|---|---|---|---|---|
+| R1 | A tooth appears to be missing in the photo | project owner, 22 Sep 2026 (decision 7) (missing tooth, no symptoms: ROUTINE). OUR CALL - no source sets this. |  | checklist / photo | |
 
 ## 3. Questions the patient is asked
 
@@ -87,10 +89,12 @@ their own words. Nothing here names a drug or a dose.
 | Q8 | yesno_checklist A | In the last few days, have you taken more pain relief than the packet says is safe? | |
 | Q9 | yesno_checklist A | Do you have any pain or discomfort in your teeth or gums at the moment? | |
 | Q19 | yesno_checklist A | Do you have a mouth ulcer, sore or lump that has lasted more than 3 weeks? | |
+| Q20 | yesno_checklist A | Do you have a filling, crown or tooth that has broken, chipped, come loose or come out, and has not been fixed yet? *(new in v0.2; wording awaiting the project owner's approval)* | |
+| Q21 | yesno_checklist A | Have you noticed pus, a pimple-like bump on the gum, or a salty or bad-tasting fluid coming from around a tooth? *(new in v0.2; wording awaiting the project owner's approval)* | |
 | Q10 | chat | Have you taken any pain relief for it? If so, did it help? | |
 | Q11 | chat | How bad is the pain? Is it mild, moderate, or so bad that it stops you sleeping or eating? | |
 | Q12 | chat | What sets the pain off: cold, hot, sweet things, biting, or does it come on by itself? | |
-| Q13 | yesno_checklist B (options: True, False, not_sure) | After the pain is set off, does it keep aching for more than about half a minute? | |
+| Q13 | yesno_checklist B (options: Yes / No / Not sure) | After the pain is set off, does it keep aching for more than about half a minute? | |
 | Q14 | yesno_checklist B | Does the pain ever wake you up at night? | |
 | Q15 | yesno_checklist B | Does it hurt when you bite down or press on the tooth? | |
 | Q16 | yesno_checklist B | Have you had a tooth taken out in the last two weeks? | |
@@ -122,4 +126,3 @@ Only you may set `review_status`; research-pm will not.
 - Name, registration number, date:
 
 _________________________________________________
-

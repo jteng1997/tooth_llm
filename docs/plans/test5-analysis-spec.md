@@ -301,3 +301,91 @@ nothing).
   from the dev keys plus text, to `llm/eval/triage_vignettes.schema.json`.
 - llm-dev may read everything about dev. Nothing moves from held-out to dev:
   no text, no facts, no ids.
+
+### 9.5 The H001 leak (pre-scoring note)
+
+A crash in a scratch script printed held-out key H001 in full, and the level ×
+photo-usable counts, to llm-dev (details in `docs/decisions.md`). Handled as
+follows, decided before any held-out LLM scoring:
+
+- **Exposed set: 6 keys, not 1.** H001's fact string is shared by every key of
+  its archetype, so anything tuned towards it would reach all six. The ids
+  are in `labels/heldout/leak_h001_sensitivity.json` (gitignored, so this
+  tracked file does not pair ids with a level). No end-to-end key shares the
+  fact. No P7 text existed yet, so no patient wording leaked.
+- **Primary analysis unchanged: all 200.** Dropping cases is the kind of
+  after-the-fact exclusion §6 forbids, and it is decided now, not after
+  seeing a result.
+- **Pre-declared sensitivity analysis:** every §3 headline metric also on the
+  194 keys without the exposed six, reported next to the primary figure. If
+  a conclusion differs between the two (e.g. the under-triage count, or κ
+  crossing 0.8), report both and say the leak may matter.
+- **What the leak can and cannot flatter.** The exposed keys are ROUTINE, so
+  they cannot be under-triaged: the primary endpoint is unaffected by
+  construction. Only over-triage, exact agreement and κ could be flattered,
+  by at most 6/200.
+- **Stability:** one exposed key (in the §9.3 list) stays in, since the
+  list was fixed before the leak and swapping cases afterwards is itself a
+  choice. Stability is also reported without it (19 cases).
+- The level × photo-usable counts add nothing new: §9.1 of this tracked
+  spec already states which levels the unusable-photo keys have.
+
+### 9.6 End-to-end: the P7 opening (lead's decision, pre-scoring)
+
+Production has no free-text opening before checklist A, so:
+
+- **Headline condition: `--opening drop`**, which is what patients get. The
+  P7 opening is not shown to the system.
+- **Secondary, labelled as such: `--opening prepend`**, with the opening fed
+  as the first patient message. It shows what an opening turn would add; it
+  is not the product.
+- Under `drop`, a miss on a narrative-only criterion (S3, U8) goes to bucket 1
+  (interview): the words that would satisfy it had no place to be said.
+- Expected size: the end-to-end set has 1 S3 and 1 U8 key.
+  Under `drop`, the S3 case can never be detected: no pain means checklist A
+  ends the interview. The U8 case has pain and reaches the chat, but no chat
+  question asks about taste or discharge, so it is caught only if the patient
+  volunteers it in a chat answer. P7's script answers are written per
+  question and will rarely carry it.
+- Superseded for scoring by §9.7 if protocol v0.2 ships before the held-out
+  run: S3 and U8 then have checklist rows, and the interview can catch both.
+
+### 9.7 Protocol v0.2 and the rebuilt keys (pre-scoring)
+
+User decision 2026-09-23 (option 2): S3 (broken filling or tooth) and U8 (pus
+or discharge) get checklist-A rows Q20 and Q21 and become **structured**
+criteria. v0.2 has no narrative criteria left. Draft:
+`docs/plans/protocol-v0.2/triage_protocol.yaml`. It goes live only when llm-dev
+switches the loader, interface and interview together, and the Q20/Q21
+wording is still waiting for the user's approval.
+
+**Keys rebuilt** (held-out 200, end-to-end 60, dev 100), before any held-out
+LLM run, by the same builders with the same seeds. Diffed against v0.1:
+- ids, levels, styles, facts, visual summaries and every v0.1 symptom field
+  are identical;
+- two new checklist fields on every key (`broken_filling_or_tooth`,
+  `pus_or_discharge`, schema 1.2). Yes on: broken filling keys (held-out 5 /
+  e2e 1 / dev 3), pus keys (3 / 1 / 2), and minor-trauma keys, since a
+  chipped tooth answers Yes to Q20 (3 / 1 / 2);
+- `criteria_met` gains S3 on those minor-trauma keys (level stays EMERGENCY);
+- every end-to-end key's `expected_questions` gains Q20 and Q21.
+
+**What this changes in the analysis.**
+- The cases file hash changes, so every held-out configuration is new,
+  including the `rules` baseline, which must be re-run and logged. rules.py
+  does not read the new fields, so its numbers should not move.
+- §3a: the 8 cases the code check missed were exactly the narrative S3/U8
+  cases. Under v0.2 the code check is expected to agree with all 200 keys. On
+  the triage-level set the model then cannot improve on code at all. `final`
+  can only differ from the key by over-triage, since code raises every lower
+  proposal. The informative measures become `llm_proposed`, over-triage, the
+  injection cases and the end-to-end set. Every report must say so next to any
+  headline agreement figure.
+- §9.3 stability list unchanged. The 8 former narrative cases still call the
+  model, and swapping cases now would be a choice made after the leak (§9.5).
+- §9.6 (`--opening drop`) stays the headline. Under v0.2, an S3 or U8 miss
+  on the end-to-end set is a checklist or triage error, not a missing
+  question.
+- Not covered by any key: pus without pain, and a broken tooth with pain. The
+  first is an open clinical question (Form C, C11). Keys for it are added
+  only after the dentist answers, and on dev first.

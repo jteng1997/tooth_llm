@@ -2,15 +2,14 @@
  "schema_version": "1.0",
  "split": "sanity",
  "protocol_version": "0.1",
- "note": "Checker self-test, not a benchmark. Keys follow triage_protocol.yaml v0.1; each rationale states what rules.py returns, worked out by hand. check_triage.py on rules.py must find exactly: 11 under-triage (7 severe), 1 over-triage, 8 agree (one of them the correct RETAKE). A checker that reports otherwise is broken.",
+ "note": "Checker self-test, not a benchmark. Keys follow triage_protocol.yaml v0.1; each rationale states what rules.py returns, worked out by hand. check_triage.py on rules.py must find exactly, under the Test 5 spec §3 RETAKE rule: 19 scored, 11 under-triage (7 severe, 6 missed EMERGENCY), 1 over-triage, 7 agree, 1 RETAKE excluded (S012, ROUTINE key). A checker that reports otherwise is broken.",
  "cases": [
   {
    "id": "S001",
    "key": {
     "level": "EMERGENCY",
     "criteria_met": [
-     "E3",
-     "R0"
+     "E3"
     ],
     "emergency_route": "medical",
     "author": "qa-engineer",
@@ -45,8 +44,7 @@
     "level": "EMERGENCY",
     "criteria_met": [
      "E6",
-     "S1",
-     "R0"
+     "S1"
     ],
     "emergency_route": "medical",
     "author": "qa-engineer",
@@ -91,8 +89,7 @@
    "key": {
     "level": "EMERGENCY",
     "criteria_met": [
-     "E7",
-     "R0"
+     "E7"
     ],
     "emergency_route": "dental",
     "author": "qa-engineer",
@@ -127,8 +124,7 @@
     "level": "URGENT",
     "criteria_met": [
      "U1",
-     "S1",
-     "R0"
+     "S1"
     ],
     "emergency_route": null,
     "author": "qa-engineer",
@@ -174,8 +170,7 @@
     "level": "URGENT",
     "criteria_met": [
      "U2",
-     "S1",
-     "R0"
+     "S1"
     ],
     "emergency_route": null,
     "author": "qa-engineer",
@@ -221,8 +216,7 @@
     "level": "URGENT",
     "criteria_met": [
      "U4",
-     "S1",
-     "R0"
+     "S1"
     ],
     "emergency_route": null,
     "author": "qa-engineer",
@@ -268,8 +262,7 @@
     "level": "URGENT",
     "criteria_met": [
      "U5",
-     "S1",
-     "R0"
+     "S1"
     ],
     "emergency_route": null,
     "author": "qa-engineer",
@@ -314,8 +307,7 @@
    "key": {
     "level": "EMERGENCY",
     "criteria_met": [
-     "E2",
-     "R0"
+     "E2"
     ],
     "emergency_route": "either",
     "author": "qa-engineer",
@@ -349,8 +341,7 @@
    "key": {
     "level": "SOON",
     "criteria_met": [
-     "S2",
-     "R0"
+     "S2"
     ],
     "emergency_route": null,
     "author": "qa-engineer",
@@ -386,8 +377,7 @@
    "key": {
     "level": "ROUTINE",
     "criteria_met": [
-     "R1",
-     "R0"
+     "R1"
     ],
     "emergency_route": null,
     "author": "qa-engineer",
@@ -422,9 +412,7 @@
    "id": "S011",
    "key": {
     "level": "ROUTINE",
-    "criteria_met": [
-     "R0"
-    ],
+    "criteria_met": [],
     "emergency_route": null,
     "author": "qa-engineer",
     "boundary": false,
@@ -461,7 +449,7 @@
     "author": "qa-engineer",
     "boundary": false,
     "stratum": "bad_photo_no_symptoms",
-    "rationale": "Unusable photos, no symptoms: level ROUTINE, shown as RETAKE; rules.py R7 RETAKE (agree)."
+    "rationale": "Unusable photos, no symptoms: level ROUTINE, shown as RETAKE; rules.py R7 RETAKE (excluded: a RETAKE with a ROUTINE key is not a level, spec §3)."
    },
    "symptoms": {
     "schema_version": "1.1",
@@ -526,8 +514,7 @@
      "U3",
      "U7",
      "S1",
-     "S2",
-     "R0"
+     "S2"
     ],
     "emergency_route": null,
     "author": "qa-engineer",
@@ -576,8 +563,7 @@
     "criteria_met": [
      "U7",
      "S1",
-     "S2",
-     "R0"
+     "S2"
     ],
     "emergency_route": null,
     "author": "qa-engineer",
@@ -624,8 +610,7 @@
    "key": {
     "level": "SOON",
     "criteria_met": [
-     "S3",
-     "R0"
+     "S3"
     ],
     "emergency_route": null,
     "author": "qa-engineer",
@@ -665,8 +650,7 @@
      "E8",
      "U1",
      "U2",
-     "S1",
-     "R0"
+     "S1"
     ],
     "emergency_route": "medical",
     "author": "qa-engineer",
@@ -711,8 +695,7 @@
    "key": {
     "level": "EMERGENCY",
     "criteria_met": [
-     "E5",
-     "R0"
+     "E5"
     ],
     "emergency_route": "medical",
     "author": "qa-engineer",
@@ -792,8 +775,7 @@
    "key": {
     "level": "EMERGENCY",
     "criteria_met": [
-     "E4",
-     "R0"
+     "E4"
     ],
     "emergency_route": "either",
     "author": "qa-engineer",

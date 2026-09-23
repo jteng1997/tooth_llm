@@ -229,6 +229,106 @@ class Chat(unittest.TestCase):
         user_turns = [m["content"] for m in self.session.messages if m["role"] == "user"]
         self.assertEqual(user_turns, ["they didn't help"])
 
+    def reach(self, qid):
+        """Answer the chat questions before qid, each settling its own field."""
+        given = {"Q10": ("pain_relief_effect", "not_tried", "Nothing taken yet."),
+                 "Q11": ("pain_severity", "moderate", "Moderate."),
+                 "Q12": ("pain_triggers", ["cold"], "Cold drinks."),
+                 "Q17": ("location", "lower_right", "Lower right.")}
+        step = self.step
+        while step["id"] != qid:
+            field, value, quote = given[step["id"]]
+            step = self.answer(quote, **{field: (value, quote)})
+        return step
+
+    # (a) location needs arch and side, each in the patient's own words
+
+    def test_side_without_arch_is_not_a_quadrant(self):
+        self.reach("Q17")
+        text = "It hurts when I bite down on the left."
+        step = self.answer(text, location=("lower_left", text))
+        self.assertEqual(step["id"], "Q17")                   # re-asked, not settled
+        self.assertIsNone(self.session.symptoms["location"])
+
+    def test_arch_without_side_is_not_a_quadrant(self):
+        self.reach("Q17")
+        text = "At the front, top."
+        self.answer(text, location=("upper_left", text))
+        self.assertIsNone(self.session.symptoms["location"])
+
+    def test_arch_and_side_in_the_patients_words_is_kept(self):
+        self.reach("Q17")
+        for text, value in (("Down left side.", "lower_left"), ("Top right.", "upper_right")):
+            session = self.session
+            self.answer(text, location=(value, text))
+            self.assertEqual(session.symptoms["location"], value)
+            self.setUp()
+            self.reach("Q17")
+
+    def test_front_and_generalised_need_no_side(self):
+        self.reach("Q17")
+        self.answer("At the front, top.", location=("front", "At the front, top."))
+        self.assertEqual(self.session.symptoms["location"], "front")
+        self.setUp()
+        self.reach("Q17")
+        text = "It's all over, hard to pin down."
+        self.answer(text, location=("generalised", text))
+        self.assertEqual(self.session.symptoms["location"], "generalised")
+
+    def test_not_sure_where_is_null_not_unknown(self):
+        self.reach("Q17")
+        self.answer("Not sure.", location=("unknown", "Not sure."))
+        self.answer("I can't point to it.", location=("unknown", "I can't point to it."))
+        self.assertIsNone(self.session.symptoms["location"])
+
+    def test_quote_split_across_two_messages_is_not_evidence(self):
+        self.reach("Q17")
+        self.answer("Lower.")
+        self.answer("Left.", location=("lower_left", "Lower. Left."))
+        self.assertIsNone(self.session.symptoms["location"])
+
+    # (b) a "don't know" answer settles nothing: re-ask, then null
+
+    def test_hedge_after_reask_is_left_null(self):
+        step = self.answer("I don't remember.", pain_relief_effect=("not_tried", "I don't remember."))
+        self.assertEqual(step["id"], "Q10")                   # re-asked
+        step = self.answer("Really couldn't say.",
+                           pain_relief_effect=("not_tried", "Really couldn't say."))
+        self.assertEqual(step["id"], "Q11")                   # moved on
+        self.assertIsNone(self.session.symptoms["pain_relief_effect"])
+
+    def test_hedge_is_an_unknown_trigger_only_in_reply_to_the_trigger_question(self):
+        self.reach("Q11")
+        step = self.answer("Hard to say really.", pain_triggers=(["unknown"], "Hard to say really."))
+        self.assertIsNone(self.session.symptoms["pain_triggers"])
+        self.assertEqual(step["id"], "Q11")                   # severity re-asked
+        step = self.answer("Moderate.", pain_severity=("moderate", "Moderate."))
+        self.assertEqual(step["id"], "Q12")                   # triggers still asked
+        text = "I can't tell what sets it off."
+        self.answer(text, pain_triggers=(["unknown"], text))
+        self.assertEqual(self.session.symptoms["pain_triggers"], ["unknown"])
+
+    # (c) every pain_triggers item needs its own evidence
+
+    def test_trigger_the_patient_never_named_is_dropped(self):
+        self.reach("Q12")
+        text = "Cold, and my cheek feels a bit puffy and I feel hot."
+        self.answer(text, pain_triggers=(["cold", "spontaneous", "hot"], text))
+        self.assertEqual(self.session.symptoms["pain_triggers"], ["cold"])
+        self.assertIs(self.session.symptoms["swelling"], False)
+        self.assertIs(self.session.symptoms["fever"], False)
+
+    def test_every_named_trigger_is_kept(self):
+        self.reach("Q12")
+        text = "Cold, sweet things, and biting down on it too."
+        self.answer(text, pain_triggers=(["cold", "sweet", "biting"], text))
+        self.assertEqual(self.session.symptoms["pain_triggers"], ["cold", "sweet", "biting"])
+
+    def test_hot_drink_is_a_hot_trigger(self):
+        self.reach("Q12")
+        self.answer("Hot tea makes it worse.", pain_triggers=(["hot"], "Hot tea makes it worse."))
+        self.assertEqual(self.session.symptoms["pain_triggers"], ["hot"])
+
     def test_reply_without_an_open_question_is_refused(self):
         session = interview.Interview(protocol=PROTOCOL, llm=self.llm)
         session.start()

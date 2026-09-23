@@ -92,7 +92,8 @@ Report how many keys needed a regeneration, and how many needed more than one.
 under test to mark its own homework.
 
 - **Model B:** a different family from both the generator and the system under
-  test. gemma3:12b or llama3.1:8b; record which.
+  test. gemma3:12b or llama3.1:8b; record which. (Chosen: gemma4:12b, user's
+  decision 2026-09-23; see `docs/decisions.md`.)
 - **Input:** the text only — no key, no fields, no protocol.
 - **Prompt:** the production extraction prompt, unchanged.
 - **Compare:** only the **chat** fields (Q10, Q11, Q12, Q17, Q18 and their

@@ -26,6 +26,7 @@ import json
 import re
 from pathlib import Path
 
+import explain
 from eval_data import generate
 from explain import Explanation, fdi_label
 from retrieval import Knowledge
@@ -73,6 +74,22 @@ def mentioned_teeth(text: str) -> set:
     return set(FDI.findall(text)) | {f for f in ALL_FDI if fdi_label(f) in lowered}
 
 
+DECAY_WORDS = re.compile(r"decay|cavit|caries", re.I)
+
+
+def misstated(text: str, findings: dict) -> list:
+    """Teeth the findings mark as missing (present: false) that a sentence
+    describes as decayed: a finding the photo never showed."""
+    missing = [fdi for fdi, t in (findings.get("teeth") or {}).items() if t.get("present") is False]
+    bad = []
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
+        if not DECAY_WORDS.search(sentence):
+            continue
+        named = mentioned_teeth(sentence)
+        bad += [fdi for fdi in missing if fdi in named]
+    return sorted(set(bad))
+
+
 def contradiction(text: str, urgency: str) -> str:
     lowered = text.lower()
     for phrase in DISCOURAGE:
@@ -83,17 +100,41 @@ def contradiction(text: str, urgency: str) -> str:
     return ""
 
 
+def _recording_chat(log: list):
+    """explain.chat, keeping every raw reply, so a guardrail hit can be read
+    against the text that triggered it (false-positive review)."""
+    original = explain.chat
+
+    def chat(messages, model, *args, **kwargs):
+        reply = original(messages, model, *args, **kwargs)
+        log.append(reply)
+        return reply
+    return original, chat
+
+
 def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbose: bool = True) -> dict:
     knowledge = knowledge or Knowledge()
-    results = {"hallucination": 0, "omission": 0, "contradiction": 0, "n": len(cases), "cases": []}
+    results = {"hallucination": 0, "omission": 0, "contradiction": 0, "misstated": 0,
+               "n": len(cases), "cases": [],
+               "guardrail_retry": 0, "guardrail_fallback": 0}
 
     for case in cases:
         kwargs = {"allow_unreviewed": True, "knowledge": knowledge}
         if model:
             kwargs["model"] = model
         session = Explanation(case["findings"], case.get("symptoms"), **kwargs)
-        text = session.first_response()
+        replies = []
+        original, recording = _recording_chat(replies)
+        explain.chat = recording
+        try:
+            text = session.first_response()
+        finally:
+            explain.chat = original
         assessed = session.assessment
+        retried = bool(session.guardrail_log)
+        fell_back = any(entry["after_retry"] for entry in session.guardrail_log)
+        results["guardrail_retry"] += retried
+        results["guardrail_fallback"] += fell_back
 
         allowed = set(case["findings"].get("teeth", {}))
         flagged = set(assessed["flagged_teeth"])
@@ -104,7 +145,9 @@ def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbos
             missing = set()
             extra = mentioned  # a retake response may name no tooth at all
         contra = contradiction(text, assessed["urgency"])
+        wrong_finding = misstated(text, case["findings"])
 
+        results["misstated"] += bool(wrong_finding)
         results["hallucination"] += bool(extra)
         results["omission"] += bool(missing)
         results["contradiction"] += bool(contra)
@@ -112,6 +155,9 @@ def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbos
             "id": case["id"], "urgency": assessed["urgency"], "text": text,
             "flagged": sorted(flagged),
             "hallucinated": sorted(extra), "omitted": sorted(missing), "contradiction": contra,
+            "misstated": wrong_finding,
+            "location": (case.get("symptoms") or {}).get("location"),
+            "guardrail_log": session.guardrail_log, "fallback": fell_back, "replies": replies,
         })
 
         if verbose:
@@ -122,10 +168,15 @@ def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbos
                 flags.append(f"OMITTED {sorted(missing)}")
             if contra:
                 flags.append(f"CONTRADICTION ({contra})")
+            if wrong_finding:
+                flags.append(f"MISSTATED: missing teeth {wrong_finding} described as decay")
             print(f"{'FAIL' if flags else 'ok  '} {case['id']} [{assessed['urgency']}] {case['note']}")
             if flags:
                 print("       " + "; ".join(flags))
                 print("       text: " + text.replace("\n", " ").strip()[:300])
+            for entry in session.guardrail_log:
+                print(f"       guardrail: {entry['first']} -> after retry "
+                      f"{entry['after_retry'] or 'clean'}{'  (FALLBACK TEXT USED)' if fell_back else ''}")
             if case.get("must"):
                 print(f"       must: {case['must']} | must_not: {case.get('must_not')}")
     return results
@@ -151,8 +202,10 @@ def main():
     results = evaluate(cases, args.model)
     n = results["n"]
     print(f"\nmodel: {args.model or 'default'}  cases: {n}")
-    for rate in ("hallucination", "omission", "contradiction"):
+    for rate in ("hallucination", "omission", "contradiction", "misstated"):
         print(f"  {rate:14s} {results[rate]}/{n}  ({results[rate] / n:.1%})")
+    print(f"  guardrail retry {results['guardrail_retry']}/{n}, fallback text used "
+          f"{results['guardrail_fallback']}/{n}")
     if args.json:
         Path(args.json).write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"wrote {args.json}")

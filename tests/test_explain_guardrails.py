@@ -100,6 +100,77 @@ class Patterns(unittest.TestCase):
                 self.assertIn(a["headline"], text)
 
 
+class PainLocation(unittest.TestCase):
+    """The patient's pain is only where symptoms.location says."""
+
+    def test_side_or_tooth_invented_for_the_pain_is_caught(self):
+        for text in ("Your toothache is on the upper right side, in the back, on your upper "
+                     "right first molar (tooth 16).",
+                     "Your toothache is on the upper right, upper left, lower left, and lower "
+                     "right sides of your mouth.",
+                     "Yes, the pain when biting could be coming from the tooth we found "
+                     "(tooth 16, your upper right first molar).",
+                     "The pain is probably from tooth 36.",
+                     "Your pain comes from the tooth we found."):
+            with self.subTest(text=text):
+                self.assertTrue(explain.places_pain(text, None))
+
+    def test_a_hedged_or_denied_link_to_a_found_tooth_passes(self):
+        for text in ("The pain when biting may be related to the tooth we found, but only a "
+                     "dentist can confirm this.",
+                     "No, the pain when biting is not coming from a tooth we found.",
+                     "We cannot say whether the pain comes from tooth 16."):
+            with self.subTest(text=text):
+                self.assertFalse(explain.places_pain(text, None))
+
+    def test_the_patients_own_location_may_be_repeated(self):
+        self.assertFalse(explain.places_pain("You said the pain is on the lower left.",
+                                             "lower_left"))
+        self.assertTrue(explain.places_pain("You said the pain is on the lower right.",
+                                            "lower_left"))
+        self.assertTrue(explain.places_pain("The pain on your lower left is from tooth 36.",
+                                            "lower_left"))
+
+    def test_ordinary_explanations_pass(self):
+        for text in (GOOD_TEXT,
+                     "We looked at the upper and lower teeth in your mouth. Pain when biting "
+                     "can mean the problem has reached the tissues around the root tip.",
+                     "You did not tell us where it hurts, so a dentist will check.",
+                     "Until then, pain relief from a pharmacy can help with tooth 16.",
+                     "Please see a dentist right away if the pain gets worse."):
+            with self.subTest(text=text):
+                self.assertFalse(explain.places_pain(text, None))
+
+
+MISSING = {**GOOD, "teeth": {"17": {"present": False, "detections": []}}}
+MISSING_ASSESSMENT = {**ASSESSMENT, "flagged_teeth": ["17"],
+                      "reasons": [{"criterion_id": "R8", "statement": "missing", "evidence": []}]}
+MISSING_TEXT = ("We looked at your photos. Based on the image, tooth 17 (upper right second molar) "
+                "appears to be missing. See a dentist within 7 days.")
+
+
+class MissingTooth(unittest.TestCase):
+    """rules.py R8 flags an absent tooth; it must never be called decay."""
+
+    def test_flagged_teeth_split_into_decay_and_missing(self):
+        both = {**GOOD, "teeth": {**GOOD["teeth"], **MISSING["teeth"]}}
+        self.assertEqual(explain.split_flagged({"flagged_teeth": ["16", "17"]}, both),
+                         (["16"], ["17"]))
+        self.assertEqual(explain.split_flagged(ASSESSMENT, GOOD), (["16"], []))
+
+    def test_fallback_says_missing_not_decay(self):
+        text = fallback_text(MISSING_ASSESSMENT, MISSING)
+        self.assertIn("tooth 17 (upper right second molar) appears to be missing", text)
+        self.assertNotIn("decay", text.lower())
+        self.assertEqual(explain.calls_missing_decay(text, ["17"]), [])
+
+    def test_decay_wording_on_a_missing_tooth_is_caught(self):
+        self.assertEqual(explain.calls_missing_decay(
+            "Based on the image, there is an indication of tooth decay on tooth 17.", ["17"]),
+            ["17"])
+        self.assertEqual(explain.calls_missing_decay(MISSING_TEXT, ["17"]), [])
+
+
 class FakeKnowledge:
     def search(self, query):
         return []
@@ -148,6 +219,59 @@ class CheckedTurn(unittest.TestCase):
         s = self.session()
         s.first_response()
         self.assertIn("ask a dentist or pharmacist", s.ask("what antibiotic should I take?"))
+
+    def test_follow_up_that_invents_a_pain_side_is_rewritten(self):
+        clean = "You did not tell us where it hurts. A dentist can check which tooth it is."
+        self.replies = [GOOD_TEXT, "Your toothache is on the upper right side (tooth 16).", clean]
+        s = self.session()                                # symptoms {}: location unknown
+        s.first_response()
+        self.assertEqual(s.ask("which side is my toothache on?"), clean)
+        self.assertIn("pain", s.guardrail_log[-1]["first"][0])
+
+    def test_follow_up_that_repeats_the_first_response_is_rewritten(self):
+        first = ("We looked at your two photos. " + GOOD_TEXT
+                 + " Occlusal photos cannot show surfaces between teeth.")
+        answer = "A cavity is a small hole in the hard outer layer of a tooth."
+        self.replies = [first, "Good question. " + first, answer]
+        s = self.session()
+        s.first_response()
+        self.assertEqual(s.ask("what is a cavity?"), answer)
+        self.assertEqual(self.calls, 3)
+        self.assertIn("follow-up question", s.messages[-2]["content"])
+        self.assertEqual(s.messages[-1]["content"], answer)
+
+    def test_a_follow_up_still_echoing_is_kept_not_replaced_by_the_fallback(self):
+        first = "We looked at your two photos. " + GOOD_TEXT
+        self.replies = [first, first, first]
+        s = self.session()
+        s.first_response()
+        self.assertEqual(s.ask("what is a cavity?"), first)
+        self.assertEqual(s.guardrail_log[-1]["after_retry"], ["repeats the first response"])
+
+    def test_a_short_overlap_is_not_an_echo(self):
+        first = ("We looked at your two photos. " + GOOD_TEXT
+                 + " Occlusal photos cannot show surfaces between teeth.")
+        self.assertFalse(explain.echoes("See a dentist within 7 days. That is the advice.", first))
+        self.assertTrue(explain.echoes("Sure. " + first, first))
+
+    def missing_session(self):
+        return Explanation(MISSING, {}, knowledge=FakeKnowledge(),
+                           assessment=copy.deepcopy(MISSING_ASSESSMENT))
+
+    def test_missing_tooth_needs_no_decay_phrase(self):
+        self.replies = [MISSING_TEXT]
+        s = self.missing_session()
+        self.assertEqual(s.first_response(), MISSING_TEXT)
+        self.assertEqual((self.calls, s.guardrail_log), (1, []))
+        self.assertIn("appears to be missing: 17", s.messages[1]["content"])
+
+    def test_missing_tooth_called_decay_ends_in_the_missing_fallback(self):
+        bad = "Based on the image, there is an indication of tooth decay on tooth 17."
+        self.replies = [bad, bad]
+        s = self.missing_session()
+        text = s.first_response()
+        self.assertEqual(text, fallback_text(MISSING_ASSESSMENT, MISSING))
+        self.assertNotIn("decay", text.lower())
 
     def test_assessment_passed_in_is_the_one_explained(self):
         self.replies = [GOOD_TEXT]

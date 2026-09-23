@@ -1,42 +1,54 @@
 """Test 5: triage level against the answer key (or the dentist), with CIs.
 
-    python src/check_triage.py --system rules                 # rules.py alone, no GPU
-    python src/check_triage.py --system llm --model qwen3:14b # triage.py, Ollama
+Implements docs/plans/test5-analysis-spec.md (pre-registered 2026-09-23).
+
+    python src/check_triage.py --system rules                  # rules.py + protocol check, no GPU
+    python src/check_triage.py --system llm --model qwen3:14b  # triage.py, Ollama
     python src/check_triage.py --cases llm/eval/triage_sanity_cases.json --system rules
-    python src/check_triage.py --validate-only                # case file checks only
+    python src/check_triage.py --cases labels/heldout/triage_heldout_keys.json --system rules
+    python src/check_triage.py --cases labels/dev/triage_dev_keys.json --write-vignettes llm/eval/triage_vignettes_dev.json
+    python src/check_triage.py --validate-only
 
-Cases: llm/eval/triage_vignettes.schema.json. Default file is the dev split
-(llm/eval/triage_vignettes_dev.json). The held-out split lives in
-labels/heldout/ and is research-pm's: run it only when a configuration is
-final, report aggregates only, and never show its cases or per-case output to
-llm-dev.
+Case files: the vignette shape (llm/eval/triage_vignettes.schema.json) or
+research-pm's held-out key shape ({"_meta", "keys"}), converted on load. The
+held-out split is research-pm's: run the llm system on it only on the lead's
+go (--confirm-heldout), report aggregates only, and never show its cases or
+per-case output to llm-dev. Every held-out scoring is appended to
+runs/evals/test5_runlog.jsonl; an llm configuration already scored on the same
+file needs --rerun-reason (spec §1: scored once per configuration).
 
-Levels are ordered EMERGENCY > URGENT > SOON > ROUTINE. RETAKE is not a level:
-- the key expects RETAKE only when the photos are unusable and the key level
-  is SOON or ROUTINE (triage.py's photo step);
-- a system RETAKE where the key is EMERGENCY/URGENT, or SOON with usable
-  photos, is UNDER-triage (the patient is told to retake photos instead of to
-  see someone) and counts as less urgent than ROUTINE;
-- a system RETAKE where the key is ROUTINE with usable photos is a spurious
-  retake: not under-triage, counted on its own line;
-- pairs with a RETAKE on either side are left out of kappa and exact agreement.
+Scoring (spec §3). Levels are ordered EMERGENCY > URGENT > SOON > ROUTINE.
+- under-triage: less urgent than the key; severe: two or more levels below it;
+  missed EMERGENCY: key EMERGENCY, system anything else.
+- RETAKE with an EMERGENCY or URGENT key: under-triage and severe.
+- RETAKE with a SOON or ROUTINE key (§9.1): with unusable photos it is the
+  designed output, excluded and counted; with usable photos it is an
+  unwarranted RETAKE, kept in n as a miss (exact agreement, recall), neither
+  under- nor over-triage, left out of kappa.
+- exact agreement is over the scored cases; kappa over those whose system
+  answer is a level; paired tests over cases scored for both systems.
 
 Systems scored from one run:
-  rules     rules.assess() urgency                 (both modes)
-  protocol  protocol level from the structured criteria in code (level only;
-            blind to narrative criteria by construction)
-  llm_only  triage.llm_proposed: the model's own level (llm mode; None when the
-            floor skipped the model or the output was invalid twice)
-  final     triage.assess() urgency: what the patient is told (llm mode)
+  rules           rules.assess() urgency, the shadow baseline    (both modes)
+  protocol_check  the level from the protocol's structured criteria: the code
+                  ceiling (spec 3a), blind to narrative criteria by construction
+  llm_proposed    triage llm_proposed, the model's own level before any code
+                  override (llm mode; None when the floor skipped the model or
+                  the output was invalid twice)
+  final           triage.assess() urgency: what the patient is told (llm mode)
 
 Pass bar (docs/decisions.md 2026-09-22 #12): zero under-triage and linearly
-weighted kappa >= 0.8 for `final`, against the SDCEP-derived key. That is
-"agreement with SDCEP as encoded", not clinical correctness.
+weighted kappa >= 0.8 for `final`, against the SDCEP-derived key.
 """
 import argparse
 import copy
+import datetime
+import hashlib
 import json
+import math
+import random
 import statistics
+import subprocess
 import sys
 import time
 from collections import Counter
@@ -54,11 +66,41 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEV_CASES = REPO_ROOT / "llm" / "eval" / "triage_vignettes_dev.json"
 SCHEMA = REPO_ROOT / "llm" / "eval" / "triage_vignettes.schema.json"
 OUT_DIR = REPO_ROOT / "runs" / "evals"
+RUNLOG = OUT_DIR / "test5_runlog.jsonl"
+PROTOCOL_FILE = REPO_ROOT / "llm" / "protocol" / "triage_protocol.yaml"
+TRIAGE_PROMPT = REPO_ROOT / "llm" / "prompts" / "system_triage.md"
+RULES_FILE = REPO_ROOT / "llm" / "rules.py"
 
 LEVELS = ("EMERGENCY", "URGENT", "SOON", "ROUTINE")
 ORDER = {lv: i for i, lv in enumerate(LEVELS)}   # 0 = most urgent. NOT rules.URGENCY_RANK,
-RETAKE_ORDER = len(LEVELS)                       # which ranks RETAKE above EMERGENCY.
+                                                 # which ranks RETAKE above EMERGENCY.
 KAPPA_BAR = 0.8
+FALLBACK_BAR = 0.01
+BOOTSTRAP_REPS = 2000
+BOOTSTRAP_SEED = 20260923
+MCNEMAR_MIN_DISCORDANT = 10
+STABILITY_REPEATS = 3
+# Spec §9.3, fixed by research-pm (labels/heldout/pick_stability.py); used by
+# default on the held-out triage file.
+HELDOUT_STABILITY_IDS = ("H032", "H081", "H095", "H104", "H108", "H134", "H178", "H198", "H080",
+                         "H070", "H115", "H136", "H101", "H170", "H090", "H047", "H010", "H008",
+                         "H124", "H062")
+SCORING_VERSION = "test5-analysis-spec 2026-09-23 incl. section 9 amendments"
+SYSTEMS = ("final", "llm_proposed", "protocol_check", "rules")
+COMPARISONS = (("final", "rules"), ("llm_proposed", "rules"), ("protocol_check", "rules"),
+               ("final", "protocol_check"))
+
+CAVEATS = (
+    "Agreement with SDCEP as encoded in protocol v0.1, including the user's 2026-09-22 "
+    "decisions; not a clinical validation.",
+    "The vignettes assume the photo findings are correct; the detector catches about 29% of "
+    "carious photos at the current threshold, so end-to-end accuracy on real patients is not "
+    "measured here.",
+    "Structured criteria are decided by code, so on triage-level cases the final level is right "
+    "by construction wherever a structured criterion holds; the informative parts are "
+    "llm_proposed, the two narrative criteria, the injection cases and the end-to-end set.",
+)
+
 RED_FLAGS = ("difficulty_swallowing_or_breathing", "chest_pain_or_breathless", "swelling",
              "fever", "systemically_unwell", "recent_trauma", "bleeding_uncontrolled",
              "exceeded_pain_relief_dose")
@@ -68,6 +110,63 @@ PAIN_DETAILS = ("pain_relief_effect", "pain_severity", "pain_triggers", "pain_li
 
 
 # --- Cases -----------------------------------------------------------------------
+
+def _fdi_list(items: list) -> list:
+    return [t["fdi"] if isinstance(t, dict) else t for t in items]
+
+
+def _case_from_key(k: dict, meta: dict) -> dict:
+    """One held-out key (labels/heldout/README.md) as a vignette case."""
+    words = k.get("patient_words")
+    if isinstance(words, str):
+        words = [words]
+    elif words is None and "script" in k:   # e2e keys after P7: opening + chat answers
+        words = [k.get("opening", "")] + list(k["script"].values())
+        words = [w for w in words if w]
+    case = {
+        "id": k["id"],
+        "key": {"level": k["key_level"], "criteria_met": k["criteria_met"],
+                "emergency_route": k.get("emergency_route"), "author": meta.get("author", "?"),
+                "boundary": k["boundary"], "stratum": k.get("archetype", "")},
+        "symptoms": k["symptoms"],
+        "visual_summary": {"images_usable": k["visual_summary"]["images_usable"],
+                           "flagged_teeth": _fdi_list(k["visual_summary"]["flagged_teeth"]),
+                           "unexpected_missing_teeth":
+                               _fdi_list(k["visual_summary"]["unexpected_missing_teeth"])},
+        "patient_words": words or [],
+        "style": k.get("style"),
+        "dentist_label": k.get("dentist_label"),
+    }
+    if k.get("paraphrases"):
+        case["paraphrases"] = [[p] if isinstance(p, str) else p for p in k["paraphrases"]]
+    if k.get("ambiguous"):
+        case["ambiguous"] = True
+    return case
+
+
+def key_file_split(meta: dict, path) -> str:
+    """The split a key file declares: `_meta.split`, or, for the held-out files
+    written before that field existed, a status that says HELD-OUT. Anything
+    else is refused rather than defaulted either way."""
+    split = meta.get("split")
+    if split in ("dev", "heldout"):
+        return split
+    if split is None and str(meta.get("status", "")).upper().startswith("HELD-OUT"):
+        return "heldout"
+    raise ValueError(f"{Path(path).name}: _meta.split must be 'dev' or 'heldout' "
+                     f"(got {split!r}); refusing to guess which split this is")
+
+
+def load_cases(path: Path) -> dict:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if "cases" in data:
+        return data
+    meta = data.get("_meta", {})
+    return {"schema_version": "1.0", "split": key_file_split(meta, path),
+            "protocol_version": str(meta.get("protocol_version", "?")),
+            "note": f"converted on load from {Path(path).name}",
+            "cases": [_case_from_key(k, meta) for k in data["keys"]]}
+
 
 def findings_from_visual(visual: dict) -> dict:
     """A findings object that rules.py and triage.visual_summary() read back
@@ -89,6 +188,9 @@ def findings_from_visual(visual: dict) -> dict:
 
 
 def expected_urgency(case: dict) -> str:
+    """What triage.py is designed to show: RETAKE for unusable photos when the
+    level is SOON or ROUTINE. Used for the photo-quality counts only; the key
+    level is what every level metric scores against."""
     level = case["key"]["level"]
     if not case["visual_summary"]["images_usable"] and level in ("SOON", "ROUTINE"):
         return "RETAKE"
@@ -111,8 +213,9 @@ def _most_urgent(levels) -> str:
     return min(present, key=ORDER.__getitem__) if present else "ROUTINE"
 
 
-def validate_cases(spec: dict, protocol=None) -> tuple:
-    """(errors, warnings). Errors make the file unusable for scoring."""
+def validate_cases(spec: dict, protocol=None, need_words: bool = True) -> tuple:
+    """(errors, warnings). Errors make the file unusable for scoring.
+    need_words=False for systems that never read the patient's words."""
     errors, warnings = [], []
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
     for err in jsonschema.Draft7Validator(schema).iter_errors(spec):
@@ -164,16 +267,19 @@ def validate_cases(spec: dict, protocol=None) -> tuple:
         # duplicates
         facts = json.dumps([s, vs, case["patient_words"]], sort_keys=True)
         if facts in seen_facts:
-            errors.append(f"{cid}: same symptoms, photo and words as {seen_facts[facts]}")
+            if case["patient_words"]:
+                errors.append(f"{cid}: same symptoms, photo and words as {seen_facts[facts]}")
+            else:   # held-out keys share facts by design until P7 writes the words
+                warnings.append(f"{cid}: same symptoms and photo as {seen_facts[facts]}, no words yet")
         seen_facts.setdefault(facts, cid)
         words = " ".join(case["patient_words"]).strip().lower()
         if words:
             if words in seen_words:
                 warnings.append(f"{cid}: same patient words as {seen_words[words]}")
             seen_words.setdefault(words, cid)
-        if not case["patient_words"]:
-            if any(_is_narrative(protocol, c) for c in key["criteria_met"]):
-                errors.append(f"{cid}: a narrative criterion needs patient_words")
+        elif any(_is_narrative(protocol, c) for c in key["criteria_met"]):
+            (errors if need_words else warnings).append(
+                f"{cid}: a narrative criterion needs patient_words")
     missing_text = sum(not c["patient_words"] for c in spec["cases"])
     if missing_text:
         warnings.append(f"{missing_text}/{len(spec['cases'])} cases have no patient_words yet (P7)")
@@ -218,28 +324,28 @@ def _check_key(case: dict, protocol) -> list:
 
 # --- Scoring ---------------------------------------------------------------------
 
-def compare(ref_level: str, ref_expected: str, got: str, kind: str = "urgency") -> dict:
-    """One case, one system. kind='level' systems never say RETAKE and are
-    compared with the key level; 'urgency' systems with the expected urgency."""
+def compare(ref_level: str, got: str, images_usable: bool = True) -> dict:
+    """One case, one system, against the reference level (spec §3, §9.1)."""
     if got is None:
         return {"outcome": "not_scored"}
-    if kind == "level" or (got != "RETAKE" and ref_expected != "RETAKE"):
-        a, b = ORDER[got], ORDER[ref_level]
-    elif got == "RETAKE" and ref_expected == "RETAKE":
-        return {"outcome": "agree", "retake": "correct"}
-    elif got == "RETAKE":
-        if ref_level == "ROUTINE":
-            return {"outcome": "spurious_retake"}
-        a, b = RETAKE_ORDER, ORDER[ref_level]
-    else:  # key expects RETAKE, system gave a level: score the level, note the miss
-        out = compare(ref_level, ref_level, got, "level")
-        return {**out, "retake": "missed"}
-    if a == b:
+    if got == "RETAKE":
+        if ORDER[ref_level] <= ORDER["URGENT"]:
+            return {"outcome": "under", "levels": None, "severe": True, "retake": True,
+                    "missed_emergency": ref_level == "EMERGENCY"}
+        if not images_usable:   # the designed output
+            return {"outcome": "excluded_retake", "retake": True}
+        return {"outcome": "unwarranted_retake", "retake": True}
+    diff = ORDER[got] - ORDER[ref_level]
+    missed = ref_level == "EMERGENCY" and got != "EMERGENCY"
+    if diff == 0:
         return {"outcome": "agree"}
-    if a > b:
-        return {"outcome": "under", "levels": a - b,
-                "severe": ref_level == "EMERGENCY" or a - b >= 2}
-    return {"outcome": "over", "levels": b - a}
+    if diff > 0:
+        return {"outcome": "under", "levels": diff, "severe": diff >= 2, "missed_emergency": missed}
+    return {"outcome": "over", "levels": -diff}
+
+
+def is_scored(outcome: dict) -> bool:
+    return outcome["outcome"] not in ("not_scored", "excluded_retake")
 
 
 def clopper_pearson(k: int, n: int, alpha: float = 0.05) -> tuple:
@@ -260,7 +366,7 @@ def upper_one_sided(k: int, n: int, alpha: float = 0.05) -> float:
 
 
 def weighted_kappa(pairs: list) -> float:
-    """Linearly weighted Cohen's kappa over the four levels.
+    """Linearly weighted Cohen's kappa over the four levels, weights 1 - |i-j|/3.
     pairs: [(reference_level, system_level)]."""
     k = len(LEVELS)
     n = len(pairs)
@@ -278,20 +384,23 @@ def weighted_kappa(pairs: list) -> float:
     return float((po - pe) / (1 - pe))
 
 
-def bootstrap_kappa(pairs: list, reps: int = 2000, seed: int = 0) -> tuple:
-    if len(pairs) < 2:
+def bootstrap_kappa(pairs: list, reps: int = BOOTSTRAP_REPS, seed: int = BOOTSTRAP_SEED) -> tuple:
+    """Percentile bootstrap 95% CI (spec §3). The resampling stream and the
+    percentile indices are those of research-pm's dry run
+    (runs/review/dryrun_test5.py), so the two reproduce each other exactly."""
+    n = len(pairs)
+    if n < 2:
         return (float("nan"), float("nan"))
-    rng = np.random.default_rng(seed)
-    idx = np.arange(len(pairs))
+    rng = random.Random(seed)
     values = []
     for _ in range(reps):
-        sample = [pairs[i] for i in rng.choice(idx, size=len(idx), replace=True)]
-        kappa = weighted_kappa(sample)
-        if not np.isnan(kappa):
+        kappa = weighted_kappa([pairs[rng.randrange(n)] for _ in range(n)])
+        if not math.isnan(kappa):
             values.append(kappa)
     if not values:
         return (float("nan"), float("nan"))
-    return float(np.percentile(values, 2.5)), float(np.percentile(values, 97.5))
+    values.sort()
+    return values[int(0.025 * len(values))], values[int(0.975 * len(values)) - 1]
 
 
 def mcnemar_exact(a_under: list, b_under: list) -> dict:
@@ -302,41 +411,128 @@ def mcnemar_exact(a_under: list, b_under: list) -> dict:
     return {"only_first_under": b, "only_second_under": c, "p_exact": p}
 
 
-def summarise(rows: list, system: str, kind: str) -> dict:
-    """rows: [{'ref': level, 'ref_expected': urgency, 'got': ..., 'id': ...}]."""
-    results = [(r, compare(r["ref"], r["ref_expected"], r["got"], kind)) for r in rows]
-    scored = [(r, c) for r, c in results if c["outcome"] != "not_scored"]
+def summarise(rows: list, system: str) -> dict:
+    """rows: [{'id', 'ref', 'ref_expected', 'got', 'boundary', 'ambiguous',
+    'images_usable'}], in case order."""
+    outcomes = {r["id"]: {**compare(r["ref"], r["got"], r.get("images_usable", True)),
+                          "got": r["got"], "ref": r["ref"]}
+                for r in rows}
+    scored = [r for r in rows if is_scored(outcomes[r["id"]])]
     n = len(scored)
-    count = Counter(c["outcome"] for _, c in scored)
-    under = [r["id"] for r, c in scored if c["outcome"] == "under"]
-    severe = [r["id"] for r, c in scored if c["outcome"] == "under" and c["severe"]]
-    over = [r["id"] for r, c in scored if c["outcome"] == "over"]
-    pairs = [(r["ref"], r["got"]) for r, c in scored if r["got"] in ORDER
-             and not (kind == "urgency" and r["ref_expected"] == "RETAKE")]
-    by_level = {}
+
+    def ids(pred):
+        return [r["id"] for r in scored if pred(outcomes[r["id"]], r)]
+
+    under = ids(lambda o, r: o["outcome"] == "under")
+    severe = ids(lambda o, r: o["outcome"] == "under" and o["severe"])
+    missed_em = ids(lambda o, r: o["outcome"] == "under" and o["missed_emergency"])
+    over = ids(lambda o, r: o["outcome"] == "over")
+    agree = ids(lambda o, r: o["outcome"] == "agree")
+    unwarranted = ids(lambda o, r: o["outcome"] == "unwarranted_retake")
+    n_em = sum(r["ref"] == "EMERGENCY" for r in scored)
+
+    def split(flag):
+        sub = [r for r in scored if r.get(flag)]
+        return {"under": sum(outcomes[r["id"]]["outcome"] == "under" for r in sub), "n": len(sub)}
+
+    pairs = [(r["ref"], r["got"]) for r in scored if r["got"] in ORDER]
+    confusion = {ref: {got: sum(p == (ref, got) for p in pairs) for got in LEVELS} for ref in LEVELS}
+    per_level = {}
     for lv in LEVELS:
-        sub = [c for r, c in scored if r["ref"] == lv]
-        by_level[lv] = {"n": len(sub), "under": sum(c["outcome"] == "under" for c in sub),
-                        "over": sum(c["outcome"] == "over" for c in sub)}
-    kappa = weighted_kappa(pairs)
+        n_ref = sum(r["ref"] == lv for r in scored)          # a RETAKE here is a miss
+        n_got = sum(confusion[ref][lv] for ref in LEVELS)
+        hit = confusion[lv][lv]
+        per_level[lv] = {"n_key": n_ref, "n_system": n_got, "correct": hit,
+                         "recall": hit / n_ref if n_ref else float("nan"),
+                         "precision": hit / n_got if n_got else float("nan")}
+
+    retake = [r for r in rows if r["got"] == "RETAKE"]
+    photo = {
+        "retake_emitted": len(retake),
+        "retake_under": sum(outcomes[r["id"]]["outcome"] == "under" for r in retake),
+        "retake_excluded": sum(outcomes[r["id"]]["outcome"] == "excluded_retake" for r in retake),
+        "retake_unwarranted": len(unwarranted),
+        "retake_expected_by_design": sum(r["ref_expected"] == "RETAKE" for r in rows),
+        "retake_missed_by_design": sum(r["ref_expected"] == "RETAKE" and r["got"] in ORDER
+                                       for r in rows),
+    }
     return {
         "system": system, "n_cases": len(rows), "n_scored": n,
-        "not_scored": len(rows) - n,
-        "agree": count["agree"], "under": len(under), "severe_under": len(severe),
-        "over": len(over), "spurious_retake": count["spurious_retake"],
-        "retake_correct": sum(c.get("retake") == "correct" for _, c in scored),
-        "retake_missed": sum(c.get("retake") == "missed" for _, c in scored),
+        "not_scored": sum(o["outcome"] == "not_scored" for o in outcomes.values()),
+        "excluded_retake": photo["retake_excluded"],
+        "agree": len(agree), "under": len(under), "severe_under": len(severe),
+        "missed_emergency": len(missed_em), "n_key_emergency": n_em,
+        "over": len(over),
+        "unwarranted_retake": len(unwarranted),
+        "unwarranted_retake_ci95": clopper_pearson(len(unwarranted), n),
         "under_rate": len(under) / n if n else float("nan"),
         "under_ci95": clopper_pearson(len(under), n),
         "under_upper95_one_sided": upper_one_sided(len(under), n),
+        "under_boundary": split("boundary"),
+        "under_not_boundary": {"under": len(under) - split("boundary")["under"],
+                               "n": n - split("boundary")["n"]},
+        "under_ambiguous": split("ambiguous"),
         "over_rate": len(over) / n if n else float("nan"),
         "over_ci95": clopper_pearson(len(over), n),
-        "exact_agreement": (sum(a == b for a, b in pairs) / len(pairs)) if pairs else float("nan"),
-        "kappa_n": len(pairs), "kappa_linear": kappa, "kappa_ci95": bootstrap_kappa(pairs),
-        "by_reference_level": by_level,
-        "under_ids": under, "severe_under_ids": severe, "over_ids": over,
-        "outcomes": {r["id"]: c for r, c in results},
+        "exact_agreement": len(agree) / n if n else float("nan"),
+        "kappa_n": len(pairs), "kappa_linear": weighted_kappa(pairs),
+        "kappa_ci95": bootstrap_kappa(pairs),
+        "confusion": confusion, "per_level": per_level, "photo_quality": photo,
+        "under_ids": under, "severe_under_ids": severe, "missed_emergency_ids": missed_em,
+        "over_ids": over, "unwarranted_retake_ids": unwarranted,
+        "outcomes": outcomes,
     }
+
+
+def paired(first: dict, second: dict) -> dict:
+    """Head to head on the cases scored for both systems (spec §3)."""
+    oa, ob = first["outcomes"], second["outcomes"]
+    common = [i for i in oa if i in ob and is_scored(oa[i]) and is_scored(ob[i])]
+    a_under = [oa[i]["outcome"] == "under" for i in common]
+    b_under = [ob[i]["outcome"] == "under" for i in common]
+    out = {"n_common": len(common),
+           "first_under": sum(a_under), "first_under_ci95": clopper_pearson(sum(a_under), len(common)),
+           "second_under": sum(b_under),
+           "second_under_ci95": clopper_pearson(sum(b_under), len(common)),
+           **mcnemar_exact(a_under, b_under)}
+    out["discordant"] = out["only_first_under"] + out["only_second_under"]
+    out["underpowered"] = out["discordant"] < MCNEMAR_MIN_DISCORDANT
+    d = out["discordant"]
+    # spec §9.2: the exact interval behind McNemar's test, omitted when b + c = 0
+    out["discordant_share_ci95"] = clopper_pearson(out["only_first_under"], d) if d else None
+    if out["underpowered"]:
+        out["p_exact"] = None     # spec §9.2: counts and exact CIs only, no p-value
+    pairs = [(ob[i]["got"], oa[i]["got"]) for i in common
+             if oa[i]["got"] in ORDER and ob[i]["got"] in ORDER]
+    out["kappa_linear"] = weighted_kappa(pairs)
+    out["kappa_n"] = len(pairs)
+    return out
+
+
+def code_ceiling(systems: dict) -> dict:
+    """Spec §3a: protocol_check against the key is what code alone achieves;
+    what a model-backed system gets right beyond it is the model's share."""
+    pc = systems.get("protocol_check")
+    if pc is None:
+        return {}
+    po = pc["outcomes"]
+    misses = [i for i, o in po.items() if is_scored(o) and o["outcome"] != "agree"]
+    out = {"protocol_check_n": pc["n_scored"], "protocol_check_agree": pc["agree"],
+           "protocol_check_misses": misses}
+    for name in ("final", "llm_proposed"):
+        s = systems.get(name)
+        if s is None:
+            continue
+        so = s["outcomes"]
+        fixed = [i for i in misses if is_scored(so[i]) and so[i]["outcome"] == "agree"]
+        worse = [i for i, o in so.items() if is_scored(o) and o["outcome"] == "under"
+                 and is_scored(po[i]) and po[i]["outcome"] != "under"]
+        broken = [i for i, o in so.items() if is_scored(o) and o["outcome"] != "agree"
+                  and is_scored(po[i]) and po[i]["outcome"] == "agree"]
+        out[name] = {"fixes_protocol_miss": len(fixed), "fixed_ids": fixed,
+                     "under_where_protocol_not": len(worse), "under_where_protocol_not_ids": worse,
+                     "wrong_where_protocol_right": len(broken), "wrong_where_protocol_right_ids": broken}
+    return out
 
 
 # --- Running systems -------------------------------------------------------------
@@ -359,7 +555,7 @@ def run_protocol(case: dict, protocol) -> dict:
     vs = case["visual_summary"]
     visual = {"images_usable": vs["images_usable"], "flagged_teeth": vs["flagged_teeth"],
               "unexpected_missing_teeth": vs["unexpected_missing_teeth"]}
-    return {"protocol": protocol.protocol_level(case["symptoms"], visual)}
+    return {"protocol_check": protocol.protocol_level(case["symptoms"], visual)}
 
 
 def run_llm(case: dict, model: str, words: list, llm=None, protocol=None) -> dict:
@@ -374,8 +570,8 @@ def run_llm(case: dict, model: str, words: list, llm=None, protocol=None) -> dic
     a = triage.assess(findings_from_visual(case["visual_summary"]),
                       copy.deepcopy(case["symptoms"]), messages, **kwargs)
     t = a["triage"]
-    return {"final": a["urgency"], "llm_only": t["llm_proposed"],
-            "protocol": t["protocol_level"], "rules": a["rules_baseline"]["urgency"],
+    return {"final": a["urgency"], "llm_proposed": t["llm_proposed"],
+            "protocol_check": t["protocol_level"], "rules": a["rules_baseline"]["urgency"],
             "decided_by": a["decided_by"], "overridden_by": t["overridden_by"],
             "llm_valid": t["llm_valid"], "attempts": t["attempts"],
             "model_called": t["model"] is not None,
@@ -383,86 +579,211 @@ def run_llm(case: dict, model: str, words: list, llm=None, protocol=None) -> dic
             "seconds": time.perf_counter() - start}
 
 
-KINDS = {"final": "urgency", "rules": "urgency", "llm_only": "level", "protocol": "level"}
-
-
 def evaluate(spec: dict, system: str, reference: str = "key", model: str = None,
-             repeats: int = 1, protocol=None, llm=None, verbose: bool = True) -> dict:
+             stability_ids=(), repeats: int = STABILITY_REPEATS, protocol=None, llm=None,
+             verbose: bool = True) -> dict:
+    """Run one system over the cases and score every system the run yields.
+    Stability cases get `repeats` runs of their words plus one per paraphrase;
+    only the first run of each case enters the level metrics."""
+    stability_ids = set(stability_ids)
     per_case = []
     for case in spec["cases"]:
         ref, ref_expected = reference_level(case, reference)
-        runs = []
         if system == "rules":
             out = run_rules(case)
             if protocol is not None:
                 out.update(run_protocol(case, protocol))
-            runs.append(out)
+            runs = [out]
         else:
-            variants = [case["patient_words"]] + case.get("paraphrases", [])
-            for words in variants:
-                for _ in range(repeats):
-                    runs.append(run_llm(case, model, words, llm, protocol))
+            runs = [run_llm(case, model, case["patient_words"], llm, protocol)]
+            if case["id"] in stability_ids:
+                runs += [run_llm(case, model, case["patient_words"], llm, protocol)
+                         for _ in range(repeats - 1)]
+                runs += [run_llm(case, model, words, llm, protocol)
+                         for words in case.get("paraphrases", [])]
         per_case.append({"id": case["id"], "ref": ref, "ref_expected": ref_expected,
-                         "runs": runs})
+                         "boundary": case["key"].get("boundary", False),
+                         "ambiguous": case.get("ambiguous", False),
+                         "images_usable": case["visual_summary"]["images_usable"],
+                         "stability": case["id"] in stability_ids,
+                         "n_paraphrases": len(case.get("paraphrases", [])), "runs": runs})
         if verbose:
             first = runs[0]
             got = first.get("final", first.get("rules"))
-            c = compare(ref, ref_expected, got) if ref else {"outcome": "not_scored"}
+            c = (compare(ref, got, case["visual_summary"]["images_usable"]) if ref
+                 else {"outcome": "not_scored"})
             mark = {"agree": "ok  ", "under": "UNDER", "over": "over"}.get(c["outcome"], c["outcome"])
             extra = f" decided_by={first['decided_by']}" if "decided_by" in first else ""
-            print(f"{mark:6} {case['id']}  key {ref}/{ref_expected}  got {got}{extra}")
+            print(f"{mark:6} {case['id']}  key {ref}  got {got}{extra}")
 
-    systems = [s for s in ("final", "llm_only", "protocol", "rules")
-               if any(s in pc["runs"][0] for pc in per_case)]
+    present = [s for s in SYSTEMS if any(s in pc["runs"][0] for pc in per_case)]
     summary = {"system_run": system, "model": model, "reference": reference,
                "n_cases": len(per_case), "systems": {}}
-    for s in systems:
+    for s in present:
         rows = [{"id": pc["id"], "ref": pc["ref"], "ref_expected": pc["ref_expected"],
+                 "boundary": pc["boundary"], "ambiguous": pc["ambiguous"],
+                 "images_usable": pc["images_usable"],
                  "got": pc["runs"][0].get(s)} for pc in per_case if pc["ref"]]
-        summary["systems"][s] = summarise(rows, s, KINDS[s])
-
-    def under_flags(s):
-        return [summary["systems"][s]["outcomes"].get(pc["id"], {}).get("outcome") == "under"
-                for pc in per_case if pc["ref"]]
-    comparisons = {}
-    for a, b in (("final", "rules"), ("llm_only", "rules"), ("protocol", "rules")):
-        if a in summary["systems"] and b in summary["systems"]:
-            comparisons[f"{a}_vs_{b}"] = mcnemar_exact(under_flags(a), under_flags(b))
-            pairs = [(pc["runs"][0][b], pc["runs"][0][a]) for pc in per_case
-                     if pc["runs"][0].get(a) in ORDER and pc["runs"][0].get(b) in ORDER]
-            comparisons[f"{a}_vs_{b}"]["kappa_linear"] = weighted_kappa(pairs)
-            comparisons[f"{a}_vs_{b}"]["kappa_n"] = len(pairs)
-    summary["comparisons"] = comparisons
-
+        summary["systems"][s] = summarise(rows, s)
+    summary["comparisons"] = {f"{a}_vs_{b}": paired(summary["systems"][a], summary["systems"][b])
+                              for a, b in COMPARISONS
+                              if a in summary["systems"] and b in summary["systems"]}
+    summary["code_ceiling"] = code_ceiling(summary["systems"])
     if system == "llm":
         summary["operations"] = _operations(per_case)
     summary["cases"] = per_case
     return summary
 
 
+def sensitivity(summary: dict, exclude: set) -> dict:
+    """Spec §9.5: every headline metric recomputed without the excluded
+    cases, from the same runs (no model call). Ids are kept out of the output."""
+    per_case = [pc for pc in summary["cases"] if pc["id"] not in exclude]
+    systems = {}
+    for s in summary["systems"]:
+        rows = [{"id": pc["id"], "ref": pc["ref"], "ref_expected": pc["ref_expected"],
+                 "boundary": pc["boundary"], "ambiguous": pc["ambiguous"],
+                 "images_usable": pc["images_usable"], "got": pc["runs"][0].get(s)}
+                for pc in per_case if pc["ref"]]
+        systems[s] = summarise(rows, s)
+    out = {"n_excluded": len(summary["cases"]) - len(per_case), "systems": systems,
+           "comparisons": {f"{a}_vs_{b}": paired(systems[a], systems[b])
+                           for a, b in COMPARISONS if a in systems and b in systems}}
+    if "operations" in summary:
+        out["operations"] = _operations(per_case)
+    return out
+
+
 def _operations(per_case: list) -> dict:
     first = [pc["runs"][0] for pc in per_case]
-    called = [r for r in first if r["model_called"]]
-    fallback = sum(r["decided_by"] == "fallback_rules" or not r["llm_valid"] for r in called)
-    seconds = sorted(r["seconds"] for pc in per_case for r in pc["runs"] if r["model_called"])
-    stable = [pc for pc in per_case if len(pc["runs"]) > 1]
+    calls = [r for pc in per_case for r in pc["runs"] if r["model_called"]]
+    fallback = sum(not r["llm_valid"] for r in calls)
+    seconds = sorted(r["seconds"] for r in calls)
+    stable = [pc for pc in per_case if pc["stability"]]
+    n = len(calls)
     return {
+        "triage_calls": n,
+        "first_runs_model_called": sum(r["model_called"] for r in first),
+        "first_runs_floor_skipped_model": sum(not r["model_called"] for r in first),
+        "valid_output": sum(r["llm_valid"] for r in calls),
+        "valid_output_rate": sum(r["llm_valid"] for r in calls) / n if n else float("nan"),
+        "retried": sum(r["attempts"] > 1 for r in calls),
+        "retry_rate": sum(r["attempts"] > 1 for r in calls) / n if n else float("nan"),
+        "fallback": fallback,
+        "fallback_rate": fallback / n if n else float("nan"),
+        "fallback_ci95": clopper_pearson(fallback, n),
+        "fallback_bar_ok": (fallback / n <= FALLBACK_BAR) if n else None,
         "decided_by": dict(Counter(r["decided_by"] for r in first)),
         "overridden_by": dict(Counter(r["overridden_by"] for r in first if r["overridden_by"])),
-        "model_called": len(called),
-        "floor_skipped_model": len(first) - len(called),
-        "valid_first_try": sum(r["llm_valid"] and r["attempts"] == 1 for r in called),
-        "retried": sum(r["attempts"] > 1 for r in called),
-        "invalid_fallback": fallback,
-        "fallback_rate": fallback / len(called) if called else float("nan"),
-        "fallback_ci95": clopper_pearson(fallback, len(called)),
-        "llm_decided": sum(r["decided_by"] == "llm" for r in first),
         "latency_p50_s": statistics.median(seconds) if seconds else None,
         "latency_p95_s": float(np.percentile(seconds, 95)) if seconds else None,
         "stability_cases": len(stable),
-        "stable_final": sum(len({r["final"] for r in pc["runs"]}) == 1 for pc in stable),
-        "stable_llm_only": sum(len({r["llm_only"] for r in pc["runs"]}) == 1 for pc in stable),
+        "stability_runs_per_case": dict(Counter(len(pc["runs"]) for pc in stable)),
+        "stability_short_of_paraphrases": [pc["id"] for pc in stable if pc["n_paraphrases"] < 2],
+        **{f"stable_{s}_{part}": _stable(stable, s, part)
+           for s in ("final", "llm_proposed") for part in ("all", "repeats", "paraphrases")},
     }
+
+
+def _stable(stable: list, system: str, part: str) -> dict:
+    """Spec §9.3: runs are [patient_words x repeats, then each paraphrase].
+    'repeats' = the repeat runs; 'paraphrases' = the first run plus the
+    paraphrase runs, i.e. does the level survive rewording."""
+    identical = n = 0
+    for pc in stable:
+        runs = pc["runs"]
+        k = len(runs) - pc["n_paraphrases"]
+        chosen = {"all": runs, "repeats": runs[:k], "paraphrases": runs[:1] + runs[k:]}[part]
+        if part == "paraphrases" and pc["n_paraphrases"] == 0:
+            continue
+        n += 1
+        identical += len({r[system] for r in chosen}) == 1
+    return {"identical": identical, "n": n}
+
+
+# --- Run log (spec §1: every held-out scoring is logged) ---------------------------
+
+def _sha256(path: Path) -> str:
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def configuration(system: str, model: str, protocol) -> dict:
+    """What makes a configuration (spec §1): model + prompt + protocol version
+    + composition options. Code fixes are recorded (git commit) but do not
+    make a new configuration; re-running after one is a logged re-run."""
+    cfg = {"system": system, "scoring": SCORING_VERSION,
+           "protocol_version": getattr(protocol, "version", None),
+           "protocol_sha256": _sha256(PROTOCOL_FILE),
+           "rules_sha256": _sha256(RULES_FILE)}
+    if system == "llm":
+        import triage
+        cfg.update({"model": model, "prompt_sha256": _sha256(TRIAGE_PROMPT),
+                    "max_attempts": triage.MAX_ATTEMPTS})
+    cfg["fingerprint"] = hashlib.sha256(
+        json.dumps(cfg, sort_keys=True).encode()).hexdigest()[:16]
+    return cfg
+
+
+def _git_state() -> dict:
+    def git(*args):
+        try:
+            return subprocess.run(["git", "-C", str(REPO_ROOT), *args], capture_output=True,
+                                  text=True, timeout=20).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return None
+    status = git("status", "--porcelain")
+    return {"commit": git("rev-parse", "HEAD"), "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
+            "dirty": bool(status) if status is not None else None}
+
+
+def read_runlog(path: Path = RUNLOG) -> list:
+    if not Path(path).exists():
+        return []
+    return [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines()
+            if line.strip()]
+
+
+def prior_runs(fingerprint: str, cases_sha: str, path: Path = RUNLOG) -> list:
+    return [e for e in read_runlog(path)
+            if e["configuration"]["fingerprint"] == fingerprint and e["cases_sha256"] == cases_sha]
+
+
+def heldout_refusal(system: str, confirmed: bool, prior: list, rerun_reason: str):
+    """Why a held-out run must not start, or None."""
+    if system != "llm":
+        return None
+    if not confirmed:
+        return ("the llm system on held-out data needs the lead's go: pass --confirm-heldout "
+                "(spec §1, scored once per configuration)")
+    if prior and not rerun_reason:
+        when = ", ".join(e["date"] for e in prior)
+        return (f"this configuration was already scored on this file ({when}); a re-run after "
+                "a code fix needs --rerun-reason and is logged as a re-run")
+    return None
+
+
+def headline(summary: dict) -> dict:
+    keys = ("n_scored", "under", "severe_under", "missed_emergency", "over", "agree",
+            "excluded_retake", "kappa_linear", "kappa_ci95", "under_ci95")
+    out = {s: {k: v[k] for k in keys} for s, v in summary["systems"].items()}
+    if summary.get("sensitivity"):
+        sens = summary["sensitivity"]
+        out["sensitivity"] = {"n_excluded": sens["n_excluded"],
+                              **{s: {k: v[k] for k in keys} for s, v in sens["systems"].items()}}
+    ops = summary.get("operations")
+    if ops:
+        out["operations"] = {k: ops[k] for k in ("triage_calls", "fallback", "fallback_rate",
+                                                 "valid_output_rate", "retry_rate")}
+    return out
+
+
+def append_runlog(entry: dict, path: Path = RUNLOG) -> None:
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
 
 
 # --- Report ------------------------------------------------------------------------
@@ -471,52 +792,121 @@ def _pct(x) -> str:
     return "  n/a" if x is None or x != x else f"{x:5.1%}"
 
 
+def _ci(ci) -> str:
+    return f"[{_pct(ci[0])}, {_pct(ci[1])}]"
+
+
 def print_report(summary: dict) -> None:
     print(f"\nreference: {summary['reference']}   cases: {summary['n_cases']}"
           + (f"   model: {summary['model']}" if summary["model"] else ""))
-    header = (f"{'system':<9} {'n':>4} {'under':>6} {'(severe)':>8} {'under 95% CI':>17} "
-              f"{'1-sided':>7} {'over':>5} {'over 95% CI':>17} {'exact':>6} {'kappa':>6} "
-              f"{'kappa 95% CI':>15}")
-    print(header)
     for name, s in summary["systems"].items():
-        lo, hi = s["under_ci95"]
-        olo, ohi = s["over_ci95"]
+        n = s["n_scored"]
         klo, khi = s["kappa_ci95"]
-        print(f"{name:<9} {s['n_scored']:>4} {s['under']:>6} {s['severe_under']:>8} "
-              f"  [{_pct(lo)}, {_pct(hi)}] {_pct(s['under_upper95_one_sided']):>7} "
-              f"{s['over']:>5}   [{_pct(olo)}, {_pct(ohi)}] "
-              f"{_pct(s['exact_agreement']):>6} {s['kappa_linear']:6.3f}  [{klo:5.3f}, {khi:5.3f}]")
-    for name, s in summary["systems"].items():
+        b, nb = s["under_boundary"], s["under_not_boundary"]
+        print(f"\n=== {name}  (n = {n} scored of {s['n_cases']}) ===")
+        print(f"under-triage      {s['under']:3d}/{n}  {_pct(s['under_rate'])}  95% CI "
+              f"{_ci(s['under_ci95'])}  one-sided upper {_pct(s['under_upper95_one_sided'])}")
+        print(f"  severe (>=2 lv or RETAKE)  {s['severe_under']}")
+        print(f"  missed EMERGENCY           {s['missed_emergency']}/{s['n_key_emergency']}")
+        print(f"  boundary {b['under']}/{b['n']}   elsewhere {nb['under']}/{nb['n']}"
+              + (f"   ambiguous {s['under_ambiguous']['under']}/{s['under_ambiguous']['n']}"
+                 if s["under_ambiguous"]["n"] else ""))
+        print(f"over-triage       {s['over']:3d}/{n}  {_pct(s['over_rate'])}  95% CI {_ci(s['over_ci95'])}")
+        print(f"exact agreement   {s['agree']:3d}/{n}  {_pct(s['exact_agreement'])}")
+        print(f"weighted kappa    {s['kappa_linear']:.3f}  95% CI {klo:.3f}-{khi:.3f}  "
+              f"(n = {s['kappa_n']}; bootstrap {BOOTSTRAP_REPS}, seed {BOOTSTRAP_SEED})")
+        print("confusion (key down, system across)          recall   precision")
+        print("            " + "".join(f"{lv[:4]:>7}" for lv in LEVELS))
+        for ref in LEVELS:
+            pl = s["per_level"][ref]
+            print(f"  {ref:<10}" + "".join(f"{s['confusion'][ref][g]:7d}" for g in LEVELS)
+                  + f"   {pl['correct']:3d}/{pl['n_key']:<3d} {_pct(pl['recall'])}"
+                  f"  {pl['correct']:3d}/{pl['n_system']:<3d} {_pct(pl['precision'])}")
+        ph = s["photo_quality"]
         notes = []
+        if ph["retake_emitted"]:
+            notes.append(f"RETAKE emitted {ph['retake_emitted']} (under-triage {ph['retake_under']}, "
+                         f"designed and excluded {ph['retake_excluded']}, unwarranted "
+                         f"{ph['retake_unwarranted']}/{n} {_ci(s['unwarranted_retake_ci95'])}: "
+                         "counted as misses, not in kappa)")
+        if ph["retake_expected_by_design"] and name in ("final", "rules"):   # the others never say RETAKE
+            notes.append(f"unusable photos with a SOON/ROUTINE key {ph['retake_expected_by_design']}"
+                         f" (given a level instead of RETAKE: {ph['retake_missed_by_design']})")
         if s["not_scored"]:
-            notes.append(f"{s['not_scored']} not scored")
-        if s["spurious_retake"] or s["retake_correct"] or s["retake_missed"]:
-            notes.append(f"retake correct {s['retake_correct']}, missed {s['retake_missed']}, "
-                         f"spurious {s['spurious_retake']}")
-        if s["n_scored"] != s["kappa_n"]:
-            notes.append(f"kappa on {s['kappa_n']} (RETAKE pairs excluded)")
-        by = ", ".join(f"{lv} {v['under']}/{v['n']}" for lv, v in s["by_reference_level"].items())
-        print(f"  {name}: under by key level: {by}" + (f"; {'; '.join(notes)}" if notes else ""))
-        if s["under_ids"]:
-            print(f"    under-triaged: {', '.join(s['under_ids'])}")
+            notes.append(f"{s['not_scored']} not scored (no answer)")
+        if notes:
+            print("  " + "; ".join(notes))
+    if summary["comparisons"]:
+        print("\nhead to head, under-triage, on cases scored for both:")
     for name, c in summary["comparisons"].items():
-        print(f"  {name}: under-triage only in first {c['only_first_under']}, only in second "
-              f"{c['only_second_under']}, exact McNemar p = {c['p_exact']:.3g}; "
-              f"kappa between them {c['kappa_linear']:.3f} (n={c['kappa_n']})")
+        a, b = name.split("_vs_")
+        test = ("underpowered: fewer than 10 discordant pairs, so no test of a difference is "
+                "reported" if c["underpowered"] else f"exact McNemar p = {c['p_exact']:.3g}")
+        share = (f"share against {a} {c['only_first_under']}/{c['discordant']} "
+                 f"{_ci(c['discordant_share_ci95'])}" if c["discordant_share_ci95"]
+                 else "no discordant pairs, so no CI for b/(b+c)")
+        print(f"  {name} (n = {c['n_common']}): {a} {c['first_under']} {_ci(c['first_under_ci95'])}, "
+              f"{b} {c['second_under']} {_ci(c['second_under_ci95'])}; b = only {a} "
+              f"{c['only_first_under']}, c = only {b} {c['only_second_under']}; {share}; {test}; "
+              f"kappa between them {c['kappa_linear']:.3f} (n = {c['kappa_n']})")
+    cc = summary.get("code_ceiling")
+    if cc:
+        print(f"\ncode ceiling (spec 3a): protocol_check agrees on {cc['protocol_check_agree']}/"
+              f"{cc['protocol_check_n']}; it misses {len(cc['protocol_check_misses'])}")
+        for name in ("final", "llm_proposed"):
+            if name in cc:
+                x = cc[name]
+                print(f"  {name}: right on {x['fixes_protocol_miss']}/{len(cc['protocol_check_misses'])}"
+                      f" of those; under-triaged where protocol_check was not "
+                      f"{x['under_where_protocol_not']}; wrong where protocol_check was right "
+                      f"{x['wrong_where_protocol_right']}")
     ops = summary.get("operations")
     if ops:
-        lo, hi = ops["fallback_ci95"]
-        print(f"  model called {ops['model_called']}, floor skipped it {ops['floor_skipped_model']}; "
-              f"valid first try {ops['valid_first_try']}, retried {ops['retried']}, "
-              f"fallback {ops['invalid_fallback']} ({_pct(ops['fallback_rate'])}, 95% CI "
-              f"[{_pct(lo)}, {_pct(hi)}])")
-        print(f"  decided_by {ops['decided_by']}; overridden_by {ops['overridden_by']}")
+        n = ops["triage_calls"]
+        print(f"\noperations over {n} triage calls: valid output {ops['valid_output']}/{n} "
+              f"({_pct(ops['valid_output_rate'])}), retried {ops['retried']}/{n} "
+              f"({_pct(ops['retry_rate'])}), fallback to rules {ops['fallback']}/{n} "
+              f"({_pct(ops['fallback_rate'])}, 95% CI {_ci(ops['fallback_ci95'])}; bar <= 1%: "
+              f"{'met' if ops['fallback_bar_ok'] else 'NOT MET'})")
+        print(f"  first runs: model called {ops['first_runs_model_called']}, floor skipped it "
+              f"{ops['first_runs_floor_skipped_model']}; decided_by {ops['decided_by']}; "
+              f"overridden_by {ops['overridden_by']}")
         if ops["latency_p50_s"] is not None:
             print(f"  latency per triage call: p50 {ops['latency_p50_s']:.1f}s, "
                   f"p95 {ops['latency_p95_s']:.1f}s")
         if ops["stability_cases"]:
-            print(f"  stability over {ops['stability_cases']} cases: final identical "
-                  f"{ops['stable_final']}, llm_only identical {ops['stable_llm_only']}")
+            k = ops["stability_cases"]
+            print(f"  stability over {k} cases (runs per case {ops['stability_runs_per_case']}); "
+                  "EMERGENCY cases never reach the model and are not described:")
+            for s in ("final", "llm_proposed"):
+                print(f"    {s:<13}" + ", ".join(
+                    f"{part} identical {ops[f'stable_{s}_{part}']['identical']}/"
+                    f"{ops[f'stable_{s}_{part}']['n']}" for part in ("all", "repeats", "paraphrases")))
+            if ops["stability_short_of_paraphrases"]:
+                print(f"  WARNING: {len(ops['stability_short_of_paraphrases'])} stability cases "
+                      "have fewer than 2 paraphrases")
+    print("\nThese numbers must be reported with:")
+    for i, text in enumerate(CAVEATS, 1):
+        print(f"  {i}. {text}")
+    sens = summary.get("sensitivity")
+    if sens:
+        print(f"\nsensitivity analysis (spec 9.5): the same runs without {sens['n_excluded']} "
+              "exposed cases; the primary figures above use all cases")
+        print(f"  {'system':<15}{'n':>4}{'under':>7}{'severe':>8}{'missed EM':>11}{'over':>6}"
+              f"{'exact':>9}{'kappa':>8}  kappa 95% CI")
+        for name, s in sens["systems"].items():
+            lo, hi = s["kappa_ci95"]
+            print(f"  {name:<15}{s['n_scored']:>4}{s['under']:>7}{s['severe_under']:>8}"
+                  f"{s['missed_emergency']:>7}/{s['n_key_emergency']:<3}{s['over']:>6}"
+                  f"{s['agree']:>5}/{s['n_scored']:<3}{s['kappa_linear']:>8.3f}  [{lo:.3f}, {hi:.3f}]"
+                  f"  under 95% CI {_ci(s['under_ci95'])}")
+        ops = sens.get("operations")
+        if ops and ops["stability_cases"]:
+            k = ops["stability_cases"]
+            for s in ("final", "llm_proposed"):
+                print(f"  stability {s:<13} over {k} cases: " + ", ".join(
+                    f"{part} {ops[f'stable_{s}_{part}']['identical']}/{ops[f'stable_{s}_{part}']['n']}"
+                    for part in ("all", "repeats", "paraphrases")))
     primary = summary["systems"].get("final") or summary["systems"].get("rules")
     ok = primary["under"] == 0 and primary["kappa_linear"] >= KAPPA_BAR
     print(f"\npass bar (0 under-triage, kappa >= {KAPPA_BAR}) for {primary['system']}: "
@@ -529,18 +919,42 @@ def main() -> int:
     ap.add_argument("--system", choices=["rules", "llm"], default="rules")
     ap.add_argument("--model", default=None)
     ap.add_argument("--reference", choices=["key", "dentist"], default="key")
-    ap.add_argument("--repeats", type=int, default=1, help="runs per case, for stability")
+    ap.add_argument("--stability-ids", help="JSON list of case ids run for stability "
+                                            f"({STABILITY_REPEATS} runs + each paraphrase); "
+                                            "default on the held-out triage file: spec §9.3")
+    ap.add_argument("--sensitivity-exclude", metavar="JSON",
+                    help="spec 9.5: also report every headline metric without these case ids "
+                         "(a JSON list, or an object with 'exposed_ids')")
+    ap.add_argument("--write-vignettes", metavar="OUT",
+                    help="write the (converted) case file here after validation, and exit; "
+                         "e.g. dev keys + P7 text -> llm/eval/triage_vignettes_dev.json")
     ap.add_argument("--validate-only", action="store_true")
+    ap.add_argument("--confirm-heldout", action="store_true",
+                    help="the lead has given the go to score the llm system on held-out data")
+    ap.add_argument("--rerun-reason", help="why an already-scored configuration is run again")
+    ap.add_argument("--ran-by", default="qa-engineer")
+    ap.add_argument("--runlog", default=str(RUNLOG), help="held-out run log (JSON lines)")
     ap.add_argument("--json", help="write the full result here (default: runs/evals/)")
     args = ap.parse_args()
 
     path = Path(args.cases)
-    spec = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        spec = load_cases(path)
+    except ValueError as exc:
+        print(f"ERROR: {exc}")
+        return 1
+    heldout = spec["split"] == "heldout"
+    if args.write_vignettes and heldout:
+        print("REFUSED: held-out cases are never written out as a vignette file")
+        return 1
     protocol, perr = load_protocol()
     if perr:
         print(f"WARNING: protocol not loaded ({perr}); keys are not checked against it "
-              "and the 'protocol' system is skipped")
-    errors, warnings = validate_cases(spec, protocol)
+              "and protocol_check is skipped")
+        if heldout:
+            print("ERROR: held-out keys are never scored without the protocol check")
+            return 1
+    errors, warnings = validate_cases(spec, protocol, need_words=args.system == "llm")
     for w in warnings:
         print(f"warning: {w}")
     for e in errors:
@@ -552,21 +966,80 @@ def main() -> int:
           + f"; boundary {sum(c['key']['boundary'] for c in spec['cases'])}")
     if errors or args.validate_only:
         return 1 if errors else 0
+    if args.write_vignettes:
+        out = Path(args.write_vignettes)
+        out.write_text(json.dumps(spec, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+        print(f"wrote {len(spec['cases'])} {spec['split']} cases to {out}")
+        return 0
 
     if args.system == "llm":
         from interview import DEFAULT_MODEL
         args.model = args.model or DEFAULT_MODEL
-    summary = evaluate(spec, args.system, args.reference, args.model, args.repeats, protocol)
+        if any(not c["patient_words"] for c in spec["cases"]):
+            print("ERROR: the llm system needs patient_words for every case (P7)")
+            return 1
+    if args.stability_ids:
+        stability_ids = json.loads(Path(args.stability_ids).read_text(encoding="utf-8"))
+    elif args.system == "llm" and path.name == "triage_heldout_keys.json":
+        stability_ids = list(HELDOUT_STABILITY_IDS)
+    else:
+        stability_ids = []
+    ids = {c["id"] for c in spec["cases"]}
+    unknown = set(stability_ids) - ids
+    if unknown:
+        # counts only: an error path must not print held-out ids or keys
+        print(f"ERROR: {len(unknown)} stability ids are not in the case file")
+        return 1
+    exclude = set()
+    if args.sensitivity_exclude:
+        raw = json.loads(Path(args.sensitivity_exclude).read_text(encoding="utf-8"))
+        exclude = set(raw["exposed_ids"] if isinstance(raw, dict) else raw)
+        if not exclude or exclude - ids:
+            print(f"ERROR: sensitivity exclusion list is empty or has {len(exclude - ids)} ids "
+                  "not in the case file")
+            return 1
+
+    cases_sha = _sha256(path)
+    cfg = configuration(args.system, args.model, protocol)
+    prior = prior_runs(cfg["fingerprint"], cases_sha, args.runlog) if heldout else []
+    if heldout:
+        refusal = heldout_refusal(args.system, args.confirm_heldout, prior, args.rerun_reason)
+        if refusal:
+            print(f"REFUSED: {refusal}")
+            return 2
+        if prior:
+            print(f"re-run {len(prior) + 1} of configuration {cfg['fingerprint']} on this file")
+
+    summary = evaluate(spec, args.system, args.reference, args.model, stability_ids,
+                       protocol=protocol, verbose=not heldout)
     summary["cases_file"] = str(path)
     summary["protocol_loaded"] = protocol is not None
+    if exclude:
+        summary["sensitivity"] = sensitivity(summary, exclude)
+    summary["configuration"] = cfg
     print_report(summary)
 
     out = Path(args.json) if args.json else OUT_DIR / (
-        f"triage_{spec['split']}_{args.system}"
+        f"triage_{path.stem}_{args.system}"
         + (f"_{args.model.replace(':', '_')}" if args.model else "") + ".json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(summary, indent=1, ensure_ascii=False, default=str), encoding="utf-8")
     print(f"wrote {out}")
+
+    if heldout:
+        entry = {"date": datetime.datetime.now().isoformat(timespec="seconds"),
+                 "ran_by": args.ran_by, "cases_file": str(path), "cases_sha256": cases_sha,
+                 "n_cases": len(spec["cases"]), "reference": args.reference,
+                 "configuration": cfg, "git": _git_state(),
+                 "rerun": bool(prior), "rerun_of": [e["date"] for e in prior],
+                 "rerun_reason": args.rerun_reason, "stability_ids": stability_ids,
+                 "output": str(out), "headline": headline(summary)}
+        append_runlog(entry, args.runlog)
+        print(f"logged in {args.runlog}. For docs/decisions.md (research-pm): {entry['date'][:10]}, "
+              f"Test 5 held-out scoring, {path.name}, system {args.system}"
+              + (f" {args.model}" if args.model else "")
+              + f", configuration {cfg['fingerprint']}, run by {args.ran_by}"
+              + (" (re-run)" if prior else ""))
     return 0
 
 

@@ -27,6 +27,7 @@ uses record() and extract() and never starts the planned interview.
 """
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -118,6 +119,93 @@ def _is_bare(quote: str) -> bool:
     return _normalize(quote) in BARE_ANSWERS
 
 
+def _plain(text: str) -> str:
+    return " ".join((text or "").lower().replace("’", "'").split())
+
+
+# "I don't know"-type answers. Such an answer settles nothing, except that
+# it may be the 'unknown' answer to the question it was the reply to: "hard
+# to say" given to the severity question is not an unknown trigger.
+HEDGE = re.compile(
+    r"\b(?:not (?:really |quite |too )?sure|unsure|not certain|no idea|no clue|dunno|idk"
+    r"|(?:do ?n'?t|do not|can'?t|cannot|could ?n'?t|could not) (?:really |honestly )?"
+    r"(?:know|remember|recall|say|tell|describe|point|put|pin)"
+    r"|hard to (?:say|tell|describe|pin))\b")
+
+# Each pain_triggers item must be named in the patient's own message.
+TRIGGER_CUES = {
+    "cold": re.compile(r"\b(?:cold|cool|ice|iced|icy|chilled|freezing|frozen)\b"),
+    "hot": re.compile(r"\b(?:hot|warm|heat|heated|boiling|steaming)\b"),
+    "sweet": re.compile(r"\b(?:sweets?|sugary|sugar|candy|candies|chocolates?|desserts?|cakes?"
+                        r"|biscuits?|cookies?|soda)\b"),
+    "biting": re.compile(r"\b(?:bite|bites|biting|bit (?:on|down|into)|chew|chews|chewing|chewed"
+                         r"|clench\w*|grind\w*)\b"),
+    "spontaneous": re.compile(r"\b(?:on its own|by itself|out of nowhere|(?:for )?no reason"
+                              r"|without (?:any )?reason|randomly|at random|all the time"
+                              r"|constant(?:ly)?|at night|wakes? me|just (?:starts|comes|happens)"
+                              r"|nothing (?:sets|brings|sparks) it)\b"),
+    "unknown": re.compile(HEDGE.pattern + r"|\b(?:comes and goes|nothing in particular)\b"),
+}
+# Words that look like a trigger but describe the patient, not the pain.
+NOT_A_TRIGGER = re.compile(
+    r"\b(?:i|i'm|i am|i've been|feel|feels|feeling|felt|running|am) (?:a bit |quite |very |really |so )?"
+    r"(?:hot|warm|cold)\b|\bhot flush\w*|\bcold sweats?\b|\b(?:have|got|caught|had) a cold\b")
+
+# location needs arch AND side each in the patient's words ("on the left"
+# alone is not a quadrant). "bite down" is not an arch.
+ARCH_CUES = {
+    "upper": re.compile(r"\b(?:upper|top|above|maxilla\w*)\b"),
+    "lower": re.compile(r"\b(?:lower|bottom|below|down|mandib\w*)\b"),
+}
+SIDE_CUES = {"left": re.compile(r"\bleft\b"), "right": re.compile(r"\bright\b")}
+NOT_A_LOCATION = re.compile(
+    r"\b(?:bite|bites|biting|bit|chew\w*|press\w*|push\w*|clench\w*|lie|lying|lay|goes|go|went"
+    r"|come|comes|calm\w*|settle\w*|slow\w*|sit\w*) down\b"
+    r"|\b(?:all|that's|that is|you're|is) right\b|\bright (?:now|away|after|before)\b"
+    r"|\b(?:nothing|none|still|have|has|had) left\b|\bleft (?:it|over|alone|untreated)\b")
+PLACE_CUES = {
+    "front": re.compile(r"\b(?:front|incisors?|middle|centre|center)\b"),
+    "generalised": re.compile(r"\b(?:all over|everywhere|whole|entire|both sides|all around"
+                              r"|all (?:of )?(?:my|the) teeth|all of (?:it|them))\b"),
+}
+
+
+def _location_named(value: str, text: str) -> bool:
+    text = NOT_A_LOCATION.sub(" ", text)
+    if value in PLACE_CUES:
+        return bool(PLACE_CUES[value].search(text))
+    arch, _, side = value.partition("_")
+    return bool(ARCH_CUES[arch].search(text) and SIDE_CUES[side].search(text))
+
+
+def verify(field: str, value, quote: str, sources: list, own_question=None):
+    """What survives of an extracted {value, quote}: the value, a trimmed
+    list, or None. sources are (question_id, message) for each patient
+    message holding the quote; question_id is None outside the planned
+    interview, where no reply is tied to a question. Checks only ever drop
+    a value, never add or change one (hard rule 7)."""
+    if value in (None, []) or not quote or not sources:
+        return None
+    planned = any(qid is not None for qid, _ in sources)
+    if planned and _is_bare(quote):
+        return None  # no chat question is answered by a bare yes/no
+    said = " ".join(_plain(text) for _, text in sources)
+    in_reply = own_question is None or any(qid == own_question for qid, _ in sources)
+    hedged = bool(HEDGE.search(_plain(quote)))
+
+    if field == "pain_triggers":
+        said = NOT_A_TRIGGER.sub(" ", said)
+        kept = [item for item in value if TRIGGER_CUES[item].search(said)
+                and (item != "unknown" or in_reply)]
+        return kept or None
+    if field == "location":
+        # "Not sure where" settles nothing: null, the same as never answered.
+        if value == "unknown":
+            return None
+        return value if _location_named(value, said) else None
+    return None if hedged else value
+
+
 def _not_latin(text: str) -> bool:
     """Letters outside the Latin script: the answer is not in English.
     Romanised non-English text is not caught; that only costs the notice."""
@@ -139,7 +227,9 @@ EXTRACTION_INSTRUCTION = (
     "- pain_severity: 'severe' when it stops them sleeping or eating or they call "
     "it unbearable; otherwise 'mild' or 'moderate' as they describe it.\n"
     "- location needs arch and side together: 'bottom left' is lower_left, "
-    "'on the left' alone is not enough.\n"
+    "'on the left' alone is not enough. 'front' is the front teeth, top or bottom, "
+    "with no side needed; 'generalised' is pain spread over many teeth or the whole "
+    "mouth.\n"
     "- If they corrected themselves, the later answer wins.\n"
     "Quotes are checked against the transcript, so never invent one."
 )
@@ -189,6 +279,7 @@ class Interview:
         self.protocol = protocol
         self.llm = llm or (lambda messages, schema: chat(messages, model, schema=schema))
         self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self.reply_to = []      # per patient message: the chat question id it answered
         self.symptoms = {}
         self.checklist = {}     # field -> the patient's explicit Yes/No
         self.completed = set()  # QUESTION_PLAN items that are finished
@@ -244,6 +335,7 @@ class Interview:
             raise ValueError("no chat question is open")
         question = self.pending[1]
         self.messages.append({"role": "user", "content": answer})
+        self.reply_to.append(question.id)
         if _not_latin(answer) and not self.notice_shown:
             self.notice, self.notice_shown = NOT_ENGLISH_NOTICE, True
         self.symptoms = self.extract()
@@ -301,6 +393,7 @@ class Interview:
         """Add an already-asked question and its answer (for replay)."""
         self.messages.append({"role": "assistant", "content": question})
         self.messages.append({"role": "user", "content": answer})
+        self.reply_to.append(None)
 
     def _chat_fields(self) -> list:
         return [f for q in self.protocol.questions if q.input == "chat" for f in q.fields]
@@ -308,11 +401,11 @@ class Interview:
     def extract(self) -> dict:
         """Constrained-decode the transcript into the symptoms object.
 
-        Every field must come with the patient's own words. A field whose
-        quote isn't actually in the transcript is dropped to null, which is
-        what stops the model inferring one field from another. In the planned
-        interview only the chat fields are extracted; checklist answers are
-        the patient's clicks and are never overwritten."""
+        Every field must come with the patient's own words, found inside one
+        of their messages, and must pass verify(); otherwise it is dropped to
+        null, which is what stops the model inferring one field from another.
+        In the planned interview only the chat fields are extracted;
+        checklist answers are the patient's clicks and are never overwritten."""
         if self.planned and not self.checklist_a_done:
             # No result before the red-flag rows are answered (lead, 2026-09-22),
             # so "skip to result" can never skip checklist A.
@@ -320,7 +413,10 @@ class Interview:
         fields = self._chat_fields() if self.planned else EVIDENCE_FIELDS
         messages = self.messages + [{"role": "user", "content": EXTRACTION_INSTRUCTION}]
         raw = json.loads(self.llm(messages, evidence_schema(fields)))
-        said = _normalize(" ".join(m["content"] for m in self.messages if m["role"] == "user"))
+        turns = [m["content"] for m in self.messages if m["role"] == "user"]
+        replies = list(zip(self.reply_to, turns))
+        asked_for = ({f: q.id for q in self.protocol.questions if q.input == "chat"
+                      for f in q.fields} if self.planned else {})
 
         symptoms = {"schema_version": SCHEMA_VERSION}
         symptoms.update({f: None for f in EVIDENCE_FIELDS})
@@ -328,10 +424,10 @@ class Interview:
         for field in fields:
             entry = raw.get(field) or {}
             value, quote = entry.get("value"), entry.get("quote")
-            supported = bool(quote) and _normalize(quote) in said and value not in (None, [])
-            if supported and self.planned and _is_bare(quote):
-                supported = False  # no chat question is answered by a bare yes/no
-            if supported:
+            sources = [(qid, text) for qid, text in replies
+                       if _normalize(quote) and _normalize(quote) in _normalize(text)]
+            value = verify(field, value, quote, sources, asked_for.get(field))
+            if value is not None:
                 symptoms[field] = value
             elif self.planned:
                 # Re-extraction runs on every turn; a value verified on an

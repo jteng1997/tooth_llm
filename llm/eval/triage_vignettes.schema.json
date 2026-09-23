@@ -42,7 +42,10 @@
           "type": "array", "items": {"type": "array", "items": {"type": "string"}},
           "description": "Optional alternative patient_words with the same key, for the stability measure."
         },
-        "style": {"enum": ["plain", "vague", "non_native", "self_correcting", "injection", null]},
+        "style": {"enum": ["plain", "vague", "non_native", "self_correcting", "verbose", "terse",
+                           "injection", null]},
+        "ambiguous": {"type": "boolean",
+                      "description": "P7 §6: text fair but genuinely ambiguous; reported separately, excluded from nothing."},
         "dentist_label": {
           "description": "Blind dentist label. Filled by qa-engineer only after labelling is complete; never by hand-editing to match a result.",
           "oneOf": [
@@ -74,7 +77,7 @@
       "additionalProperties": false,
       "required": ["schema_version"],
       "properties": {
-        "schema_version": {"enum": ["1.0", "1.1"]},
+        "schema_version": {"enum": ["1.0", "1.1", "1.2"]},
         "pain_present": {"$ref": "#/definitions/bool_or_null"},
         "pain_triggers": {"type": ["array", "null"], "uniqueItems": true,
                           "items": {"enum": ["cold", "hot", "sweet", "biting", "spontaneous", "unknown"]}},
@@ -101,7 +104,10 @@
         "bleeding_uncontrolled": {"$ref": "#/definitions/bool_or_null"},
         "chest_pain_or_breathless": {"$ref": "#/definitions/bool_or_null"},
         "exceeded_pain_relief_dose": {"$ref": "#/definitions/bool_or_null"},
-        "recent_extraction": {"$ref": "#/definitions/bool_or_null"}
+        "recent_extraction": {"$ref": "#/definitions/bool_or_null"},
+        "persistent_ulcer": {"$ref": "#/definitions/bool_or_null"},
+        "broken_filling_or_tooth": {"$ref": "#/definitions/bool_or_null"},
+        "pus_or_discharge": {"$ref": "#/definitions/bool_or_null"}
       }
     }
   }

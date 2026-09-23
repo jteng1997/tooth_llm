@@ -146,16 +146,107 @@ def guardrail_violations(text: str, flagged_teeth: list = ()) -> list:
     return found
 
 
-def fallback_text(assessment: dict) -> str:
+# Where the patient's pain is comes only from symptoms.location. The model
+# otherwise reads it off the photo ("Your toothache is on the upper right side,
+# tooth 16" with location null), which invents a side and ties the pain to a
+# finding the tool cannot link to it.
+_PAIN = re.compile(r"\b(?:pain|painful|toothache|ache|aches|aching|hurts?|hurting|sore|soreness"
+                   r"|discomfort|sensitiv\w*)\b", re.I)
+_NOT_PAIN = re.compile(r"\bpain ?relie\w*|\bpainkillers?\b", re.I)
+_SIDE = re.compile(r"\b(?:left|right|upper|lower|top|bottom)\b", re.I)
+_NOT_SIDE = re.compile(r"\bright (?:away|now)\b|\ball right\b|\bupper and lower\b", re.I)
+_TOOTH_REF = re.compile(r"\b(?:tooth|teeth) \d{2}\b|\b(?:tooth|teeth) (?:we|that was|that were) found\b"
+                        r"|\bfirst molar\b|\bsecond molar\b|\bpremolar\b|\bincisor\b|\bcanine\b",
+                        re.I)
+# "May be related to the tooth we found, only a dentist can confirm" and "is
+# not coming from a tooth we found" are honest; "comes from tooth 16" is not.
+_HEDGED = re.compile(r"\b(?:may|might|could|possibly|perhaps|not|cannot|can't|don't|do not"
+                     r"|unclear|only a dentist)\b", re.I)
+_LOCATION_WORDS = {"upper_left": {"upper", "top", "left"}, "upper_right": {"upper", "top", "right"},
+                   "lower_left": {"lower", "bottom", "left"},
+                   "lower_right": {"lower", "bottom", "right"}}
+
+
+def places_pain(text: str, location: str = None) -> bool:
+    """Does the text say where the patient's pain is, beyond what they told
+    us? A sentence about their pain may use only the side words of
+    symptoms.location, and ties the pain to a tooth only hedged or denied."""
+    allowed = _LOCATION_WORDS.get(location, set())
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
+        s = _NOT_SIDE.sub(" ", _NOT_PAIN.sub(" ", sentence))
+        if not _PAIN.search(s):
+            continue
+        if {w.lower() for w in _SIDE.findall(s)} - allowed:
+            return True
+        if _TOOTH_REF.search(s) and not _HEDGED.search(s):
+            return True
+    return False
+
+
+FOLLOW_UP_INSTRUCTION = (
+    "This is a follow-up question, not the first response. Answer only this question, "
+    "in a few short sentences, from the passages above and the findings, symptoms and "
+    "assessment you already have. Do not repeat your first response: restate the "
+    "findings, the urgency or the limitations only if the question asks about them.")
+
+
+def _sentences(text: str) -> list:
+    return [" ".join(s.lower().split()) for s in re.split(r"(?<=[.!?])\s+|\n+", text or "")
+            if len(s.split()) >= 4]
+
+
+def echoes(reply: str, first: str) -> bool:
+    """Does the reply re-print most of the first response?"""
+    earlier = set(_sentences(first))
+    if not earlier:
+        return False
+    return len(earlier & set(_sentences(reply))) / len(earlier) >= 0.5
+
+
+def split_flagged(assessment: dict, findings: dict = None) -> tuple:
+    """(decay, missing): rules.py R8 flags a tooth that is absent, and that
+    tooth must never be described as decay."""
+    absent = set(rules.missing_teeth(findings or {}))
+    flagged = assessment.get("flagged_teeth") or []
+    return ([t for t in flagged if t not in absent], [t for t in flagged if t in absent])
+
+
+_DECAY_WORDS = re.compile(r"\b(?:decay\w*|cavit\w*|caries|carious)\b", re.I)
+
+
+def calls_missing_decay(text: str, missing: list) -> list:
+    """Missing teeth that a sentence of the text describes as decay."""
+    if not missing:
+        return []
+    wrong = set()
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
+        if _DECAY_WORDS.search(sentence):
+            wrong |= {t for t in missing
+                      if re.search(rf"(?<!\d){t}(?!\d)", sentence)
+                      or fdi_label(t) in sentence.lower()}
+    return sorted(wrong)
+
+
+def _teeth(teeth: list) -> str:
+    return ", ".join(f"tooth {t} ({fdi_label(t)})" for t in teeth)
+
+
+def fallback_text(assessment: dict, findings: dict = None) -> str:
     """Deterministic first response, used when the model's text keeps
-    breaking a guardrail. Plain, and built only from the assessment."""
+    breaking a guardrail. Plain, and built only from the assessment (and
+    findings, to tell a missing tooth from decay)."""
     parts = ["We looked at your two photos of the biting surfaces of your teeth."]
+    decay, missing = split_flagged(assessment, findings)
     if assessment["retake_required"] and assessment["urgency"] == "RETAKE":
         parts.append("The photos could not be used, so please take them again: good "
                      "light, the whole arch in view, and the camera held still.")
-    elif assessment["flagged_teeth"]:
-        teeth = ", ".join(f"tooth {t} ({fdi_label(t)})" for t in assessment["flagged_teeth"])
-        parts.append(f"Based on the image, there is an indication of tooth decay on {teeth}.")
+    elif decay or missing:
+        if decay:
+            parts.append(f"Based on the image, there is an indication of tooth decay on "
+                         f"{_teeth(decay)}.")
+        if missing:
+            parts.append(f"Based on the image, {_teeth(missing)} "
+                         f"{'appears' if len(missing) == 1 else 'appear'} to be missing.")
     else:
         parts.append("Nothing in these photos reached the level we report. That does not "
                      "rule anything out.")
@@ -177,6 +268,7 @@ class Explanation:
         self.symptoms = symptoms
         self.assessment = assessment or assess(findings, symptoms)
         self.guardrail_log = []
+        self.first_text = None
         self.model = model
         self.allow_unreviewed = allow_unreviewed
         self.knowledge = knowledge or Knowledge()
@@ -205,8 +297,11 @@ class Explanation:
             _passages_block(passages),
             self._scope_instruction(),
         ])
-        return self._checked_turn(content, self.assessment["flagged_teeth"],
-                                  fallback=fallback_text(self.assessment))
+        decay, missing = split_flagged(self.assessment, self.findings)
+        self.first_text = self._checked_turn(content, decay, missing=missing,
+                                             fallback=fallback_text(self.assessment,
+                                                                    self.findings))
+        return self.first_text
 
     def _scope_instruction(self) -> str:
         """What may be reported at all.
@@ -220,10 +315,14 @@ class Explanation:
             return ("Write the first response now. The photos could not be used: ask for "
                     "a retake and explain how. Do not mention any tooth, number or "
                     "finding — not even in plain words.")
-        flagged = self.assessment["flagged_teeth"]
-        if flagged:
-            scope = ("Only these teeth may be described as having a possible finding: "
-                     + ", ".join(flagged) + ". ")
+        decay, missing = split_flagged(self.assessment, self.findings)
+        if decay or missing:
+            scope = "Only these teeth may be described as having a possible finding: "
+            if decay:
+                scope += "possible tooth decay on " + ", ".join(decay) + ". "
+            if missing:
+                scope += ("appears to be missing: " + ", ".join(missing) + " (a missing "
+                          "tooth is not decay: never say decay or a cavity for it). ")
         else:
             scope = ("No tooth may be described as having a finding: nothing reached the "
                      "reporting threshold. Say nothing was found, and that this does not "
@@ -274,22 +373,54 @@ class Explanation:
             return self.assessment["headline"] + " " + self.assessment["safety_net"]
         passages = self._retrieve(question)
         return self._checked_turn(
-            _passages_block(passages) + f"\n\nUser asks: {question}",
-            fallback="I can't answer that safely here. Please ask a dentist or pharmacist.")
+            _passages_block(passages) + f"\n\nUser asks: {question}\n\n" + FOLLOW_UP_INSTRUCTION,
+            fallback="I can't answer that safely here. Please ask a dentist or pharmacist.",
+            echo_of=self.first_text)
 
-    def _checked_turn(self, content: str, flagged_teeth=(), fallback: str = "") -> str:
+    def _checked_turn(self, content: str, flagged_teeth=(), fallback: str = "",
+                      echo_of: str = None, missing=None) -> str:
         """One turn, with the guardrails checked on the reply: one
-        regeneration that names the problem, then the fixed fallback."""
+        regeneration that names the problem, then the fixed fallback.
+        A follow-up that re-prints the first response (echo_of) gets one
+        rewrite too, but an echo is not unsafe, so it never forces the
+        fallback."""
         self.messages.append({"role": "user", "content": content})
+        location = (self.symptoms or {}).get("location")
+        # Any tooth the photo shows absent, flagged or not (third molars too).
+        missing = sorted({*(missing or []),
+                          *(t for t, v in (self.findings or {}).get("teeth", {}).items()
+                            if v.get("present") is False)})
+
+        def violations(text):
+            found = guardrail_violations(text, flagged_teeth)
+            wrong = calls_missing_decay(text, missing)
+            if wrong:
+                found.append(f"describes missing tooth {', '.join(wrong)} as decay; "
+                             "a missing tooth is only missing")
+            if places_pain(text, location):
+                found.append("says where the patient's pain is or which tooth causes it, "
+                             "beyond symptoms.location")
+            return found
+
         reply = chat(self.messages, self.model)
-        problems = guardrail_violations(reply, flagged_teeth)
+        problems = violations(reply)
+        if echo_of and echoes(reply, echo_of):
+            retry = self.messages + [
+                {"role": "assistant", "content": reply},
+                {"role": "user", "content": "Rewrite your reply. It repeats your first response. "
+                                            "Answer only the question, in a few sentences."}]
+            rewritten = chat(retry, self.model)
+            self.guardrail_log.append({"first": ["repeats the first response"],
+                                       "after_retry": ["repeats the first response"]
+                                       if echoes(rewritten, echo_of) else []})
+            reply, problems = rewritten, violations(rewritten)
         if problems:
             retry = self.messages + [
                 {"role": "assistant", "content": reply},
                 {"role": "user", "content": "Rewrite your reply. It " + "; it ".join(problems)
                                             + ". Follow the hard rules."}]
             reply = chat(retry, self.model)
-            later = guardrail_violations(reply, flagged_teeth)
+            later = violations(reply)
             self.guardrail_log.append({"first": problems, "after_retry": later})
             if later:
                 reply = fallback

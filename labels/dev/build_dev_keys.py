@@ -33,7 +33,8 @@ RED_FLAGS = ["difficulty_swallowing_or_breathing", "chest_pain_or_breathless", "
 PAIN_FIELDS = ["pain_relief_effect", "pain_severity", "pain_triggers", "pain_lingers_over_30s",
                "pain_wakes_at_night", "pain_on_biting", "recent_extraction", "location",
                "duration_days"]
-ALL_FIELDS = RED_FLAGS + ["pain_present", "persistent_ulcer"] + PAIN_FIELDS + [
+ALL_FIELDS = RED_FLAGS + ["pain_present", "persistent_ulcer",
+                          "broken_filling_or_tooth", "pus_or_discharge"] + PAIN_FIELDS + [
     "bleeding_gums", "swelling_features", "trauma_features"]
 STYLES = ["plain", "vague", "non_native", "self_correcting", "verbose", "terse"]
 TEETH = ["14", "15", "16", "17", "24", "25", "26", "27", "34", "35", "36", "37", "44", "45", "46", "47"]
@@ -82,21 +83,24 @@ rng = random.Random(SEED)
 pick = rng.choice
 
 
-def checklist_a(yes=(), pain_now=None, ulcer=False):
-    """Every checklist-A row answered; a red-flag Yes stops the interview."""
+def checklist_a(yes=(), pain_now=None, ulcer=False, broken=False, pus=False):
+    """Every checklist-A row answered (Q20/Q21 from protocol v0.2); a red-flag
+    Yes stops the interview."""
     s = {f: None for f in ALL_FIELDS}
     yes = (yes,) if isinstance(yes, str) else tuple(yes)
     for f in RED_FLAGS:
         s[f] = f in yes
     s["persistent_ulcer"] = ulcer
+    s["broken_filling_or_tooth"] = broken
+    s["pus_or_discharge"] = pus
     if yes:
         s["pain_present"] = pain_now
     return s
 
 
 def pain(relief, severity, triggers, lingers=False, night=False, biting=False,
-         extraction=False, location=None, days=None):
-    s = checklist_a()
+         extraction=False, location=None, days=None, pus=False):
+    s = checklist_a(pus=pus)
     s.update(pain_present=True, pain_relief_effect=relief, pain_severity=severity,
              pain_triggers=list(triggers) if triggers is not None else None,
              pain_lingers_over_30s=lingers, pain_wakes_at_night=night, pain_on_biting=biting,
@@ -104,8 +108,8 @@ def pain(relief, severity, triggers, lingers=False, night=False, biting=False,
     return s
 
 
-def no_pain():
-    s = checklist_a()
+def no_pain(broken=False):
+    s = checklist_a(broken=broken)
     s["pain_present"] = False
     return s
 
@@ -133,10 +137,10 @@ def add(name, level, count, boundary, make):
     A.append((name, level, count, boundary, make))
 
 
-def red_flag(field, facts, route, pain_now=True, flagged=0, usable=True, extra=None):
+def red_flag(field, facts, route, pain_now=True, flagged=0, usable=True, extra=None, broken=False):
     def make():
         f = [pick(facts)] + ([pick(extra)] if extra else [])
-        return (checklist_a(field, pain_now=pain_now),
+        return (checklist_a(field, pain_now=pain_now, broken=broken),
                 visual(teeth(flagged) if flagged else (), usable=usable), [], f, route)
     return make
 
@@ -167,7 +171,7 @@ add("e_trauma_major", "EMERGENCY", 2, False, red_flag("recent_trauma", [
     "hit in the mouth by a ball this morning and a front tooth is now loose and pushed back"], "dental"))
 add("e_trauma_minor", "EMERGENCY", 2, True, red_flag("recent_trauma", [
     "bumped a front tooth on a glass last night; a tiny bit of the edge broke off; does not hurt"],
-    "either", pain_now=False))
+    "either", pain_now=False, broken=True))
 add("e_bleeding", "EMERGENCY", 2, False, red_flag("bleeding_uncontrolled", [
     "the gap where a wisdom tooth was pulled today has been bleeding for hours and will not stop"],
     "dental", pain_now=False))
@@ -257,8 +261,8 @@ add("u_flag_pain", "URGENT", 2, True, u_flag_pain)
 
 
 def u_pus():
-    s = pain("helped", "mild", ["unknown"], days=pick(DAYS))
-    return s, visual(), ["U8"], [pick([
+    s = pain("helped", "mild", ["unknown"], days=pick(DAYS), pus=True)
+    return s, visual(), [], [pick([
         "something foul-tasting oozes from the gum by a sore tooth; face not swollen",
         "keeps noticing a nasty taste and a bit of yellow stuff from the gum near an aching tooth; no swelling"])], None
 
@@ -303,7 +307,7 @@ def s_missing_answers():
 
 add("s_pain_missing_answers", "SOON", 3, True, s_missing_answers)
 add("s_broken_filling", "SOON", 3, True, lambda: (
-    no_pain(), visual(), ["S3"],
+    no_pain(broken=True), visual(), [],
     [pick(["a crown feels loose and wobbles when touched; no pain",
            "a piece of a filling broke away while eating; it does not hurt"])], None))
 add("s_photo_and_missing", "SOON", 1, False, lambda: (
@@ -374,7 +378,7 @@ def main():
                                      f"(Jaccard {jaccard(fact, close):.2f})")
             keys.append({"archetype": name, "key_level": level, "emergency_route": route,
                          "criteria_met": met, "boundary": boundary, "style": pick(STYLES),
-                         "facts": facts, "symptoms": {"schema_version": "1.1", **symptoms},
+                         "facts": facts, "symptoms": {"schema_version": "1.2", **symptoms},
                          "visual_summary": vis})
     rng.shuffle(keys)
     for i, k in enumerate(keys, 1):

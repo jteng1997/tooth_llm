@@ -9,9 +9,9 @@ choice and reasoning: `docs/decisions.md`, 2026-09-23 "P7 models".
 | Role | Model | Why |
 |---|---|---|
 | Generator (writes the text) | `llama3.1:8b` (Meta) | Not Qwen, so it is not the system under test writing its own exam. |
-| Model B (blind extraction, §6) | `gemma3:12b` (Google) | Third family. The stronger of the two at schema-constrained extraction, which matters because B's own misreads count against the 2% bar. |
+| Model B (blind extraction, §6) | `gemma4:12b` (Google; user's decision 2026-09-23, replacing gemma3:12b) | Third family. The stronger of the two at schema-constrained extraction, which matters because B's own misreads count against the 2% bar. |
 
-- Pull both: `ollama pull llama3.1:8b` and `ollama pull gemma3:12b`. Never
+- Pull both: `ollama pull llama3.1:8b` and `ollama pull gemma4:12b`. Never
   more than one loaded at a time; do all generation first, then all of B.
 - Generator: `temperature` 0.8, `seed` 20260923 + attempt (attempt 0 first,
   1 on the first regeneration, ...). Same seed and same prompt give the same
@@ -24,8 +24,10 @@ choice and reasoning: `docs/decisions.md`, 2026-09-23 "P7 models".
   `random.Random(20260923)`, run style group by style group (§4: never by
   level).
 - Smoke test before the batch: one call to each model. `src/interview.py`
-  sends `"think": false`; if Ollama rejects that for gemma3, drop the key in
-  your harness only and log it. Do not change the prompt text.
+  sends `"think": false`; if Ollama rejects that for gemma4, drop the key in
+  your harness only and log it. Do not change the prompt text. If gemma4
+  has a thinking mode, `think: false` must actually turn it off: check that
+  the smoke-test reply has no reasoning text before the JSON.
 - Model B uses the production extraction prompt (`system_symptoms.md` +
   `EXTRACTION_INSTRUCTION` + the evidence schema for the five chat fields)
   **as it stands after llm-dev's Test 3 fixes**. Record the commit or a hash of

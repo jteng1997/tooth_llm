@@ -121,6 +121,8 @@ Schema **1.1** (additive over 1.0: new fields only, none removed or renamed).
   (checklist A; asked with or without pain).
 - `location` one of: `upper_left`, `upper_right`, `lower_left`,
   `lower_right`, `front`, `generalised`, `unknown`, `null`.
+  Extraction never produces `unknown` (kept in the enum for backward
+  compatibility): unanswered or unlocatable ("can't say where") is `null`.
 - Array fields: each item needs its own supporting quote; an empty list is
   stored as `null`.
 - See `prompts/symptoms_schema.json` for the machine-readable version.

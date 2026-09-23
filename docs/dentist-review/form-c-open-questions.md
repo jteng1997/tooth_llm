@@ -1,6 +1,6 @@
 # Form C — open clinical questions
 
-Nine questions no guideline settles for us. Each says what the system does
+Eleven questions no guideline settles for us. Each says what the system does
 today, why, and what we know. Please mark **Keep / Change**, and write the
 change. If a question needs the project owner rather than you, say so.
 
@@ -146,6 +146,33 @@ Something of this shape, for you to accept or rewrite:
 - Should the assistant say anything about pain relief at all?
 
 Approved wording: ..............................................
+
+## C11. Broken fillings and pus: two new checklist rows (protocol v0.2)
+
+**Why they were added:** a patient with no pain skipped every question after
+the first checklist, so a broken filling without pain (S3) or pus without pain
+(U8) could never be reported. Protocol v0.2 adds two Yes/No rows to the first
+checklist:
+
+- Q20: "Do you have a filling, crown or tooth that has broken, chipped, come
+  loose or come out, and has not been fixed yet?" → within 7 days.
+- Q21: "Have you noticed pus, a pimple-like bump on the gum, or a salty or
+  bad-tasting fluid coming from around a tooth?" → within 24 hours.
+
+**What we would like you to decide:**
+- **Pus without pain.** We send every Yes on Q21 to "within 24 hours", with or
+  without pain, following SDCEP's acute apical abscess advice. A painless
+  draining sinus may be a chronic abscess, which may not need 24 hours. Should
+  pus without pain be within 24 hours, within 7 days, or something else?
+- **Bad taste alone.** Q21 includes "a salty or bad-tasting fluid". Does that
+  catch too many people with ordinary bad breath or trapped food, or is it
+  worth keeping for the people it helps?
+- **A broken tooth with pain.** S3 is "within 7 days"; pain questions then
+  decide whether it is sooner. Is anything about a broken tooth itself (sharp
+  edge cutting the tongue, a large piece lost) more urgent than 7 days?
+- Are the two questions worded so a patient answers them correctly?
+
+Keep / Change: ................................................
 
 ---
 

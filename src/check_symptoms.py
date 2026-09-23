@@ -74,8 +74,9 @@ def run_case(case: dict, model: str, protocol, llm=None) -> dict:
             "unused": {qid: rest for qid, rest in pending.items() if rest}}
 
 
-def evaluate(model: str = DEFAULT_MODEL, verbose: bool = True, protocol=None, llm=None) -> dict:
-    spec = json.loads(io.open(DIALOGUES, encoding="utf-8").read())
+def evaluate(model: str = DEFAULT_MODEL, verbose: bool = True, protocol=None, llm=None,
+             dialogues: Path = DIALOGUES) -> dict:
+    spec = json.loads(io.open(dialogues, encoding="utf-8").read())
     protocol = protocol or protocol_mod.load(allow_unreviewed=True)
     results = {"model": model, "cases": []}
 
@@ -96,12 +97,14 @@ def evaluate(model: str = DEFAULT_MODEL, verbose: bool = True, protocol=None, ll
                     guessed.append(field)
                 elif actual is None:
                     missed.append(field)
+        invented = invented_items(case["expected"], got)
         clicks_changed = {f: {"clicked": v, "got": got.get(f)}
                           for f, v in (case.get("expected_clicks_unchanged") or {}).items()
                           if got.get(f) != v}
 
         scope = case.get("scope", "headline")
-        record = {"id": case["id"], "style": case["style"], "scope": scope, "wrong": wrong,
+        record = {"id": case["id"], "style": case["style"], "scope": scope,
+                  "ambiguous": bool(case.get("ambiguous")), "wrong": wrong, "invented": invented,
                   "guessed": guessed, "missed": missed, "clicks_changed": clicks_changed,
                   "asked": played["asked"], "unscripted": played["unscripted"],
                   "unused": played["unused"], "got": got,
@@ -126,7 +129,13 @@ def evaluate(model: str = DEFAULT_MODEL, verbose: bool = True, protocol=None, ll
             if played["unscripted"]:
                 print(f"       (no scripted answer for {played['unscripted']})")
 
-    results.update(_aggregate([c for c in results["cases"] if c["scope"] == "headline"]))
+    headline = [c for c in results["cases"] if c["scope"] == "headline"]
+    results.update(_aggregate(headline))
+    # ambiguous cases stay in the headline; this line reports them on their own too
+    results["ambiguous"] = _aggregate([c for c in headline if c["ambiguous"]])
+    focus = [ok for c in headline for f, ok in c["scored_fields"].items()
+             if f in ("location", "pain_triggers")]
+    results["location_and_triggers"] = {"right": sum(focus), "total": len(focus)}
     robust = [c for c in results["cases"] if c["scope"] == "robustness"]
     results["robustness"] = {**_aggregate(robust),
                              "english_notice": sum(c["english_notice_would_show"] for c in robust)}
@@ -139,16 +148,37 @@ def evaluate(model: str = DEFAULT_MODEL, verbose: bool = True, protocol=None, ll
               f"({results['field_accuracy']:.1%})")
         print(f"  dialogues with a guessed field (key says null)  {results['guessed']}/{results['n']}")
         print(f"  dialogues with a missed field (returned null)   {results['missed']}/{results['n']}")
+        print(f"  dialogues with an invented list item (key not null)  {results['invented']}/{results['n']}"
+              f"  ({results['invented_items']} items)")
         print(f"  checklist answers overwritten by prose          "
               f"{results['clicks_overwritten']}  (must be 0)")
         print("  per field: " + ", ".join(f"{f} {a:.0%}"
                                          for f, a in results["per_field_accuracy"].items()))
+        lt = results["location_and_triggers"]
+        print(f"  location + triggers {lt['right']}/{lt['total']}")
+        a = results["ambiguous"]
+        if a["n"]:
+            print(f"  ambiguous dialogues (included above, also shown alone): exact {a['exact']}/{a['n']}, "
+                  f"fields {a['fields_right']}/{a['fields_scored']}")
         r = results["robustness"]
         if r["n"]:
             print(f"  out-of-scope robustness, separate from the above: exact {r['exact']}/{r['n']}, "
                   f"fields {r['fields_right']}/{r['fields_scored']}, guessed {r['guessed']}, "
                   f"missed {r['missed']}, English-only notice would show {r['english_notice']}/{r['n']}")
     return results
+
+
+def invented_items(expected: dict, got: dict) -> dict:
+    """List items the patient never gave, in a field whose key is not null
+    (the 'guessed' count only covers null keys): {field: [items]}."""
+    out = {}
+    for field, want in expected.items():
+        actual = got.get(field)
+        if isinstance(want, list) and isinstance(actual, list):
+            extra = sorted(set(actual) - set(want))
+            if extra:
+                out[field] = extra
+    return out
 
 
 def _aggregate(cases: list) -> dict:
@@ -162,6 +192,8 @@ def _aggregate(cases: list) -> dict:
     return {"n": len(cases), "exact": sum(not c["wrong"] for c in cases),
             "guessed": sum(bool(c["guessed"]) for c in cases),
             "missed": sum(bool(c["missed"]) for c in cases),
+            "invented": sum(bool(c.get("invented")) for c in cases),
+            "invented_items": sum(len(v) for c in cases for v in (c.get("invented") or {}).values()),
             "fields_scored": scored, "fields_right": correct,
             "field_accuracy": round(correct / scored, 4) if scored else float("nan"),
             "per_field_accuracy": {f: round(v["right"] / v["total"], 3)
@@ -172,8 +204,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--json")
+    ap.add_argument("--dialogues", default=str(DIALOGUES),
+                    help="dialogue file (held-out: labels/heldout/symptom_dialogues_heldout.json; "
+                         "never show its per-case output to llm-dev)")
     args = ap.parse_args()
-    results = evaluate(args.model)
+    results = evaluate(args.model, dialogues=Path(args.dialogues))
     if args.json:
         Path(args.json).write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"wrote {args.json}")
