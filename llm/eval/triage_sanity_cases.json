@@ -615,11 +615,11 @@
     "emergency_route": null,
     "author": "qa-engineer",
     "boundary": false,
-    "stratum": "narrative_broken_filling",
-    "rationale": "Broken filling, no pain: narrative criterion only; rules.py R9 ROUTINE (under). Code-only protocol level is ROUTINE too."
+    "stratum": "broken_filling_checklist",
+    "rationale": "Broken filling, no pain: ticked on checklist A (protocol v0.2, Q20), so code's protocol level is SOON; rules.py R9 ROUTINE (under)."
    },
    "symptoms": {
-    "schema_version": "1.1",
+    "schema_version": "1.2",
     "difficulty_swallowing_or_breathing": false,
     "chest_pain_or_breathless": false,
     "swelling": false,
@@ -628,7 +628,8 @@
     "recent_trauma": false,
     "bleeding_uncontrolled": false,
     "exceeded_pain_relief_dose": false,
-    "pain_present": false
+    "pain_present": false,
+    "broken_filling_or_tooth": true
    },
    "visual_summary": {
     "images_usable": true,

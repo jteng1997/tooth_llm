@@ -237,6 +237,63 @@ def calls_missing_decay(text: str, missing: list) -> list:
     return sorted(wrong)
 
 
+# User decision 2026-09-23 (sentence B): never deny a tooth cause. The
+# photos can miss a problem; only a dentist can tell what causes the pain.
+_DENIES_TOOTH_CAUSE = re.compile(
+    r"\bnot (?:be )?(?:coming|caused|come|from) (?:from |by )?(?:a|any|your|the|one of your) "
+    r"(?:tooth|teeth)\b"
+    r"|\b(?:isn't|is not|doesn't|does not|won't|can't be|cannot be|unlikely to be) "
+    r"(?:be )?(?:coming|come|caused|from) (?:from |by )?(?:a|any|your|the) (?:tooth|teeth)\b"
+    r"|\bnot an? (?:tooth|dental) (?:problem|issue|cause)\b"
+    r"|\b(?:nothing|no problem|nothing is) wrong with your teeth\b"
+    r"|\byour teeth (?:are|look|seem) (?:fine|healthy|ok|okay|normal|good)\b"
+    r"|\bno (?:problems?|issues?) with your teeth\b"
+    r"|\b(?:rule[sd]? out|ruling out) (?:a )?(?:tooth|dental)\b", re.I)
+# "This does not mean your teeth are fine" is the message we want, not a denial.
+_NEGATED = re.compile(r"\b(?:not|n't|never) (?:mean|say|prove|show|tell us)\b[^.]*$", re.I)
+
+
+def denies_tooth_cause(text: str) -> bool:
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
+        m = _DENIES_TOOTH_CAUSE.search(sentence)
+        if m and not _NEGATED.search(sentence[:m.start()]):
+            return True
+    return False
+
+
+# retake_required with an urgency other than RETAKE: one photo was unusable,
+# but symptoms that need care are never hidden behind a bad photo
+# (interface.md). The result is given in full and the bad photo is retaken.
+def partial_retake(assessment: dict) -> bool:
+    return bool(assessment.get("retake_required")) and assessment.get("urgency") != "RETAKE"
+
+
+def unusable_arches(findings: dict) -> list:
+    return sorted({p.split(":")[0] for p in rules.quality_problems(findings or {})}
+                  & {"upper", "lower"})
+
+
+_RETAKE_HOW = "good light, the whole arch in view, and the camera held still."
+
+
+def _retake_sentence(findings: dict) -> str:
+    arches = unusable_arches(findings)
+    if len(arches) == 1:
+        return (f"The photo of your {arches[0]} teeth could not be used, so please take it "
+                f"again: {_RETAKE_HOW}")
+    return f"The photos could not be used, so please take them again: {_RETAKE_HOW}"
+
+
+_ASKS_RETAKE = re.compile(
+    r"\bre-?take\b|\btake (?:it|them) again\b"
+    r"|\b(?:take|send|upload)\b[^.!?]{0,40}\b(?:photos?|pictures?|images?)\b[^.!?]{0,20}\bagain\b"
+    r"|\b(?:photos?|pictures?|images?) again\b|\bnew (?:photos?|pictures?|images?)\b", re.I)
+
+
+def _states_headline(text: str, headline: str) -> bool:
+    return interview._normalize(headline) in interview._normalize(text)
+
+
 def _teeth(teeth: list) -> str:
     return ", ".join(f"tooth {t} ({fdi_label(t)})" for t in teeth)
 
@@ -247,9 +304,9 @@ def fallback_text(assessment: dict, findings: dict = None) -> str:
     findings, to tell a missing tooth from decay)."""
     parts = ["We looked at your two photos of the biting surfaces of your teeth."]
     decay, missing = split_flagged(assessment, findings)
-    if assessment["retake_required"] and assessment["urgency"] == "RETAKE":
-        parts.append("The photos could not be used, so please take them again: good "
-                     "light, the whole arch in view, and the camera held still.")
+    partial = partial_retake(assessment)
+    if assessment["retake_required"] and not partial:
+        parts.append(f"The photos could not be used, so please take them again: {_RETAKE_HOW}")
     elif decay or missing:
         if decay:
             parts.append(f"Based on the image, there is an indication of tooth decay on "
@@ -257,12 +314,17 @@ def fallback_text(assessment: dict, findings: dict = None) -> str:
         if missing:
             parts.append(f"Based on the image, {_teeth(missing)} "
                          f"{'appears' if len(missing) == 1 else 'appear'} to be missing.")
-    else:
+    elif not partial:
         parts.append("Nothing in these photos reached the level we report. That does not "
                      "rule anything out.")
+    elif len(unusable_arches(findings)) == 1:
+        parts.append("Nothing in the photo we could use reached the level we report. That "
+                     "does not rule anything out.")
     headline = assessment["headline"].strip()
     # The protocol's headlines already end in a full stop; older 1.0 ones don't.
     parts.append(headline if headline.endswith((".", "!", "?")) else headline + ".")
+    if partial:
+        parts.append(_retake_sentence(findings))
     parts += assessment["limitations"]
     parts.append("You can ask me questions about this result.")
     return " ".join(parts)
@@ -308,7 +370,7 @@ class Explanation:
             self._scope_instruction(),
         ])
         decay, missing = split_flagged(self.assessment, self.findings)
-        self.first_text = self._checked_turn(content, decay, missing=missing,
+        self.first_text = self._checked_turn(content, decay, missing=missing, first=True,
                                              fallback=fallback_text(self.assessment,
                                                                     self.findings))
         return self.first_text
@@ -321,7 +383,8 @@ class Explanation:
         rules.py flagged may be described as possible cavities — otherwise
         a 0.22-confidence blip gets told to the user as a finding.
         """
-        if self.assessment["retake_required"]:
+        partial = partial_retake(self.assessment)
+        if self.assessment["retake_required"] and not partial:
             return ("Write the first response now. The photos could not be used: ask for "
                     "a retake and explain how. Do not mention any tooth, number or "
                     "finding — not even in plain words.")
@@ -337,8 +400,17 @@ class Explanation:
             scope = ("No tooth may be described as having a finding: nothing reached the "
                      "reporting threshold. Say nothing was found, and that this does not "
                      "rule anything out. ")
-        return (scope + "Any other detection in findings was below the reporting threshold "
-                "and must not be mentioned at all. Write the first response now.")
+        scope += ("Any other detection in findings was below the reporting threshold "
+                  "and must not be mentioned at all. ")
+        if partial:
+            arches = unusable_arches(self.findings)
+            which = (f"The photo of the {arches[0]} teeth" if len(arches) == 1
+                     else "A photo")
+            scope += (f"{which} could not be used: ask for a retake of it and explain how. "
+                      "The result still stands and must be given in full: state "
+                      "assessment.headline word for word and why, from assessment.reasons. "
+                      "Never make acting on it wait for the new photo. ")
+        return scope + "Write the first response now."
 
     def red_flag_raised(self, text: str) -> bool:
         """Did the patient just report a red flag in a follow-up message?
@@ -388,7 +460,7 @@ class Explanation:
             echo_of=self.first_text)
 
     def _checked_turn(self, content: str, flagged_teeth=(), fallback: str = "",
-                      echo_of: str = None, missing=None) -> str:
+                      echo_of: str = None, missing=None, first: bool = False) -> str:
         """One turn, with the guardrails checked on the reply: one
         regeneration that names the problem, then the fixed fallback.
         A follow-up that re-prints the first response (echo_of) gets one
@@ -410,6 +482,17 @@ class Explanation:
             if places_pain(text, location):
                 found.append("says where the patient's pain is or which tooth causes it, "
                              "beyond symptoms.location")
+            if denies_tooth_cause(text):
+                found.append("says the pain is not from a tooth or the teeth are fine; the "
+                             "photos can miss a problem and only a dentist can tell what "
+                             "causes the pain")
+            if first and partial_retake(self.assessment):
+                headline = self.assessment["headline"].strip()
+                if not _states_headline(text, headline):
+                    found.append(f'does not state the urgency as "{headline}"; a photo to '
+                                 "retake never hides the result")
+                if not _ASKS_RETAKE.search(text):
+                    found.append("does not ask for a retake of the photo that could not be used")
             return found
 
         reply = chat(self.messages, self.model)

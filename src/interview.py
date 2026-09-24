@@ -150,8 +150,7 @@ HEDGE = re.compile(
 TRIGGER_CUES = {
     "cold": re.compile(r"\b(?:cold|cool|ice|iced|icy|chilled|freezing|frozen)\b"),
     "hot": re.compile(r"\b(?:hot|warm|heat|heated|boiling|steaming)\b"),
-    "sweet": re.compile(r"\b(?:sweets?|sugary|sugar|candy|candies|chocolates?|desserts?|cakes?"
-                        r"|biscuits?|cookies?|soda)\b"),
+    "sweet": re.compile(r"\b(?:sweets?|sugary|sugar|sweetened)\b"),
     "biting": re.compile(r"\b(?:bite|bites|biting|bit (?:on|down|into)|chew|chews|chewing|chewed"
                          r"|clench\w*|grind\w*)\b"),
     "spontaneous": re.compile(
@@ -171,6 +170,53 @@ TRIGGER_CUES = {
         r"\b(?:hurts|aches|throbs|starts|comes on|gets worse|is worse|flares)\b"),
     "unknown": re.compile(HEDGE.pattern + r"|\b(?:comes and goes|nothing in particular)\b"),
 }
+# Named foods and actions. Unlike the category words above, eating a food is
+# not itself pain: one counts only in the reply to the trigger question, or in
+# a clause that ties it to the pain ("fizzy drinks make it ache").
+FOOD_CUES = {
+    "cold": re.compile(r"\b(?:ice cream|popsicles?|ice lolly|ice lollies|slush\w*|fridge)\b"),
+    "hot": re.compile(r"(?<!iced )(?<!cold )\b(?:tea|coffee)\b|\b(?:soup|cocoa|hot chocolate)\b"),
+    "sweet": re.compile(r"\b(?:cand(?:y|ies)|chocolates?|desserts?|cakes?|biscuits?|cookies?"
+                        r"|sodas?|toffees?|caramels?|fudge|lollies|lolly|lollipops?|gumm(?:y|ies)"
+                        r"|jelly beans?|honey|jam|ice cream|pastr(?:y|ies)|dough?nuts?|donuts?"
+                        r"|fizzy drinks?|soft drinks?|colas?|coke|juice|syrup|milkshakes?"
+                        r"|marshmallows?)\b"),
+    "biting": re.compile(r"\b(?:hard (?:food|foods|things|stuff|bread)|crunch\w*|nuts?|almonds?"
+                         r"|popcorn|crusty|chewy|tough meat|steak|pressure"
+                         r"|(?:press|pressing|tap|tapping|push|pushing) on (?:it|that tooth|the tooth)"
+                         r"|eat(?:ing)? (?:on|with) (?:that|this|the) (?:side|tooth))\b"),
+}
+PAIN_LINK = re.compile(r"\b(?:hurts?|hurting|pain\w*|aches?|aching|sore|twinges?|zings?|stings?"
+                       r"|stinging|throb\w*|sensitive|sets? (?:it|the pain) off|sets off"
+                       r"|triggers?|brings? (?:it|the pain) on|makes? it|worse)\b")
+# "Cold water is fine", "I had candy yesterday, no pain": the cue is named and denied.
+PAIN_DENIED = re.compile(
+    r"\bno (?:pain|problems?|trouble|issues?)\b|\bpainless\b|\bwithout (?:any )?pain\b"
+    r"|\b(?:doesn't|does not|didn't|did not|don't|do not|won't|never) (?:hurt|ache|bother|affect"
+    r"|trigger|set it off)\w*|\b(?:is|are|was|were|seems?) (?:fine|ok|okay|alright|all right)\b"
+    r"(?! (?:until|unless|except|apart|besides|till))"
+    r"|\bnot (?:a problem|painful|sore)\b")
+_CLAUSE = re.compile(r"[.;!?]+|,?\s+\bbut\b|,?\s+\bthough\b|,?\s+\bwhereas\b")
+
+
+def _trigger_named(item: str, sources: list, own_question) -> bool:
+    """Is this trigger named, and not denied, in one of the patient's messages?"""
+    for qid, text in sources:
+        text = NOT_A_TRIGGER.sub(" ", _plain(text))
+        in_reply = own_question is None or qid == own_question
+        denied_anywhere = bool(PAIN_DENIED.search(text))
+        for clause in _CLAUSE.split(text):
+            if PAIN_DENIED.search(clause):
+                continue
+            if TRIGGER_CUES[item].search(clause):
+                return True
+            food = FOOD_CUES.get(item)
+            if food and food.search(clause) and (PAIN_LINK.search(clause)
+                                                 or (in_reply and not denied_anywhere)):
+                return True
+    return False
+
+
 # Words that look like a trigger but describe the patient, not the pain.
 NOT_A_TRIGGER = re.compile(
     r"\b(?:i|i'm|i am|i've been|feel|feels|feeling|felt|running|am) (?:a bit |quite |very |really |so )?"
@@ -224,9 +270,9 @@ def verify(field: str, value, quote: str, sources: list, own_question=None,
     hedged = bool(HEDGE.search(_plain(quote)))
 
     if field == "pain_triggers":
-        said = NOT_A_TRIGGER.sub(" ", said)
-        kept = [item for item in value if TRIGGER_CUES[item].search(said)
-                and (item != "unknown" or in_reply)]
+        kept = [item for item in value
+                if (in_reply if item == "unknown" else True)
+                and _trigger_named(item, sources, own_question)]
         return kept or None
     if field == "location":
         # "Not sure where" settles nothing: null, the same as never answered.
@@ -416,6 +462,10 @@ class Interview:
     def _finish(self, red_flag: bool) -> dict:
         self.done = True
         self.pending = None
+        # Ending on a checklist leaves only the clicks; the result is still a
+        # complete symptoms object, unanswered fields null.
+        self.symptoms = {"schema_version": SCHEMA_VERSION, **{f: None for f in EVIDENCE_FIELDS},
+                         "notes": None, **self.symptoms}
         return {"type": "done", "symptoms": self.symptoms, "red_flag": red_flag}
 
     # --- extraction ----------------------------------------------------------

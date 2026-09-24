@@ -44,6 +44,114 @@ The 20 rule cases in `llm/eval/rule_cases.json` also need blind dentist labels.
 
 ## Decided
 
+### 2026-09-24 — P7 adjudication plan pre-declared (research-pm)
+`docs/plans/p7-adjudication-plan.md`, written before any P7 output exists.
+Additions to P7 spec §6/§7:
+- A fourth adjudication outcome, **"B wrong"**: the text is clear, matches
+  the key, and B misread it. It is counted as a B error, not a text fault.
+- **Text-first reading:** each disagreement is read with the key and B values
+  hidden, and my reading is recorded before they are revealed, to limit the
+  key author's bias.
+- **Residual bar (≤ 2%)** applies to the text-attributable residual (text
+  still wrong + ambiguous). The B error rate is reported beside it, and so
+  is the residual without the split. If B's error rate is above 5% on dev,
+  P7 stops before held-out and the lead decides (the gemma3:12b fallback is
+  the documented option).
+- At most 2 regeneration rounds, then a marked, counted hand-edit by
+  research-pm. No case is dropped. Keys are never changed to match text.
+- 50-case read: random from the 260 held-out cases, seed 20260924, on final
+  text. The error definition is fixed in advance and reported as written.
+
+### 2026-09-24 — Test 3 blind set C written (not yet scored)
+`labels/heldout/symptom_dialogues_heldout_c.json`, 24 dialogues, 120 cells,
+written by research-pm without reading the #15/#20 briefs, cue lists or the
+`interview.py` changes since set A.
+- Composition, fixed before writing, trigger-heavy:
+  - 8 food/action phrasings (cold, hot, sweet and biting, 2 each);
+  - 4 negations;
+  - 3 multi-trigger;
+  - 3 non-trigger uses of hot, cold or sweet;
+  - 2 unknown;
+  - 2 spontaneous idioms;
+  - 2 re-asks (one settles, one null);
+  - location plain except 3 nulls;
+  - 1 case marked ambiguous before scoring.
+- Overlap, checked after writing:
+  - 0 multi-word answers identical to set A, set B or dev;
+  - Q12 max token Jaccard 0.38 vs A/B/dev and 0.19 vs `system_symptoms.md`;
+  - Q12 vs the string literals in `interview.py`: max 0.20, and no answer
+    contains a whole 2+-word literal. This was checked by a script that
+    prints numbers only, so the author stayed blind to the cues;
+  - Q17 max 0.75, by design: plain location answers.
+- Rules: scored once by qa-engineer after the next trigger-related change,
+  configuration logged; never shared with llm-dev before that, not even as
+  categories; afterwards, misses go out as abstract categories only.
+
+### 2026-09-24 — Test 3 blind set B: result (set B now spent)
+Single run by qa-engineer-2, 2026-09-24 09:08–09:26, qwen3:14b, commit
+fdaf110, after llm-dev's #15. Hashes: `interview.py` 04efa1d1…94fd,
+`system_symptoms.md` 4aaa06a6…36f4, `triage_protocol.yaml` 435cf103…0aff0de,
+set B file 61d576b9…f84879.
+- n = 20 dialogues, 100 cells. Field accuracy **97/100 = 97.0%** (exact
+  95% CI 91.5–99.4). Dialogues fully correct 17/20 (CI 62.1–96.8).
+- Location **20/20** (CI 83.2–100). Triggers **17/20** (CI 62.1–96.8). The
+  other three fields 60/60 (CI 94.0–100).
+- Guessed a value where the key is null: 0/7 cells (CI 0–41.0). Null where
+  the key has a value: 0/93 (CI 0–3.9). Checklist clicks overwritten: 0.
+- Invented list items: 3/20 dialogues, all `["unknown"]` from the harness's
+  canned "I'm not sure." re-ask reply after a lost first trigger answer.
+  verify() correctly kept them as a patient-side hedge, so this is not a
+  rule-7 guess.
+- Misses: 2 are verify() cue-list gaps, a trigger named by a food or an
+  action rather than its category. The set-A "foods named" class is **not**
+  closed by #15. 1 is a model miss on the pre-declared ambiguous clenching
+  case.
+- Harness caveat: the canned re-ask reply turns a lost answer into
+  "unknown" rather than null. Scored as run, no exclusion.
+- Comparison: dev 60/60 (tuned on), set A 88/95 (its one blind figure; now
+  dev). With n = 20, set B cannot resolve a difference of a few points from
+  set A; read the CIs, not the point estimates.
+- **Set B is now spent.** Any later score on it is a dev number.
+- **Addendum, 2026-09-24 (provenance of #20):** #20 (verify() accepts
+  triggers named by a food or an action; live 2026-09-24, suite 361/361) was
+  designed from set B's miss categories after set B was spent. The lead's
+  brief paraphrased qa-engineer's category description closely enough that
+  one example cue nearly matches a set-B answer. No reported number is
+  affected: set B was scored once, before #20. Consequence: #20 is informed
+  by set B, so **no trigger-cue improvement can be claimed as held-out**
+  until a fresh blind Test 3 set (set C) exists and is scored once. Lesson
+  for future briefs: miss categories go to llm-dev as abstract behaviour
+  descriptions, with no example wording taken from or close to a held-out
+  answer.
+Outputs: `labels/heldout/results/test3_heldout_b_qwen3_14b.*` (held-out),
+`runs/evals/test3_dev_post15_qwen3_14b.*` (dev).
+
+### 2026-09-24 — Test 2 re-run, scorer fix, and bug #18 (partial retake)
+Re-run by qa-engineer, 2026-09-24: seed 0, 60 synthetic cases, qwen3:14b,
+commit fdaf110.
+- Legacy mode: 0/60 on all four rates.
+- Triage-2.0 mode, as first scored: hallucination 13/60, **all checker
+  artefacts**. The FDI regex read "within 24 hours" as tooth 24 and "14
+  teeth" as tooth 14. Fixed in #19 and re-scored offline from the stored
+  outputs:
+  - hallucination 0/60, omission 0/60, misstated 0/60;
+  - follow-up hallucinated tooth 0/120;
+  - echo 0/120 (#11 closed);
+  - missing tooth described as decay 0 (#13 closed).
+- **Real bug #18:** 10/10 URGENT partial-retake cases failed. 6 dropped the
+  urgency; 4 fell back to text that never asked for the retake.
+  Lead decision, from `llm/interface.md` ("symptoms that need care are never
+  hidden behind a bad photo"): with a partial retake and urgency other than
+  RETAKE, the explanation states the headline, names the flagged teeth and
+  asks for a retake. Implemented with protocol v0.2 and #17 on 2026-09-24.
+  **Test 2 re-run pending.**
+- Scorer change: it now also counts "retake not requested". A tooth mention
+  on a retake is a hallucination only when urgency == RETAKE.
+Also recorded: **protocol v0.2, symptoms schema 1.2 and `interface.md` 1.2
+went live on 2026-09-24**, with the user-approved Q20/Q21 wording.
+Held-out `protocol_check` 200/200 holds by construction (the keys were
+rebuilt from v0.2, §9.7). It is not an accuracy result.
+
 ### 2026-09-23 — User decisions: Q20/Q21 approved, pus stays URGENT, explanation sentences
 Decided by the user, relayed by the lead.
 1. **Q20/Q21 wording approved as drafted.** The "awaiting approval"

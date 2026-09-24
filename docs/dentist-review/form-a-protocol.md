@@ -1,7 +1,7 @@
 # Form A — triage protocol review
 
-Protocol: `docs/plans/protocol-v0.2/triage_protocol.yaml` v0.2, review_status `DRAFT-UNREVIEWED`.
-Generated from the file on 2026-09-23 by `make_form_a.py` (research-pm). Do not edit the YAML;
+Protocol: `llm/protocol/triage_protocol.yaml` v0.2, review_status `DRAFT-UNREVIEWED`.
+Generated from the file on 2026-09-24 by `make_form_a.py` (research-pm). Do not edit the YAML;
 write in this form and we will apply the changes.
 
 For each row: **Agree / Change / Remove**, and if Change, what it should say.

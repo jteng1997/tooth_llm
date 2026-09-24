@@ -726,6 +726,83 @@ def generate(kind: str, dry_run: bool = False, limit: int = None) -> int:
     return report_generation(out)
 
 
+MAX_ADJUDICATION_ROUNDS = 2
+
+
+def regenerate_cases(gen: dict, extracted: dict, ids: list, by_id: dict, prompts: dict, checker,
+                     call, kind: str) -> dict:
+    """Regenerate the texts research-pm's adjudication listed (never on a
+    disagreement by itself). `ids` are case ids, or 'ID:p1' / 'ID:p2' for one
+    paraphrase. Each continues its own seed sequence (next seed after the
+    attempts already used), passes every §5 check again, and has its model B
+    entry cleared so extract re-reads only these. The old text and its B
+    responses are kept under 'superseded'. At most MAX_ADJUDICATION_ROUNDS."""
+    done, refused = [], []
+    base = SEEDS[kind]
+    for item in ids:
+        cid, _, part = item.partition(":")
+        case = gen["cases"].get(cid)
+        if case is None:
+            refused.append((item, "not generated"))
+            continue
+        rounds = case.get("adjudication_rounds", 0)
+        if rounds >= MAX_ADJUDICATION_ROUNDS:
+            refused.append((item, f"already {rounds} adjudication rounds"))
+            continue
+        key, prompt = by_id[cid], prompts[cid]
+        others = [(f"near-duplicate of {o}", c["text"]) for o, c in gen["cases"].items()
+                  if o != cid and c.get("status") == "accepted"
+                  and by_id[o]["archetype"] == key["archetype"]]
+        old_b = (extracted.get("cases") or {}).pop(cid, None)
+        if part in ("p1", "p2"):
+            p = int(part[1])
+            old = case["paraphrases"][p - 1]
+            versus = [("near-copy of its own text", case["text"])] + [
+                (f"near-copy of paraphrase {i}", q["text"])
+                for i, q in enumerate(case["paraphrases"], 1) if i != p and q["text"]]
+            seed = base + PARAPHRASE_SEED_STEP * p + len(old["history"])
+            new = generate_one(call, prompt, template(kind), checker, seed, versus)
+            case["paraphrases"][p - 1] = new
+        else:
+            old = {k: case[k] for k in ("reply", "text", "history", "attempts", "status")}
+            seed = base + len(case["history"])
+            new = generate_one(call, prompt, template(kind), checker, seed, others)
+            case.update({k: new[k] for k in ("reply", "text", "history", "attempts", "status",
+                                              "regeneration_reasons", "advisory")})
+        case.setdefault("superseded", []).append({"part": part or "text", "round": rounds + 1,
+                                                  "text": old, "b": old_b})
+        case["adjudication_rounds"] = rounds + 1
+        text_ok = not case["history"][-1]["failures"]
+        paras_ok = all(q["status"] == "accepted" for q in case.get("paraphrases", []))
+        case["status"] = "accepted" if text_ok and paras_ok else "needs_research_pm"
+        done.append((item, case["status"], seed))
+    return {"done": done, "refused": refused}
+
+
+def regenerate(kind: str, ids_file: str) -> int:
+    ids = json.loads(Path(ids_file).read_text(encoding="utf-8"))
+    keys, rewrites, protocol, checker = _load(kind)
+    by_id = {k["id"]: k for k in keys}
+    prompts = {i: build_prompt(by_id[i], template(kind), rewrites) for i in {x.split(":")[0] for x in ids}
+               if i in by_id}
+    gen_path = out_dir(kind) / f"generated_{kind}.json"
+    ext_path = out_dir(kind) / f"extracted_{kind}.json"
+    gen = json.loads(gen_path.read_text(encoding="utf-8"))
+    extracted = json.loads(ext_path.read_text(encoding="utf-8")) if ext_path.exists() else {"cases": {}}
+    think = gen["think_sent"]
+    call = lambda messages, schema, seed: ollama(GENERATOR, messages, schema, TEMPERATURE, seed, think)  # noqa: E731
+    result = regenerate_cases(gen, extracted, ids, by_id, prompts, checker, call, kind)
+    _save(gen_path, gen)
+    if ext_path.exists():
+        _save(ext_path, extracted)
+    for item, status, seed in result["done"]:
+        print(f"regenerated {item}: {status} (from seed {seed})")
+    for item, why in result["refused"]:
+        print(f"REFUSED {item}: {why}")
+    print("next: extract --file", kind, "(re-reads only the regenerated cases)")
+    return 1 if result["refused"] else 0
+
+
 def generate_one(call, prompt: dict, tmpl: str, checker, seed_base: int, versus: list) -> dict:
     """Attempts 0..MAX_ATTEMPT with seed seed_base + attempt; every §5 check,
     plus token Jaccard > JACCARD_MAX against each (label, text) in versus."""
@@ -900,6 +977,11 @@ def extract(kind: str, backend: str = "gemini") -> int:
             continue
         case = gen["cases"][cid]
         rows, record = check(key, case["reply"])
+        versions = out.setdefault("model_versions", [])
+        if record.get("model_version") and record["model_version"] not in versions:
+            versions.append(record["model_version"])
+            if len(versions) > 1:
+                print(f"WARNING: B's model version changed mid-run: {versions}")
         entry = {"reached_chat": True, "fields": rows, "b_call": record}
         if case.get("paraphrases"):
             checked = [check(key, p["reply"]) for p in case["paraphrases"]]
@@ -967,8 +1049,18 @@ def report_extraction(out: dict) -> int:
         total += n
         print(f"  {f:<20} {n:3d}/{len(scored)} disagree  {dict(kinds)}")
     cells = len(scored) * len(fields)
-    print(f"  all chat fields      {total}/{cells} = {total / cells:.1%} before adjudication "
-          f"(bar after adjudication: <= 2%)" if cells else "  no scored cases")
+    if cells:
+        from check_triage import clopper_pearson
+        lo, hi = clopper_pearson(total, cells)
+        print(f"  all chat fields      {total}/{cells} = {total / cells:.1%} (exact 95% CI "
+              f"{lo:.1%}-{hi:.1%}) before adjudication; research-pm's split into text wrong / "
+              f"key wrong / ambiguous / B wrong decides the 2% residual bar and the 5% B-error rule")
+        invalid = sum(any(r["disagreement"] == "B reply invalid" for r in c["fields"].values())
+                      for c in scored)
+        print(f"  B replies invalid    {invalid}/{len(scored)}; model versions "
+              f"{out.get('model_versions')}; schema mode {out.get('schema_mode')}")
+    else:
+        print("  no scored cases")
     paras = [rows for c in scored for rows in c.get("paraphrases", [])]
     if paras:
         bad = sum(bool(r["disagreement"]) for rows in paras for r in rows.values())
@@ -1008,7 +1100,9 @@ def writeback(kind: str) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("command", choices=["smoke", "smoke-b", "generate", "extract", "rescore",
-                                        "writeback", "report"])
+                                        "regenerate", "writeback", "report"])
+    ap.add_argument("--ids", help="regenerate: JSON list of case ids from research-pm's "
+                                  "adjudication ('ID' or 'ID:p1' / 'ID:p2')")
     ap.add_argument("--b-backend", choices=sorted(B_MODELS), default="gemini",
                     help="model B: the Gemini API, or the local gemma3:12b fallback (log a switch; "
                          "never mix the two within one set)")
@@ -1021,6 +1115,11 @@ def main() -> int:
         return smoke((GENERATOR, MODEL_B_FALLBACK) if args.fallback else (GENERATOR,))
     if args.command == "rescore":
         return rescore(args.file)
+    if args.command == "regenerate":
+        if not args.ids:
+            print("REFUSED: regenerate needs --ids (research-pm's list); disagreements alone never regenerate")
+            return 1
+        return regenerate(args.file, args.ids)
     if args.command == "smoke-b":
         return smoke_b()
     if args.command == "generate":

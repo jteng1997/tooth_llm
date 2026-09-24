@@ -92,8 +92,11 @@ System design: `docs/architecture.md`.
 Details and evidence in `docs/decisions.md`. In short: segmentation is reliable
 (median 12 teeth/photo on Mendeley); the caries detector is the weakest link
 (catches 62% of carious photos at conf 0.25; `rules.py` uses 0.50, which catches
-~29% — open decision); qwen3:14b made 0 hallucinations, omissions or
-contradictions on 60 synthetic cases; the demo takes ~17 s per interview turn.
+~29% — open decision); on 60 synthetic cases qwen3:14b invents no tooth
+absent from the findings and makes 0 omissions or contradictions, **but** in
+7–11/60 explanations it reports sub-threshold detections (teeth the assessment
+never flagged) as findings — fix in progress (task #22, 2026-09-24); the demo
+takes ~17 s per interview turn.
 
 ## Agent team
 

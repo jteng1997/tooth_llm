@@ -527,7 +527,10 @@ class HeldoutKeyFormat(unittest.TestCase):
 @unittest.skipUnless(HELDOUT.exists(), "held-out keys are local-only (labels/heldout/)")
 class HeldoutDryRun(unittest.TestCase):
     """Spec §3a/§8: the checker must reproduce research-pm's dry run on the
-    200 held-out keys (rules.py and the protocol check only, no model)."""
+    200 held-out keys (rules.py and the protocol check only, no model).
+    Protocol v0.2 (spec §9.7): rules.py is unchanged at 51/200; the protocol
+    check now sees the broken-filling and pus rows, so its 8 v0.1 misses
+    (all S3/U8) are gone and it agrees on every key."""
 
     @classmethod
     def setUpClass(cls):
@@ -558,11 +561,12 @@ class HeldoutDryRun(unittest.TestCase):
         self.assertEqual(self.summary["systems"]["rules"]["photo_quality"]["retake_under"], 3)
 
     def test_protocol_check(self):
-        self.check("protocol_check", 8, 0, 0, 8, 0, 192, 0.967, (0.942, 0.988))
+        # 200/200 by construction: the keys were rebuilt from protocol v0.2. Not an accuracy figure.
+        self.check("protocol_check", 0, 0, 0, 0, 0, 200, 1.0, (1.0, 1.0))
 
     def test_mcnemar(self):
         c = self.summary["comparisons"]["protocol_check_vs_rules"]
-        self.assertEqual((c["n_common"], c["only_first_under"], c["only_second_under"]), (200, 0, 43))
+        self.assertEqual((c["n_common"], c["only_first_under"], c["only_second_under"]), (200, 0, 51))
 
 
 class RunLog(unittest.TestCase):

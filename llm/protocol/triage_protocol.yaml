@@ -22,11 +22,16 @@
 #   USER-2026-09-22-n  item n of the user's "Phase 1–2 plan decisions"
 #
 # Predicate grammar (llm-dev): field == literal, field != literal,
-# field non-empty, field contains literal, AND, OR. Fields are symptoms 1.1
-# fields or visual_summary fields (images_usable, flagged_teeth,
+# field non-empty, field contains literal, AND, OR. Fields are symptoms 1.2
+# fields (1.1 + broken_filling_or_tooth, pus_or_discharge) or visual_summary fields (images_usable, flagged_teeth,
 # unexpected_missing_teeth).
 
-protocol_version: "0.1"
+# v0.2 (2026-09-23, user decision "option 2"): S3 and U8 are now structured
+# criteria fed by two new checklist-A rows (Q20, Q21), because a patient with
+# no pain never reached the chat and so could never report them.
+# Q20/Q21 wording approved by the user 2026-09-23 as drafted; clinical
+# content (incl. U8 with or without pain) still needs a dentist (Form C, C11).
+protocol_version: "0.2"
 review_status: DRAFT-UNREVIEWED
 reviewed_by: ""
 reviewed_date: ""
@@ -220,9 +225,10 @@ criteria:
 
   - id: U8
     level: URGENT
-    kind: narrative
-    statement: "Pus, a gum boil or a bad taste coming from around a painful tooth"
-    source: "SDCEP-2026 Acute apical abscess (without airway compromise: seek urgent dental care); AAE-2009 Acute apical abscess (pus formation)."
+    kind: structured
+    predicate: "pus_or_discharge == true"
+    statement: "Pus, a gum boil or a bad-tasting discharge from the gum or a tooth"
+    source: "SDCEP-2026 Acute apical abscess (without airway compromise: seek urgent dental care); AAE-2009 Acute apical abscess (pus formation). dentist's call: v0.2 applies it with or without pain; a painless draining sinus may be chronic apical abscess, which SDCEP may place lower. Deliberate over-triage until a dentist decides."
 
   - id: U9
     level: URGENT
@@ -248,8 +254,9 @@ criteria:
 
   - id: S3
     level: SOON
-    kind: narrative
-    statement: "A broken, chipped or lost filling, crown or tooth, without pain"
+    kind: structured
+    predicate: "broken_filling_or_tooth == true"
+    statement: "A broken, chipped, loose or lost filling, crown or tooth"
     source: "NHSE-2025 §3.4 (fractured, loose or displaced fillings; loose or displaced crowns); SDCEP-2026 Trauma pathway (fracture involving dentine -> Non-urgent); SDCEP-2007 §2.1.3."
 
   # --- ROUTINE ------------------------------------------------------------
@@ -271,7 +278,7 @@ criteria:
 # stops the interview at once (USER-2026-09-22-9). Each question fills one
 # field, so a bare "yes" or "no" always has a single meaning.
 # input: yesno_checklist -> one row of an all-at-once Yes/No form, no default,
-# every row must be answered (checklist A: Q1-Q9 and Q19; B: Q13-Q16, shown
+# every row must be answered (checklist A: Q1-Q9, Q19, Q20, Q21; B: Q13-Q16, shown
 # only with pain). Rows are strict Yes/No unless `options` says otherwise
 # (Q13 only: yes / no / not_sure, not_sure = null). Red-flag rows are always
 # strict Yes/No. input: chat -> asked in the chat, answer extracted with a
@@ -338,6 +345,19 @@ questions:
     group: A
     red_flag: false
     text: "Do you have a mouth ulcer, sore or lump that has lasted more than 3 weeks?"
+  # Q20, Q21: wording approved by the user 2026-09-23.
+  - id: Q20
+    fields: [broken_filling_or_tooth]
+    input: yesno_checklist
+    group: A
+    red_flag: false
+    text: "Do you have a filling, crown or tooth that has broken, chipped, come loose or come out, and has not been fixed yet?"
+  - id: Q21
+    fields: [pus_or_discharge]
+    input: yesno_checklist
+    group: A
+    red_flag: false
+    text: "Have you noticed pus, a pimple-like bump on the gum, or a salty or bad-tasting fluid coming from around a tooth?"
   - id: Q10
     fields: [pain_relief_effect]
     input: chat

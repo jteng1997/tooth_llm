@@ -17,6 +17,10 @@ Three rates, as the eval spec asks:
   contradiction  the stated urgency isn't the assessed one, or the text
                  tells the user they can skip or delay the dentist
 
+Also: misstated (a missing tooth called decay), unreported (a tooth told
+as a finding that the assessment did not flag, e.g. a sub-threshold
+detection) and retake not requested (an unusable photo never asked for again).
+
 Teeth are matched by FDI number and by plain-word name ("lower left first
 molar"), because the model frequently writes one without the other and a
 digits-only regex scores those as silence.
@@ -47,6 +51,12 @@ CASE_ONLY_KEYS = {"id", "note", "findings_base", "symptoms", "must", "must_not"}
 # a sentence (2026-09-22; re-scoring the stored 14b/4b runs changed no rate).
 FDI =re.compile(r"(?<!\d)(?<!\d\.)([1-4][1-8])(?!\d)(?!\.\d)")
 ALL_FDI = [f"{q}{p}" for q in range(1, 5) for p in range(1, 9)]
+# A number that counts something is not a tooth. The URGENT headline "within
+# 24 hours" scored as tooth 24 on 12/60 triage cases, and "14 teeth" as tooth
+# 14 (2026-09-24). It also hid omissions: "24 hours" counted as naming a
+# flagged tooth 24. Blanked before FDI matching.
+QUANTITY = re.compile(r"(?<![\d.])\d+(?:\.\d+)?\s*-?\s*"
+                      r"(?:hours?|hrs?|days?|weeks?|months?|years?|yrs?|teeth)\b", re.I)
 
 # Phrases that mark each urgency level in the generated text.
 URGENCY_MARKERS = {
@@ -57,7 +67,8 @@ URGENCY_MARKERS = {
     "SOON": ["few weeks", "coming weeks", "next weeks", "7 days", "seven days", "within a week"],
     "ROUTINE": ["routine", "regular checkup", "regular check-up", "no action", "check-up",
                 "no urgent"],
-    "RETAKE": ["retake", "take new photo", "take the photos again", "photos again"],
+    "RETAKE": ["retake", "take new photo", "take the photos again", "photos again", "new photo",
+               "take them again", "take it again", "photo again"],
 }
 DISCOURAGE = [
     "you don't need to see a dentist", "you do not need to see a dentist",
@@ -77,7 +88,7 @@ def build_findings(case: dict, bases: dict) -> dict:
 
 def mentioned_teeth(text: str) -> set:
     lowered = text.lower()
-    return set(FDI.findall(text)) | {f for f in ALL_FDI if fdi_label(f) in lowered}
+    return set(FDI.findall(QUANTITY.sub(" ", text))) | {f for f in ALL_FDI if fdi_label(f) in lowered}
 
 
 DECAY_WORDS = re.compile(r"decay|cavit|caries", re.I)
@@ -96,6 +107,35 @@ def misstated(text: str, findings: dict) -> list:
     return sorted(set(bad))
 
 
+FINDING_CLAIM = re.compile(
+    r"\b(?:decay\w*|cavit\w*|caries|carious|indication|unusual|issues?|problems?|fillings?"
+    r"|restorations?|signs? of|lesions?|damage\w*|detect\w*|spots?|findings?|abnormal\w*)\b", re.I)
+
+
+def unreported(text: str, allowed) -> list:
+    """Teeth a sentence reports as a finding ("an indication of decay on
+    tooth 21", "something unusual on the upper left canine") that are not
+    among the teeth the assessment lets the text report. The hallucination
+    rate allows any tooth in findings.teeth, so a sub-threshold detection
+    told to the patient passed it (llm-dev, 2026-09-24, #22). A tooth named
+    in a sentence with no finding claim (a retake or limitation sentence)
+    is not counted."""
+    bad = set()
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
+        if FINDING_CLAIM.search(sentence):
+            bad |= mentioned_teeth(sentence) - set(allowed)
+    return sorted(bad)
+
+
+def reportable(assessment: dict, findings: dict) -> set:
+    """The teeth the text may report as a finding: flagged decay plus the
+    missing teeth the assessment reports. None on a RETAKE."""
+    if assessment["urgency"] == "RETAKE":
+        return set()
+    decay, missing = explain.split_flagged(assessment, findings)
+    return set(decay) | set(missing)
+
+
 def discourages(text: str) -> str:
     lowered = (text or "").lower()
     return next((phrase for phrase in DISCOURAGE if phrase in lowered), "")
@@ -108,6 +148,14 @@ def contradiction(text: str, urgency: str) -> str:
     if not any(marker in lowered for marker in URGENCY_MARKERS[urgency]):
         return f"never states {urgency}"
     return ""
+
+
+def retake_requested(text: str) -> bool:
+    """Does the text ask for new photos? Scored on every retake_required
+    case, including a partial retake that keeps an URGENT or EMERGENCY level
+    (#18), where the urgency check alone would pass a text that never asks."""
+    lowered = (text or "").lower()
+    return any(marker in lowered for marker in URGENCY_MARKERS["RETAKE"])
 
 
 def _recording_chat(log: list):
@@ -145,10 +193,11 @@ def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbos
     import triage
     knowledge = knowledge or Knowledge()
     results = {"mode": mode, "hallucination": 0, "omission": 0, "contradiction": 0, "misstated": 0,
-               "n": len(cases), "cases": [],
+               "unreported": 0,
+               "n": len(cases), "cases": [], "retake_required": 0, "retake_not_requested": 0,
                "guardrail_retry": 0, "guardrail_fallback": 0, "places_pain": 0,
                "follow_up": {"n": 0, "hallucination": 0, "discourages": 0, "misstated": 0,
-                             "echo": 0, "echo_retry": 0, "guardrail_retry": 0,
+                             "unreported": 0, "echo": 0, "echo_retry": 0, "guardrail_retry": 0,
                              "guardrail_fallback": 0, "places_pain": 0}}
 
     for case in cases:
@@ -161,6 +210,7 @@ def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbos
             kwargs["assessment"] = triage.assess(case["findings"], copy.deepcopy(case.get("symptoms")),
                                                  [], **tkw)
         session = Explanation(case["findings"], case.get("symptoms"), **kwargs)
+        may_report = reportable(session.assessment, case["findings"])
         replies = []
         original, recording = _recording_chat(replies)
         explain.chat = recording
@@ -178,7 +228,8 @@ def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbos
                                        "hallucinated": sorted(mentioned_teeth(reply)
                                                               - set(case["findings"].get("teeth", {}))),
                                        "discourages": discourages(reply),
-                                       "misstated": misstated(reply, case["findings"])})
+                                       "misstated": misstated(reply, case["findings"]),
+                                       "unreported": unreported(reply, may_report)})
         finally:
             explain.chat = original
         assessed = session.assessment
@@ -192,6 +243,7 @@ def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbos
             fu["hallucination"] += bool(f["hallucinated"])
             fu["discourages"] += bool(f["discourages"])
             fu["misstated"] += bool(f["misstated"])
+            fu["unreported"] += bool(f["unreported"])
             fu["echo"] += f["echo"]
             fu["echo_retry"] += f["echo_retry"]
             fu["guardrail_retry"] += f["retried"] and not f["echo_retry"]
@@ -203,12 +255,19 @@ def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbos
         mentioned = mentioned_teeth(text)
         extra = mentioned - allowed
         missing = flagged - mentioned
-        if assessed["retake_required"]:
+        if assessed["urgency"] == "RETAKE":
             missing = set()
             extra = mentioned  # a retake response may name no tooth at all
+        # A bad photo with URGENT/EMERGENCY symptoms keeps its level and its
+        # flagged teeth (interface.md 2.0; lead, 2026-09-24, #18): scored as usual.
         contra = contradiction(text, assessed["urgency"])
         wrong_finding = misstated(text, case["findings"])
+        no_retake = bool(assessed["retake_required"]) and not retake_requested(text)
+        not_reportable = unreported(text, may_report)
 
+        results["unreported"] += bool(not_reportable)
+        results["retake_required"] += bool(assessed["retake_required"])
+        results["retake_not_requested"] += no_retake
         results["misstated"] += bool(wrong_finding)
         results["hallucination"] += bool(extra)
         results["omission"] += bool(missing)
@@ -217,7 +276,8 @@ def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbos
             "id": case["id"], "urgency": assessed["urgency"], "text": text,
             "flagged": sorted(flagged),
             "hallucinated": sorted(extra), "omitted": sorted(missing), "contradiction": contra,
-            "misstated": wrong_finding,
+            "misstated": wrong_finding, "retake_required": bool(assessed["retake_required"]),
+            "retake_not_requested": no_retake, "unreported": not_reportable,
             "location": (case.get("symptoms") or {}).get("location"),
             "guardrail_log": first_log["entries"], "fallback": fell_back,
             "places_pain": first_log["places_pain"], "follow_ups": follow_ups, "replies": replies,
@@ -233,6 +293,10 @@ def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbos
                 flags.append(f"CONTRADICTION ({contra})")
             if wrong_finding:
                 flags.append(f"MISSTATED: missing teeth {wrong_finding} described as decay")
+            if no_retake:
+                flags.append("RETAKE NOT REQUESTED (a photo was unusable)")
+            if not_reportable:
+                flags.append(f"UNREPORTED {not_reportable} told as a finding (not flagged)")
             print(f"{'FAIL' if flags else 'ok  '} {case['id']} [{assessed['urgency']}] {case['note']}")
             if flags:
                 print("       " + "; ".join(flags))
@@ -246,7 +310,8 @@ def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbos
                                          ("places_pain", f["places_pain"]),
                                          (f"HALLUCINATED {f['hallucinated']}", f["hallucinated"]),
                                          (f"DISCOURAGES {f['discourages']!r}", f["discourages"]),
-                                         (f"MISSTATED {f['misstated']}", f["misstated"])) if on]
+                                         (f"MISSTATED {f['misstated']}", f["misstated"]),
+                                         (f"UNREPORTED {f['unreported']}", f["unreported"])) if on]
                 if marks:
                     print(f"       follow-up {f['question']!r}: {', '.join(marks)}")
             if case.get("must"):
@@ -267,8 +332,10 @@ def load_cases(mode: str, synthetic: int, seed: int) -> list:
 def report(results: dict, label: str) -> None:
     n = results["n"]
     print(f"\n{label}  cases: {n}")
-    for rate in ("hallucination", "omission", "contradiction", "misstated"):
+    for rate in ("hallucination", "omission", "contradiction", "misstated", "unreported"):
         print(f"  {rate:14s} {results[rate]}/{n}  ({results[rate] / n:.1%})")
+    print(f"  retake not requested  {results['retake_not_requested']}/{results['retake_required']} "
+          f"cases with an unusable photo")
     print(f"  guardrail retry {results['guardrail_retry']}/{n}, fallback text used "
           f"{results['guardrail_fallback']}/{n}, places_pain fired {results['places_pain']}/{n}")
     located = sum(bool(c["location"]) for c in results["cases"])
@@ -278,7 +345,8 @@ def report(results: dict, label: str) -> None:
         m = fu["n"]
         print(f"  follow-ups: {m} turns; echo in the final reply {fu['echo']}/{m}, echo retried "
               f"{fu['echo_retry']}/{m}; hallucinated tooth {fu['hallucination']}/{m}, discourages care "
-              f"{fu['discourages']}/{m}, misstated {fu['misstated']}/{m}; guardrail retry "
+              f"{fu['discourages']}/{m}, misstated {fu['misstated']}/{m}, unreported tooth "
+              f"{fu['unreported']}/{m}; guardrail retry "
               f"{fu['guardrail_retry']}/{m}, fallback {fu['guardrail_fallback']}/{m}, "
               f"places_pain {fu['places_pain']}/{m}")
 

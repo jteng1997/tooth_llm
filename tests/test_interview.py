@@ -173,7 +173,7 @@ class Chat(unittest.TestCase):
         self.assertEqual(asked, ["Q10", "Q11", "Q12", "Q17", "Q18", "done"])
         s = step["symptoms"]
         self.assertEqual((s["schema_version"], s["pain_relief_effect"], s["duration_days"]),
-                         ("1.1", "not_helped", 7))
+                         ("1.2", "not_helped", 7))
         self.assertIs(s["pain_on_biting"], True)          # from checklist B
         self.assertIs(s["pain_wakes_at_night"], False)
         self.assertFalse(step["red_flag"])
@@ -377,6 +377,51 @@ class Chat(unittest.TestCase):
                                        [("Q12", text)], "Q12")
                 self.assertNotIn("spontaneous", got or [])
 
+    # named foods and actions (#20): evidence only when tied to the pain
+
+    def trig(self, value, text, qid="Q12"):
+        return interview.verify("pain_triggers", value, text, [(qid, text)], "Q12")
+
+    def test_named_foods_and_actions_in_reply_to_the_trigger_question(self):
+        for text, value in (("Toffee and caramel.", ["sweet"]),
+                            ("Crunching on nuts.", ["biting"]),
+                            ("Eating hard food like crusty bread.", ["biting"]),
+                            ("Popsicles.", ["cold"]),
+                            ("Coffee, mostly.", ["hot"]),
+                            ("Fizzy drinks and chocolate.", ["sweet"])):
+            with self.subTest(text=text):
+                self.assertEqual(self.trig(value, text), value)
+
+    def test_named_food_elsewhere_needs_a_link_to_the_pain(self):
+        self.assertEqual(self.trig(["sweet"], "About a week, and chocolate makes it ache.", "Q18"),
+                         ["sweet"])
+        self.assertIsNone(self.trig(["sweet"], "Since I had candy last week.", "Q18"))
+        self.assertIsNone(self.trig(["hot"], "I drink coffee every morning.", "Q18"))
+
+    def test_named_food_with_the_pain_denied_is_not_a_trigger(self):
+        for text in ("I had candy yesterday, no pain.",
+                     "I had candy yesterday. No pain from it.",
+                     "Chocolate doesn't hurt at all."):
+            with self.subTest(text=text):
+                self.assertIsNone(self.trig(["sweet"], text))
+
+    def test_a_denied_trigger_is_dropped_and_the_named_one_kept(self):
+        text = "Cold water is fine but sweets hurt."
+        self.assertEqual(self.trig(["cold", "sweet"], text), ["sweet"])
+        text = "It is fine until I drink something cold."
+        self.assertEqual(self.trig(["cold"], text), ["cold"])
+
+    def test_iced_coffee_is_not_a_hot_trigger(self):
+        self.assertEqual(self.trig(["hot", "cold"], "Iced coffee sets it off."), ["cold"])
+
+    def test_category_words_still_work_as_before(self):
+        for text, value in (("Cold and sweet things.", ["cold", "sweet"]),
+                            ("Hot and cold both.", ["hot", "cold"]),
+                            ("Cold, sweet things, and biting down on it too.",
+                             ["cold", "sweet", "biting"])):
+            with self.subTest(text=text):
+                self.assertEqual(self.trig(value, text), value)
+
     # informal arch words
 
     def test_informal_arch_words(self):
@@ -395,6 +440,51 @@ class Chat(unittest.TestCase):
         session.start()
         with self.assertRaises(ValueError):
             session.reply("hello")
+
+
+class ProtocolV02(unittest.TestCase):
+    """Q20 broken filling/tooth and Q21 pus: checklist-A rows, not red flags,
+    feeding S3 (SOON) and U8 (URGENT) with or without pain."""
+    GOOD = {"image_quality": {"upper": {"usable": True, "reasons": []},
+                              "lower": {"usable": True, "reasons": []}},
+            "arches": {"upper": {"present": True, "teeth_detected": 14},
+                       "lower": {"present": True, "teeth_detected": 14}},
+            "teeth": {}}
+
+    def finish_a(self, **yes):
+        session = interview.Interview(protocol=PROTOCOL, llm=Extractor())
+        session.start()
+        return session.submit_checklist("A", all_no(A_ROWS, **yes))
+
+    def test_checklist_a_carries_the_two_new_rows(self):
+        self.assertEqual(A_ROWS[-2:], ["Q20", "Q21"])
+        self.assertEqual((FIELD_OF["Q20"], FIELD_OF["Q21"]),
+                         ("broken_filling_or_tooth", "pus_or_discharge"))
+        self.assertFalse({"broken_filling_or_tooth", "pus_or_discharge"} & set(rules.RED_FLAG_FIELDS))
+
+    def test_a_yes_is_recorded_and_does_not_stop_as_a_red_flag(self):
+        for row, field in (("Q20", "broken_filling_or_tooth"), ("Q21", "pus_or_discharge")):
+            with self.subTest(row=row):
+                step = self.finish_a(**{row: True})
+                self.assertEqual((step["type"], step["red_flag"]), ("done", False))
+                self.assertIs(step["symptoms"][field], True)
+                self.assertEqual(step["symptoms"]["schema_version"], "1.2")
+
+    def test_ending_on_a_checklist_gives_a_complete_symptoms_object(self):
+        s = self.finish_a()["symptoms"]
+        self.assertEqual(set(s), set(interview.SCHEMA["properties"]))
+        self.assertIsNone(s["pain_triggers"])
+        self.assertIs(s["pain_present"], False)
+
+    def test_no_pain_with_pus_is_urgent_and_broken_is_soon(self):
+        import triage
+        proposal = json.dumps({"criteria_met": [], "level": "ROUTINE", "uncertain": False})
+        for row, level in (("Q21", "URGENT"), ("Q20", "SOON")):
+            with self.subTest(row=row):
+                symptoms = self.finish_a(**{row: True})["symptoms"]
+                a = triage.assess(self.GOOD, symptoms, [], allow_unreviewed=True,
+                                  protocol=PROTOCOL, llm=lambda m, s: proposal)
+                self.assertEqual((a["urgency"], a["decided_by"]), (level, "protocol_check"))
 
 
 class Plan(unittest.TestCase):

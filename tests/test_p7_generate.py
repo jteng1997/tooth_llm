@@ -421,6 +421,69 @@ class Gemini(unittest.TestCase):
                 os.environ["GEMINI_API_KEY"] = old
 
 
+class Regenerate(unittest.TestCase):
+    GOOD = GenerateOne.GOOD
+    OTHER = ("Four days now the bottom left one aches, worse with cold drinks and chewing, "
+             "and painkillers have not helped me at all so far.")
+    PROMPT = GenerateOne.PROMPT
+
+    def setup(self, n_history=1, with_paras=False, rounds=0):
+        attempt = {"attempt": 0, "seed": 1, "reply": {"patient_words": self.GOOD}, "raw": None, "failures": []}
+        case = {"status": "accepted", "reply": {"patient_words": self.GOOD}, "text": self.GOOD,
+                "history": [attempt] * n_history, "attempts": n_history, "regeneration_reasons": [],
+                "advisory": [], "adjudication_rounds": rounds}
+        if with_paras:
+            case["paraphrases"] = [dict(case, history=[attempt]), dict(case, history=[attempt])]
+        gen = {"cases": {"X001": case}}
+        extracted = {"cases": {"X001": {"reached_chat": True, "fields": {}, "b_call": {"x": 1}}}}
+        by_id = {"X001": {"archetype": "a"}}
+        return gen, extracted, by_id
+
+    def stub(self, text):
+        seeds = []
+
+        def call(messages, schema, seed):
+            seeds.append(seed)
+            return json.dumps({"patient_words": text})
+        return call, seeds
+
+    def test_next_seed_superseded_and_b_cleared(self):
+        gen, ext, by_id = self.setup(n_history=2)
+        call, seeds = self.stub(self.OTHER)
+        r = p7.regenerate_cases(gen, ext, ["X001"], by_id, {"X001": self.PROMPT}, checker(), call, "triage")
+        case = gen["cases"]["X001"]
+        self.assertEqual(seeds, [p7.SEEDS["triage"] + 2])          # after the 2 attempts used
+        self.assertEqual((case["text"], case["status"], case["adjudication_rounds"]),
+                         (self.OTHER, "accepted", 1))
+        self.assertEqual(case["superseded"][0]["text"]["text"], self.GOOD)
+        self.assertEqual(case["superseded"][0]["b"]["b_call"], {"x": 1})
+        self.assertNotIn("X001", ext["cases"])                       # B re-reads only this one
+        self.assertEqual(r["done"][0][:2], ("X001", "accepted"))
+
+    def test_paraphrase_only(self):
+        gen, ext, by_id = self.setup(with_paras=True)
+        call, seeds = self.stub(self.OTHER)
+        p7.regenerate_cases(gen, ext, ["X001:p2"], by_id, {"X001": self.PROMPT}, checker(), call, "triage")
+        case = gen["cases"]["X001"]
+        self.assertEqual(seeds, [p7.SEEDS["triage"] + 2 * p7.PARAPHRASE_SEED_STEP + 1])
+        self.assertEqual((case["text"], case["paraphrases"][1]["text"]), (self.GOOD, self.OTHER))
+        self.assertEqual(case["superseded"][0]["part"], "p2")
+
+    def test_failing_regeneration_goes_back_to_research_pm(self):
+        gen, ext, by_id = self.setup()
+        call, _ = self.stub("too short")
+        p7.regenerate_cases(gen, ext, ["X001"], by_id, {"X001": self.PROMPT}, checker(), call, "triage")
+        self.assertEqual(gen["cases"]["X001"]["status"], "needs_research_pm")
+
+    def test_third_round_is_refused(self):
+        gen, ext, by_id = self.setup(rounds=2)
+        call, seeds = self.stub(self.OTHER)
+        r = p7.regenerate_cases(gen, ext, ["X001"], by_id, {"X001": self.PROMPT}, checker(), call, "triage")
+        self.assertEqual((seeds, r["done"]), ([], []))
+        self.assertIn("2 adjudication rounds", r["refused"][0][1])
+        self.assertIn("X001", ext["cases"])                          # nothing cleared
+
+
 class Order(unittest.TestCase):
     def test_grouped_by_style_and_seeded(self):
         keys = [{"id": f"X{i:03d}", "style": ("plain", "terse", "vague")[i % 3]} for i in range(30)]

@@ -30,8 +30,9 @@ def expected_questions(s):
 
 
 def make_key(level, criteria, facts=("a fact",), **symptoms):
-    s = {"schema_version": "1.1", **{f: False for f in RED}, "pain_present": False,
-         "persistent_ulcer": False, "pain_relief_effect": None, "pain_severity": None,
+    s = {"schema_version": "1.2", **{f: False for f in RED}, "pain_present": False,
+         "persistent_ulcer": False, "broken_filling_or_tooth": False, "pus_or_discharge": False,
+         "pain_relief_effect": None, "pain_severity": None,
          "pain_triggers": None, "pain_lingers_over_30s": None, "pain_wakes_at_night": None,
          "pain_on_biting": None, "recent_extraction": None, "location": None, "duration_days": None,
          "bleeding_gums": None, "swelling_features": None, "trauma_features": None}
@@ -46,7 +47,9 @@ PAIN = dict(pain_present=True, pain_lingers_over_30s=False, pain_wakes_at_night=
             pain_triggers=["cold"], location="lower_left", duration_days=4)
 URGENT_KEY = make_key("URGENT", ["U1", "S1"], **{**PAIN, "pain_relief_effect": "not_helped"})
 ROUTINE_KEY = make_key("ROUTINE", [])
-NARRATIVE_KEY = make_key("SOON", ["S3"], facts=["a filling fell out, no pain"])
+# Protocol v0.2: a broken filling is a checklist-A row (Q20), no longer narrative.
+BROKEN_FILLING_KEY = make_key("SOON", ["S3"], facts=["a filling fell out, no pain"],
+                              broken_filling_or_tooth=True)
 
 
 def run(key, opening="drop", extract=None, text=None):
@@ -60,7 +63,7 @@ def run(key, opening="drop", extract=None, text=None):
 @unittest.skipIf(ERR, f"protocol does not load: {ERR}")
 class Cases(unittest.TestCase):
     def test_keys_are_protocol_consistent(self):
-        for k in (URGENT_KEY, ROUTINE_KEY, NARRATIVE_KEY):
+        for k in (URGENT_KEY, ROUTINE_KEY, BROKEN_FILLING_KEY):
             case = ct._case_from_key(k, {"author": "t"})
             self.assertEqual(ct._check_key(case, PROTOCOL), [], k["key_level"])
 
@@ -113,16 +116,29 @@ class Cases(unittest.TestCase):
         self.assertTrue(att["evidence"]["field_diffs"])       # still reported as evidence
         self.assertIsNone(att["research_pm_bucket"])
 
-    def test_narrative_fact_with_the_opening_dropped_is_interview(self):
-        result, att = run(NARRATIVE_KEY, opening="drop")
-        self.assertEqual(result["final"], "ROUTINE")
-        self.assertEqual(att["proposed"], "interview")
-        self.assertEqual(att["evidence"]["narrative_without_a_turn"], ["S3"])
+    def test_broken_filling_on_the_checklist_is_caught_by_code(self):
+        # v0.2: S3 is the Q20 checklist row, so neither the opening nor the model matters
+        for opening in ("drop", "prepend"):
+            with self.subTest(opening=opening):
+                result, att = run(BROKEN_FILLING_KEY, opening=opening)
+                self.assertIsNone(att)
+                self.assertEqual((result["final"], result["protocol_check"]), ("SOON", "SOON"))
+                self.assertIn("Q20", result["questions_shown"])
+                self.assertEqual(result["chat_asked"], [])
 
-    def test_narrative_fact_in_the_opening_missed_by_triage_is_triage(self):
-        result, att = run(NARRATIVE_KEY, opening="prepend")
-        self.assertEqual(result["transcript"][0]["content"], "a filling fell out, no pain")
-        self.assertEqual(att["proposed"], "triage")          # stub ignores the words
+    def test_narrative_attribution_branch(self):
+        # No narrative criterion is left in protocol v0.2; the harness branch is
+        # kept for any future one, so it is tested with a stub criterion.
+        from types import SimpleNamespace
+        stub = SimpleNamespace(criterion=lambda c: SimpleNamespace(kind="narrative" if c == "N9"
+                                                                   else "structured"))
+        key = make_key("SOON", ["N9"])
+        result = {"questions_shown": list(key["expected_questions"]), "chat_asked": [],
+                  "symptoms": dict(key["symptoms"])}
+        att = e2e.attribute(key, result, stub, "drop")
+        self.assertEqual((att["proposed"], att["evidence"]["narrative_without_a_turn"]),
+                         ("interview", ["N9"]))
+        self.assertEqual(e2e.attribute(key, result, stub, "prepend")["proposed"], "triage")
 
     def test_unscripted_question_gets_not_sure(self):
         text = e2e.placeholder_text(URGENT_KEY)
@@ -142,26 +158,42 @@ class Cases(unittest.TestCase):
 class Scoring(unittest.TestCase):
     def test_summary_counts(self):
         keys = []
-        for i, k in enumerate((URGENT_KEY, ROUTINE_KEY, NARRATIVE_KEY), 1):
+        for i, k in enumerate((URGENT_KEY, ROUTINE_KEY, BROKEN_FILLING_KEY), 1):
             k = copy.deepcopy(k)
             k["id"] = f"T{i:03d}"
             keys.append(k)
+        # a fourth case the stub triage model misses: URGENT key, pain relief
+        # not helped, with the extractor dropping that field
+        miss = copy.deepcopy(URGENT_KEY)
+        miss["id"] = "T004"
+        keys.append(miss)
         texts = {k["id"]: e2e.placeholder_text(k) for k in keys}
-        s = e2e.evaluate(keys, texts, PROTOCOL, "mock", lambda k: e2e.oracle_extractor(k, PROTOCOL),
-                         e2e.mock_triage, "drop")
-        self.assertEqual(s["systems"]["final"]["n_scored"], 3)
-        self.assertEqual(s["systems"]["final"]["under_ids"], ["T003"])
-        self.assertEqual(s["attribution"]["proposed"], {"interview": 1})
-        self.assertEqual(s["extraction"]["cells"], 5)          # one case reached the chat
-        self.assertEqual(s["extraction"]["wrong_cells"], 0)
+
+        def extract_for(k):
+            oracle = e2e.oracle_extractor(k, PROTOCOL)
+            if k["id"] != "T004":
+                return oracle
+
+            def drops_relief(messages, schema):
+                out = json.loads(oracle(messages, schema))
+                out["pain_relief_effect"] = {"value": None, "quote": None}
+                return json.dumps(out)
+            return drops_relief
+        s = e2e.evaluate(keys, texts, PROTOCOL, "mock", extract_for, e2e.mock_triage, "drop")
+        self.assertEqual(s["systems"]["final"]["n_scored"], 4)
+        self.assertEqual(s["systems"]["final"]["under_ids"], ["T004"])
+        self.assertEqual(s["attribution"]["proposed"], {"extraction": 1})
+        self.assertEqual(s["extraction"]["cells"], 10)          # two cases reached the chat
+        self.assertEqual(s["extraction"]["wrong_cells"], 1)
 
 
 @unittest.skipUnless((REPO_ROOT / "labels" / "heldout" / "e2e_keys.json").exists() and not ERR,
                      "held-out e2e keys are local-only")
 class HeldoutMockRun(unittest.TestCase):
     """With a perfect extractor and a triage model that adds nothing, the
-    end-to-end result must equal code's own level on the keys (58/60), and
-    the interview must ask exactly what every key expects."""
+    end-to-end result must equal code's own level on the keys (60/60 under
+    protocol v0.2, where no criterion is narrative), and the interview must
+    ask exactly what every key expects."""
 
     def test_mock_run(self):
         keys = json.loads(e2e.E2E_KEYS.read_text(encoding="utf-8"))["keys"]
@@ -169,11 +201,11 @@ class HeldoutMockRun(unittest.TestCase):
         s = e2e.evaluate(keys, texts, PROTOCOL, "mock", lambda k: e2e.oracle_extractor(k, PROTOCOL),
                          e2e.mock_triage, "drop")
         final = s["systems"]["final"]
-        self.assertEqual((final["n_scored"], final["agree"], final["under"]), (60, 58, 2))
+        self.assertEqual((final["n_scored"], final["agree"], final["under"]), (60, 60, 0))
         self.assertEqual(s["interview"]["cases_with_missing_questions"], 0)
         self.assertEqual(s["interview"]["cases_with_extra_questions"], 0)
         self.assertEqual(s["extraction"]["wrong_cells"], 0)
-        self.assertEqual(s["attribution"]["proposed"], {"interview": 2})
+        self.assertEqual(s["attribution"]["n_misses"], 0)
 
 
 if __name__ == "__main__":

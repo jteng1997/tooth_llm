@@ -182,6 +182,73 @@ class MissingTooth(unittest.TestCase):
         self.assertEqual(explain.calls_missing_decay(MISSING_TEXT, ["17"]), [])
 
 
+class NoToothDenial(unittest.TestCase):
+    """User decision 2026-09-23: never say the pain is not from a tooth."""
+
+    def test_denials_are_caught(self):
+        for text in ("No, the pain when biting is not coming from a tooth we found.",
+                     "Your pain is not caused by your teeth.", "Your teeth look fine.",
+                     "There is nothing wrong with your teeth.",
+                     "It is unlikely to be coming from a tooth.", "This is not a dental problem."):
+            with self.subTest(text=text):
+                self.assertTrue(explain.denies_tooth_cause(text))
+
+    def test_honest_wording_passes(self):
+        for text in ("The photos did not show a problem, but they can miss one. Only a dentist "
+                     "can tell what is causing your pain.",
+                     "No issues were found on any teeth in the photos.",
+                     "It is not a diagnosis and does not mean your teeth are fine.",
+                     "The pain when biting may be related to the tooth we found, but only a "
+                     "dentist can confirm this."):
+            with self.subTest(text=text):
+                self.assertFalse(explain.denies_tooth_cause(text))
+
+
+BAD_UPPER = {**GOOD, "image_quality": {"upper": {"usable": False, "reasons": ["blurry"]},
+                                       "lower": {"usable": True, "reasons": []}}}
+URGENT_RETAKE = {**ASSESSMENT, "urgency": "URGENT", "headline": "See a dentist within a few days.",
+                 "retake_required": True, "flagged_teeth": []}
+URGENT_RETAKE_16 = {**URGENT_RETAKE, "flagged_teeth": ["16"]}
+PURE_RETAKE = {**ASSESSMENT, "urgency": "RETAKE", "headline": "Please retake the photos",
+               "retake_required": True, "flagged_teeth": []}
+
+
+class PartialRetake(unittest.TestCase):
+    """retake_required with an urgency other than RETAKE: the result is given
+    in full and only the unusable photo is retaken."""
+
+    def test_fallback_urgent_no_teeth(self):
+        text = fallback_text(URGENT_RETAKE, BAD_UPPER)
+        self.assertIn("See a dentist within a few days.", text)
+        self.assertIn("The photo of your upper teeth could not be used, so please take it again",
+                      text)
+        self.assertIn("Nothing in the photo we could use", text)
+        self.assertFalse(explain.denies_tooth_cause(text))
+
+    def test_fallback_urgent_with_teeth(self):
+        text = fallback_text(URGENT_RETAKE_16, BAD_UPPER)
+        self.assertIn("indication of tooth decay on tooth 16 (upper right first molar)", text)
+        self.assertIn("See a dentist within a few days.", text)
+        self.assertIn("take it again", text)
+        self.assertEqual(guardrail_violations(text, ["16"]), [])
+
+    def test_fallback_pure_retake_unchanged(self):
+        text = fallback_text(PURE_RETAKE, BAD_UPPER)
+        self.assertIn("The photos could not be used, so please take them again", text)
+        self.assertNotIn("tooth 16", text)
+
+    def test_scope_instruction_keeps_the_result(self):
+        s = Explanation(BAD_UPPER, {}, knowledge=FakeKnowledge(),
+                        assessment=copy.deepcopy(URGENT_RETAKE_16))
+        scope = s._scope_instruction()
+        self.assertIn("possible tooth decay on 16", scope)
+        self.assertIn("state assessment.headline word for word", scope)
+        self.assertIn("photo of the upper teeth could not be used", scope)
+        pure = Explanation(BAD_UPPER, {}, knowledge=FakeKnowledge(),
+                           assessment=copy.deepcopy(PURE_RETAKE))
+        self.assertIn("Do not mention any tooth", pure._scope_instruction())
+
+
 class FakeKnowledge:
     def search(self, query):
         return []
@@ -283,6 +350,48 @@ class CheckedTurn(unittest.TestCase):
         text = s.first_response()
         self.assertEqual(text, fallback_text(MISSING_ASSESSMENT, MISSING))
         self.assertNotIn("decay", text.lower())
+
+    def partial(self, assessment):
+        return Explanation(BAD_UPPER, {}, knowledge=FakeKnowledge(),
+                           assessment=copy.deepcopy(assessment))
+
+    def test_partial_retake_reply_without_the_urgency_is_rewritten(self):
+        retake_only = ("Your upper photo was not clear. Please retake it with good light "
+                       "and the camera held still.")
+        good = ("We looked at your photos. Nothing in the photo we could use reached the level "
+                "we report. See a dentist within a few days. Please retake the upper photo.")
+        self.replies = [retake_only, good]
+        s = self.partial(URGENT_RETAKE)
+        self.assertEqual(s.first_response(), good)
+        self.assertIn("does not state the urgency", s.guardrail_log[0]["first"][0])
+
+    def test_partial_retake_with_teeth_keeps_teeth_urgency_and_retake(self):
+        good = (GOOD_TEXT.replace("See a dentist within 7 days.", "See a dentist within a few "
+                                  "days.") + " Please take the upper photo again.")
+        self.replies = [good]
+        s = self.partial(URGENT_RETAKE_16)
+        self.assertEqual(s.first_response(), good)
+        self.assertEqual(s.guardrail_log, [])
+
+    def test_partial_retake_that_never_asks_for_the_photo_ends_in_the_fallback(self):
+        no_retake = GOOD_TEXT.replace("within 7 days", "within a few days")
+        self.replies = [no_retake, no_retake]
+        s = self.partial(URGENT_RETAKE_16)
+        self.assertEqual(s.first_response(), fallback_text(URGENT_RETAKE_16, BAD_UPPER))
+
+    def test_pure_retake_needs_no_headline_check(self):
+        text = "The photos could not be used. Please take them again with good light."
+        self.replies = [text]
+        s = self.partial(PURE_RETAKE)
+        self.assertEqual(s.first_response(), text)
+
+    def test_no_findings_denial_is_rewritten(self):
+        clean = ("The photos did not show a problem, but they can miss one. Only a dentist can "
+                 "tell what is causing your pain.")
+        self.replies = [GOOD_TEXT, "No, the pain is not coming from a tooth we found.", clean]
+        s = self.session()
+        s.first_response()
+        self.assertEqual(s.ask("is my pain from a tooth?"), clean)
 
     def test_assessment_passed_in_is_the_one_explained(self):
         self.replies = [GOOD_TEXT]

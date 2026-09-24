@@ -72,11 +72,12 @@ Field notes:
 
 ## 2. `symptoms` — produced by the LLM interview, validated against schema
 
-Schema **1.1** (additive over 1.0: new fields only, none removed or renamed).
+Schema **1.2** (additive over 1.1, which was additive over 1.0: new fields
+only, none removed or renamed).
 
 ```json
 {
-  "schema_version": "1.1",
+  "schema_version": "1.2",
   "pain_present": true,
   "pain_triggers": ["cold"],
   "pain_lingers_over_30s": true,
@@ -96,6 +97,8 @@ Schema **1.1** (additive over 1.0: new fields only, none removed or renamed).
   "exceeded_pain_relief_dose": false,
   "recent_extraction": false,
   "persistent_ulcer": false,
+  "broken_filling_or_tooth": false,
+  "pus_or_discharge": false,
   "bleeding_gums": false,
   "location": "lower_left",
   "duration_days": 7,
@@ -119,6 +122,11 @@ Schema **1.1** (additive over 1.0: new fields only, none removed or renamed).
   `tooth_knocked_out`, `bite_changed`, `none`; or `null`.
 - `persistent_ulcer`: a mouth ulcer, sore or lump lasting more than 3 weeks
   (checklist A; asked with or without pain).
+- `broken_filling_or_tooth` (Q20) and `pus_or_discharge` (Q21), new in 1.2
+  (protocol v0.2, user-approved 2026-09-23): checklist-A clicks, so always
+  answered in the planned interview and never LLM-extracted. Not red flags:
+  a Yes does not stop the interview. They feed protocol criteria S3 (SOON)
+  and U8 (URGENT), with or without pain.
 - `location` one of: `upper_left`, `upper_right`, `lower_left`,
   `lower_right`, `front`, `generalised`, `unknown`, `null`.
   Extraction never produces `unknown` (kept in the enum for backward
@@ -150,10 +158,11 @@ Every call on an `Interview` returns one step:
  "text": "Have you taken any pain relief for it? If so, did it help?",
  "notice": null}
 
-{"type": "done", "symptoms": {"schema_version": "1.1"}, "red_flag": false}
+{"type": "done", "symptoms": {"schema_version": "1.2"}, "red_flag": false}
 ```
 
-- `start()` → checklist A (the eight red flags, "any pain" and the ulcer row).
+- `start()` → checklist A (the eight red flags, "any pain", the ulcer row,
+  and the broken filling/tooth and pus rows).
 - `submit_checklist(group, answers)`, where `answers` is
   `{question_id: <value>}` for **every** row of that checklist, and each
   value is one of that row's `options[*].value`. Everything else raises

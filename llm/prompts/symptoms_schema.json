@@ -12,7 +12,7 @@
     "recent_trauma"
   ],
   "properties": {
-    "schema_version": { "const": "1.1" },
+    "schema_version": { "const": "1.2" },
     "pain_present": { "type": ["boolean", "null"] },
     "pain_triggers": {
       "type": ["array", "null"],
@@ -57,6 +57,8 @@
     "exceeded_pain_relief_dose": { "type": ["boolean", "null"] },
     "recent_extraction": { "type": ["boolean", "null"] },
     "persistent_ulcer": { "type": ["boolean", "null"] },
+    "broken_filling_or_tooth": { "type": ["boolean", "null"] },
+    "pus_or_discharge": { "type": ["boolean", "null"] },
     "bleeding_gums": { "type": ["boolean", "null"] },
     "location": {
       "type": ["string", "null"],
