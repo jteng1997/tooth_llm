@@ -251,12 +251,21 @@ _DENIES_TOOTH_CAUSE = re.compile(
     r"|\b(?:rule[sd]? out|ruling out) (?:a )?(?:tooth|dental)\b", re.I)
 # "This does not mean your teeth are fine" is the message we want, not a denial.
 _NEGATED = re.compile(r"\b(?:not|n't|never) (?:mean|say|prove|show|tell us)\b[^.]*$", re.I)
+# "...the best way to make sure your teeth are healthy" is advice, not a verdict.
+_ADVICE = re.compile(r"\b(?:make sure|making sure|ensure|keep|keeping|help|helps|helping"
+                     r"|to have|stay|staying|check (?:whether|if|that)|so that|until)\b"
+                     r"[^.]{0,25}$", re.I)
+
+
+def _is_verdict(sentence: str, start: int) -> bool:
+    prefix = sentence[:start]
+    return not (_NEGATED.search(prefix) or _ADVICE.search(prefix))
 
 
 def denies_tooth_cause(text: str) -> bool:
     for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
         m = _DENIES_TOOTH_CAUSE.search(sentence)
-        if m and not _NEGATED.search(sentence[:m.start()]):
+        if m and _is_verdict(sentence, m.start()):
             return True
     return False
 
@@ -282,6 +291,27 @@ def _retake_sentence(findings: dict) -> str:
         return (f"The photo of your {arches[0]} teeth could not be used, so please take it "
                 f"again: {_RETAKE_HOW}")
     return f"The photos could not be used, so please take them again: {_RETAKE_HOW}"
+
+
+# "Nothing was visible in these photos" when a photo could not be used says
+# something about teeth nobody saw. An absence claim must name what it covers.
+_ABSENCE = re.compile(
+    r"\b(?:nothing|no (?:problems?|issues?|signs?|decay|cavit\w*|findings?))\b[^.]{0,50}"
+    r"\b(?:visible|seen|found|shown|showed|shows|detected|reached)\b", re.I)
+
+
+def unscoped_absence(text: str, findings: dict) -> bool:
+    """With an unusable photo: a sentence saying nothing was found or seen
+    without saying it covers only the photo that could be used."""
+    unusable = unusable_arches(findings)
+    usable = [a for a in ("upper", "lower") if a not in unusable] if len(unusable) == 1 else []
+    scoped = re.compile(r"\b(?:photos?|pictures?|images?) (?:that )?(?:we|you) could use\b"
+                        r"|\busable\b" + "".join(rf"|\b{a} (?:teeth|photo|jaw|arch)\b"
+                                                 for a in usable), re.I)
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
+        if _ABSENCE.search(sentence) and not scoped.search(sentence):
+            return True
+    return False
 
 
 _ASKS_RETAKE = re.compile(
@@ -362,6 +392,9 @@ _DENIES_TOOTH_FINDING = re.compile(
     r"|\b(?:tooth|teeth) [1-4][1-8]\b[^.]{0,40}\b(?:is|are|looks?|seems?) (?:fine|healthy|ok"
     r"|okay|normal|good|clear|free of)\b"
     r"|\b(?:tooth|teeth) [1-4][1-8]\b[^.]{0,30}\b(?:has|have) no\b"
+    # "The lower teeth were fine", "your upper jaw is okay": an arch or all teeth.
+    r"|\b(?:teeth|jaw|arch|gums?)\b[^.,;]{0,15}\b(?:is|are|was|were|look|looks|looked|seem"
+    r"|seems|seemed) (?:fine|healthy|ok|okay|normal|good|all right|alright)\b"
     # Reassurance is a denial too: the photos can miss a problem.
     r"|\bnothing (?:to|you need to|you should) worry about\b"
     r"|\bnot (?:something|anything) to worry about\b"
@@ -372,7 +405,7 @@ _DENIES_TOOTH_FINDING = re.compile(
 def denies_tooth_finding(text: str) -> bool:
     for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
         m = _DENIES_TOOTH_FINDING.search(sentence)
-        if m and not _NEGATED.search(sentence[:m.start()]):
+        if m and _is_verdict(sentence, m.start()):
             return True
     return False
 
@@ -396,7 +429,7 @@ _DISCOURAGES = re.compile(
 def discourages_care(text: str) -> bool:
     for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
         m = _DISCOURAGES.search(sentence)
-        if m and not _NEGATED.search(sentence[:m.start()]):
+        if m and _is_verdict(sentence, m.start()):
             return True
     return False
 
@@ -421,7 +454,7 @@ def fallback_text(assessment: dict, findings: dict = None) -> str:
     decay, missing = split_flagged(assessment, findings)
     partial = partial_retake(assessment)
     if assessment["retake_required"] and not partial:
-        parts.append(f"The photos could not be used, so please take them again: {_RETAKE_HOW}")
+        parts.append(_retake_sentence(findings))
     elif decay or missing:
         if decay:
             parts.append(decay_sentence(decay))
@@ -495,9 +528,12 @@ class Explanation:
         this instruction and reports_unreported() hold the same line."""
         partial = partial_retake(self.assessment)
         if self.assessment["retake_required"] and not partial:
-            return ("Write the first response now. The photos could not be used: ask for "
-                    "a retake and explain how. Do not mention any tooth, number or "
-                    "finding — not even in plain words.")
+            return ("Write the first response now. Ask for the retake with this sentence, "
+                    f"word for word, and add no other photo instructions: "
+                    f"\"{_retake_sentence(self.findings)}\" Do not mention any tooth, number "
+                    "or finding, not even in plain words, and say nothing about how any "
+                    "teeth or either jaw look: not that they are fine, and not that nothing "
+                    "was found.")
         decay, missing = split_flagged(self.assessment, self.findings)
         if decay or missing:
             scope = "Only these teeth may be described as having a possible finding: "
@@ -611,6 +647,10 @@ class Explanation:
                 found.append("says a tooth is fine or has no problem; say instead that nothing "
                              "on it reached the level we report, and that this does not rule "
                              "anything out")
+            if self.assessment.get("retake_required") and unscoped_absence(text, self.findings):
+                found.append("says nothing was found or seen without saying it covers only "
+                             "the photo that could be used; nobody saw the teeth in the "
+                             "other photo")
             if first and partial_retake(self.assessment):
                 headline = self.assessment["headline"].strip()
                 if not _states_headline(text, headline):

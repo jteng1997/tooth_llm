@@ -23,7 +23,8 @@ for path in runs:
     if not texts:
         continue
     hits = [(i, t) for i, t in texts
-            if explain.discourages_care(t) or explain.denies_tooth_finding(t)]
+            if explain.discourages_care(t) or explain.denies_tooth_finding(t)
+            or explain.denies_tooth_cause(t)]
     total += len(texts)
     print(f"{path.name}: {len(hits)}/{len(texts)}")
     for i, t in hits:

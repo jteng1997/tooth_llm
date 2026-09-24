@@ -241,10 +241,15 @@ class PartialRetake(unittest.TestCase):
         text = fallback_text(URGENT_RETAKE_16, BAD_UPPER)
         self.assertIn(explain.decay_sentence(["16"]), text)   # one source for both
 
-    def test_fallback_pure_retake_unchanged(self):
+    def test_fallback_pure_retake_names_the_unusable_photo(self):
         text = fallback_text(PURE_RETAKE, BAD_UPPER)
-        self.assertIn("The photos could not be used, so please take them again", text)
+        self.assertIn("The photo of your upper teeth could not be used, so please take it again",
+                      text)
         self.assertNotIn("tooth 16", text)
+        both = {**GOOD, "image_quality": {"upper": {"usable": False, "reasons": ["blurry"]},
+                                          "lower": {"usable": False, "reasons": ["dark"]}}}
+        self.assertIn("The photos could not be used, so please take them again",
+                      fallback_text(PURE_RETAKE, both))
 
     def test_scope_instruction_keeps_the_result(self):
         s = Explanation(BAD_UPPER, {}, knowledge=FakeKnowledge(),
@@ -358,6 +363,68 @@ class DiscouragesCare(unittest.TestCase):
                      fallback_text(ASSESSMENT), fallback_text(URGENT_RETAKE, BAD_UPPER)):
             with self.subTest(text=text):
                 self.assertFalse(explain.discourages_care(text))
+
+
+class UnusablePhoto(unittest.TestCase):
+    """Live check (app-dev, 2026-09-24): with the upper photo unusable the
+    explanation said "the lower teeth were fine", and a follow-up said
+    "Nothing was visible..." about the upper teeth nobody saw."""
+
+    def test_arch_level_fine_is_a_denial(self):
+        for text in ("The photos taken of your upper teeth were not clear enough to look at, "
+                     "but the lower teeth were fine.", "Your upper jaw is okay.",
+                     "Your gums look healthy."):
+            with self.subTest(text=text):
+                self.assertTrue(explain.denies_tooth_finding(text))
+        self.assertFalse(explain.denies_tooth_finding("This does not mean your teeth are fine."))
+        self.assertFalse(explain.denies_tooth_finding(
+            "The photo of your upper teeth could not be used, so please take it again."))
+
+    def test_unscoped_absence_is_caught_only_with_an_unusable_photo(self):
+        text = "Nothing was visible on the biting surfaces in these photos."
+        self.assertTrue(explain.unscoped_absence(text, BAD_UPPER))
+        for scoped in ("Nothing in the photo we could use reached the level we report.",
+                       "Nothing was found in the lower teeth photo.",
+                       "The photo of your upper teeth could not be used, so a new photo or a "
+                       "dentist is needed to tell."):
+            with self.subTest(text=scoped):
+                self.assertFalse(explain.unscoped_absence(scoped, BAD_UPPER))
+
+    def test_pure_retake_scope_and_fallback_use_the_fixed_sentence(self):
+        s = Explanation(BAD_UPPER, {}, knowledge=FakeKnowledge(),
+                        assessment=copy.deepcopy(PURE_RETAKE))
+        scope = s._scope_instruction()
+        self.assertIn(f'word for word, and add no other photo instructions: '
+                      f'"{explain._retake_sentence(BAD_UPPER)}"', scope)
+        self.assertIn("not that they are fine", scope)
+        text = fallback_text(PURE_RETAKE, BAD_UPPER)
+        self.assertIn("The photo of your upper teeth could not be used", text)
+        self.assertFalse(explain.unscoped_absence(text, BAD_UPPER))
+        self.assertFalse(explain.denies_tooth_finding(text))
+
+
+class AdviceIsNotAVerdict(unittest.TestCase):
+    """Test 2 v4 S0008: "...the best way to make sure your teeth are healthy"
+    tripped the denial guards and forced the fallback. Advice passes; a
+    verdict on the patient's teeth is still caught."""
+
+    def test_advice_and_goals_pass(self):
+        for text in ("Regular checkups are still the best way to make sure your teeth are healthy.",
+                     "Brushing twice a day helps keep your teeth healthy.",
+                     "A dentist can check whether your teeth are healthy.",
+                     "The aim is to have your teeth healthy again.",
+                     "Keep your gums healthy by flossing."):
+            with self.subTest(text=text):
+                self.assertFalse(explain.denies_tooth_cause(text))
+                self.assertFalse(explain.denies_tooth_finding(text))
+
+    def test_verdicts_are_still_caught(self):
+        for text in ("Your teeth are healthy.", "The lower teeth were fine.",
+                     "Your teeth look fine, so there is nothing to worry about.",
+                     "It is probably nothing to worry about."):
+            with self.subTest(text=text):
+                self.assertTrue(explain.denies_tooth_cause(text)
+                                or explain.denies_tooth_finding(text))
 
 
 class FakeKnowledge:
@@ -555,6 +622,25 @@ class CheckedTurn(unittest.TestCase):
             explain.chat = real
         self.assertIn('word for word: "Based on the image, there is an indication of tooth '
                       'decay on tooth 16 (upper right first molar)."', seen[-1])
+
+    def test_pure_retake_saying_the_other_teeth_are_fine_is_rewritten(self):
+        bad = ("The photos taken of your upper teeth were not clear enough to look at, but the "
+               "lower teeth were fine. Please retake the upper teeth photo.")
+        good = explain._retake_sentence(BAD_UPPER)
+        self.replies = [bad, good]
+        s = self.partial(PURE_RETAKE)
+        self.assertEqual(s.first_response(), good)
+
+    def test_follow_up_about_the_unusable_arch_is_rewritten(self):
+        first = GOOD_TEXT.replace("within 7 days", "within a few days") + " " + \
+            explain._retake_sentence(BAD_UPPER)
+        honest = ("The photo of your upper teeth could not be used, so a new photo or a dentist "
+                  "is needed to tell.")
+        self.replies = [first, "Nothing was visible on the biting surfaces in these photos.",
+                        honest]
+        s = self.partial(URGENT_RETAKE_16)
+        s.first_response()
+        self.assertEqual(s.ask("Is my upper jaw okay?"), honest)
 
     def test_assessment_passed_in_is_the_one_explained(self):
         self.replies = [GOOD_TEXT]

@@ -170,6 +170,7 @@ class ArchReassurance(unittest.TestCase):
                      "Pain can come from a tooth that looks fine in the photo.",
                      "However, the photos of your lower teeth were clear and showed 14 teeth.",
                      "Retake the photos so they show all your teeth and are clear and well-lit.",
+                     "Regular checkups are still the best way to make sure your teeth are healthy.",
                      "Nothing in these photos reached the level we report."):
             self.assertEqual(cf.arch_reassurance(text), [], text)
 

@@ -3,7 +3,7 @@ import json
 import sys
 from pathlib import Path
 
-TREE = Path(__file__).resolve().parents[1] / "tree20"
+TREE = Path(__file__).resolve().parents[1] / (sys.argv[1] if len(sys.argv) > 1 else "tree20")
 sys.path.insert(0, str(TREE / "src"))
 import interview  # noqa: E402
 
