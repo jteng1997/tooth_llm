@@ -3,7 +3,9 @@
 Two occlusal photos (upper + lower arch) in; a plain-language screening result
 out: which teeth were found, which may have a cavity, how soon to see a dentist,
 and why. Research prototype — **a screening aid, not a diagnosis**. Runs fully
-local on one Windows machine; nothing leaves it.
+local on one Windows machine; nothing leaves it. One exception (user,
+2026-09-23): P7 test-text checking calls the paid Gemini API with synthetic
+vignette text only — never patient data (`docs/decisions.md`).
 
 **Language: English only** for everything the project produces — the web app,
 all LLM interaction with users, prompts, knowledge, reports and docs. (The
@@ -82,6 +84,10 @@ prompts or `interview.py` / `explain.py` / `retrieval.py`: Tests 2 and 3.
 Report the numbers and sample sizes, not "tests pass".
 
 ## Where things stand
+
+**Resuming work? Start with `docs/plans/checkpoint-2026-09-24.md`** (branch
+`llm-triage-wave2`; held-out backup location, task states, resume order).
+System design: `docs/architecture.md`.
 
 Details and evidence in `docs/decisions.md`. In short: segmentation is reliable
 (median 12 teeth/photo on Mendeley); the caries detector is the weakest link

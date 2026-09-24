@@ -154,8 +154,11 @@ def evaluate(model: str = DEFAULT_MODEL, verbose: bool = True, protocol=None, ll
               f"{results['clicks_overwritten']}  (must be 0)")
         print("  per field: " + ", ".join(f"{f} {a:.0%}"
                                          for f, a in results["per_field_accuracy"].items()))
+        lo, hi = clopper_pearson(results["fields_right"], results["fields_scored"])
+        print(f"  field accuracy 95% CI (exact)  [{lo:.1%}, {hi:.1%}]")
         lt = results["location_and_triggers"]
-        print(f"  location + triggers {lt['right']}/{lt['total']}")
+        lo, hi = clopper_pearson(lt["right"], lt["total"])
+        print(f"  location + triggers {lt['right']}/{lt['total']}  95% CI (exact) [{lo:.1%}, {hi:.1%}]")
         a = results["ambiguous"]
         if a["n"]:
             print(f"  ambiguous dialogues (included above, also shown alone): exact {a['exact']}/{a['n']}, "
@@ -166,6 +169,36 @@ def evaluate(model: str = DEFAULT_MODEL, verbose: bool = True, protocol=None, ll
                   f"fields {r['fields_right']}/{r['fields_scored']}, guessed {r['guessed']}, "
                   f"missed {r['missed']}, English-only notice would show {r['english_notice']}/{r['n']}")
     return results
+
+
+def clopper_pearson(k: int, n: int, alpha: float = 0.05) -> tuple:
+    from scipy.stats import beta
+    if n == 0:
+        return (float("nan"), float("nan"))
+    lo = 0.0 if k == 0 else float(beta.ppf(alpha / 2, k, n - k + 1))
+    hi = 1.0 if k == n else float(beta.ppf(1 - alpha / 2, k + 1, n - k))
+    return lo, hi
+
+
+def configuration(model: str, dialogues: Path) -> dict:
+    """What this score was measured on, so a one-shot blind run is logged."""
+    import datetime
+    import hashlib
+    import subprocess
+
+    def sha(path):
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    try:
+        commit = subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
+                                capture_output=True, text=True, timeout=20).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        commit = None
+    return {"date": datetime.datetime.now().isoformat(timespec="seconds"), "model": model,
+            "dialogues": str(dialogues), "dialogues_sha256": sha(dialogues),
+            "interview_py_sha256": sha(REPO_ROOT / "src" / "interview.py"),
+            "system_symptoms_sha256": sha(REPO_ROOT / "llm" / "prompts" / "system_symptoms.md"),
+            "protocol_sha256": sha(REPO_ROOT / "llm" / "protocol" / "triage_protocol.yaml"),
+            "git_commit": commit}
 
 
 def invented_items(expected: dict, got: dict) -> dict:
@@ -209,6 +242,8 @@ def main():
                          "never show its per-case output to llm-dev)")
     args = ap.parse_args()
     results = evaluate(args.model, dialogues=Path(args.dialogues))
+    results["configuration"] = configuration(args.model, Path(args.dialogues))
+    print(f"  configuration: {json.dumps(results['configuration'])}")
     if args.json:
         Path(args.json).write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"wrote {args.json}")

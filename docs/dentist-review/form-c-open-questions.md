@@ -162,8 +162,10 @@ checklist:
 **What we would like you to decide:**
 - **Pus without pain.** We send every Yes on Q21 to "within 24 hours", with or
   without pain, following SDCEP's acute apical abscess advice. A painless
-  draining sinus may be a chronic abscess, which may not need 24 hours. Should
-  pus without pain be within 24 hours, within 7 days, or something else?
+  draining sinus may be a chronic abscess, which may not need 24 hours. The
+  project owner kept "within 24 hours" for now (2026-09-23), as deliberate
+  over-triage until you decide. Should pus without pain be within 24 hours,
+  within 7 days, or something else?
 - **Bad taste alone.** Q21 includes "a salty or bad-tasting fluid". Does that
   catch too many people with ordinary bad breath or trapped food, or is it
   worth keeping for the people it helps?

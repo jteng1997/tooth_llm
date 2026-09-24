@@ -184,6 +184,10 @@ Alongside, three sentences that must appear:
 - Synthetic patient words, written by a local model from my keys: phrasing is
   ours, not patients'. The P10 message set (§3.3 of the phase 1–2 plan) is the
   only real-phrasing check, and its flag mix is skewed.
+- The P7 text check (model B) ran on a hosted API model (user's decision
+  2026-09-23). Held-out vignette text was sent to that provider, and the
+  check may not be repeatable if the model changes. Its stored outputs and
+  recorded versions are the record.
 - No exclusions after scoring. The only pre-declared exclusion is RETAKE from
   level metrics.
 

@@ -89,8 +89,8 @@ their own words. Nothing here names a drug or a dose.
 | Q8 | yesno_checklist A | In the last few days, have you taken more pain relief than the packet says is safe? | |
 | Q9 | yesno_checklist A | Do you have any pain or discomfort in your teeth or gums at the moment? | |
 | Q19 | yesno_checklist A | Do you have a mouth ulcer, sore or lump that has lasted more than 3 weeks? | |
-| Q20 | yesno_checklist A | Do you have a filling, crown or tooth that has broken, chipped, come loose or come out, and has not been fixed yet? *(new in v0.2; wording awaiting the project owner's approval)* | |
-| Q21 | yesno_checklist A | Have you noticed pus, a pimple-like bump on the gum, or a salty or bad-tasting fluid coming from around a tooth? *(new in v0.2; wording awaiting the project owner's approval)* | |
+| Q20 | yesno_checklist A | Do you have a filling, crown or tooth that has broken, chipped, come loose or come out, and has not been fixed yet? | |
+| Q21 | yesno_checklist A | Have you noticed pus, a pimple-like bump on the gum, or a salty or bad-tasting fluid coming from around a tooth? | |
 | Q10 | chat | Have you taken any pain relief for it? If so, did it help? | |
 | Q11 | chat | How bad is the pain? Is it mild, moderate, or so bad that it stops you sleeping or eating? | |
 | Q12 | chat | What sets the pain off: cold, hot, sweet things, biting, or does it come on by itself? | |

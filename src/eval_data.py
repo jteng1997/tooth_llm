@@ -98,6 +98,62 @@ def generate(n: int, seed: int = 0) -> list:
     return cases
 
 
+CHECKLIST_A = ("difficulty_swallowing_or_breathing", "chest_pain_or_breathless", "swelling", "fever",
+               "systemically_unwell", "recent_trauma", "bleeding_uncontrolled",
+               "exceeded_pain_relief_dose", "persistent_ulcer", "broken_filling_or_tooth",
+               "pus_or_discharge")
+CHECKLIST_B = ("pain_lingers_over_30s", "pain_wakes_at_night", "pain_on_biting", "recent_extraction")
+LOCATIONS = ("upper_left", "upper_right", "lower_left", "lower_right", "front")
+FOLLOW_UPS = (
+    "What does this result mean for me?",
+    "Is this serious?",
+    "Why does my tooth hurt?",
+    "Which tooth is causing my pain?",
+    "What can I do until I see a dentist?",
+    "Could the photos have missed something?",
+    "What is a cavity?",
+    "Do I really need to go to a dentist?",
+)
+
+
+def _symptoms_v2(rng: random.Random) -> dict:
+    """A symptoms object in the shape the planned interview produces:
+    every checklist row answered, chat fields only with pain."""
+    s = {"schema_version": "1.2", **{f: False for f in CHECKLIST_A}, "pain_present": False,
+         **{f: None for f in CHECKLIST_B}, "pain_relief_effect": None, "pain_severity": None,
+         "pain_triggers": None, "location": None, "duration_days": None}
+    roll = rng.random()
+    if roll < 0.10:
+        s[rng.choice(CHECKLIST_A[:8])] = True          # a red flag: the floor decides
+        return s
+    if roll < 0.40:
+        return s                                        # no pain
+    s["pain_present"] = True
+    s.update({f: rng.random() < 0.25 for f in CHECKLIST_B})
+    s["pain_relief_effect"] = rng.choice(["helped", "not_helped", "not_tried", None])
+    s["pain_severity"] = rng.choice(["mild", "moderate", "severe", None])
+    s["pain_triggers"] = rng.choice([["cold"], ["sweet"], ["cold", "sweet"], ["biting"],
+                                     ["spontaneous"], ["unknown"], None])
+    # half the pain cases name where it hurts, so the allowed-side branch of
+    # explain.places_pain() is exercised as well as the no-location one
+    s["location"] = rng.choice(LOCATIONS) if rng.random() < 0.5 else None
+    s["duration_days"] = rng.choice([1, 3, 7, 14, 30, None])
+    return s
+
+
+def generate_v2(n: int, seed: int = 0) -> list:
+    """Cases for the triage-2.0 Test 2 mode: the same findings generator,
+    1.2 symptoms, and two follow-up questions per case. A separate stream
+    from generate(), so the legacy cases stay identical."""
+    base = generate(n, seed)
+    rng = random.Random(f"v2-{seed}")
+    for case in base:
+        case["symptoms"] = _symptoms_v2(rng)
+        case["follow_ups"] = rng.sample(FOLLOW_UPS, 2)
+        case["note"] = "synthetic v2"
+    return base
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=5)

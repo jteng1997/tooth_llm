@@ -4,10 +4,11 @@ Implements docs/plans/p7-vignette-text-spec.md and docs/plans/p7-generation-prom
 Held-out and e2e outputs go to labels/heldout/p7/ (ignored by version control) and must
 never be shown to llm-dev; dev outputs go to runs/p7/.
 
-    python src/p7_generate.py smoke                              # one call per model
+    python src/p7_generate.py smoke                              # the local generator
+    python src/p7_generate.py smoke-b                            # model B (Gemini API), 3 dev texts
     python src/p7_generate.py generate --file triage --dry-run --limit 3   # prompts only
     python src/p7_generate.py generate --file triage             # llama3.1:8b writes the text
-    python src/p7_generate.py extract --file triage              # gemma4:12b, blind
+    python src/p7_generate.py extract --file triage              # gemini-3.5-flash-lite (API), blind; run smoke-b first
     python src/p7_generate.py writeback --file triage            # accepted text -> key file
 
 One model loaded at a time: all generation first, then all extraction.
@@ -46,7 +47,13 @@ REWRITES = HELDOUT / "p7_fact_rewrites.json"
 OLLAMA = "http://localhost:11434/api/chat"
 
 GENERATOR = "llama3.1:8b"
-MODEL_B = "gemma4:12b"
+MODEL_B = "gemini-3.5-flash-lite"   # paid Gemini API (user decision 2026-09-23, task #16)
+MODEL_B_FALLBACK = "gemma3:12b"     # local, documented fallback if the API fails (research-pm)
+B_MODELS = {"gemini": MODEL_B, "ollama": MODEL_B_FALLBACK}
+SCHEMA_TRANSLATION = ("none: interview.evidence_schema() is sent unchanged (Gemini "
+                      "responseJsonSchema / Ollama format). The schema mode is decided once per "
+                      "run at smoke-b: enforced, or json_only with local validation if Gemini "
+                      "refuses the schema; never switched mid-run")
 SEED = 20260923
 TEMPERATURE = 0.8
 MAX_ATTEMPT = 4          # attempts 0..4, then the case goes to research-pm
@@ -370,6 +377,195 @@ def ollama(model: str, messages: list, schema: dict, temperature: float, seed: i
     return r.json()["message"] if full else r.json()["message"]["content"]
 
 
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+GEMINI_RETRY_STATUS = (429, 500, 502, 503, 504)
+GEMINI_RETRIES = 5
+
+
+def gemini_key() -> str:
+    """GEMINI_API_KEY from the environment or the repo's .env (gitignored).
+    Never printed, logged or written anywhere."""
+    import os
+    key = os.environ.get("GEMINI_API_KEY")
+    env = REPO_ROOT / ".env"
+    if not key and env.exists():
+        for line in env.read_text(encoding="utf-8").splitlines():
+            name, _, value = line.partition("=")
+            if name.strip() == "GEMINI_API_KEY":
+                key = value.strip().strip('"').strip("'")
+    if not key:
+        raise SystemExit("GEMINI_API_KEY is not set (environment or .env); the user adds it")
+    return key
+
+
+def _redact(text: str, key: str) -> str:
+    return (text or "").replace(key, "<redacted>") if key else (text or "")
+
+
+def _gemini_contents(messages: list) -> tuple:
+    """(systemInstruction text, contents) from chat messages; consecutive
+    turns of one role are merged, since Gemini expects user/model turns."""
+    system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
+    contents = []
+    for m in messages:
+        if m["role"] == "system":
+            continue
+        role = "model" if m["role"] == "assistant" else "user"
+        if contents and contents[-1]["role"] == role:
+            contents[-1]["parts"].append({"text": m["content"]})
+        else:
+            contents.append({"role": role, "parts": [{"text": m["content"]}]})
+    return system, contents
+
+
+class SchemaRefused(RuntimeError):
+    """Gemini refused the response schema. Never fallen through per call: the
+    schema mode is decided once per run, at the smoke test."""
+
+
+def gemini(messages: list, schema: dict, model: str = None, temperature: float = 0.0,
+           post=None, sleep=None, key: str = None, schema_mode: str = "enforced") -> tuple:
+    """One Gemini call with retry and backoff. Returns (reply text, call record);
+    the record holds the requested model id, the response modelVersion and the
+    date, never the key. schema_mode 'enforced' sends the schema and raises
+    SchemaRefused if the API refuses it; 'json_only' sends JSON mode alone
+    (the reply is validated locally either way)."""
+    import time
+    model = model or MODEL_B
+    post = post or requests.post
+    sleep = sleep or time.sleep
+    key = key or gemini_key()
+    system, contents = _gemini_contents(messages)
+    config = {"temperature": temperature, "responseMimeType": "application/json"}
+    if schema_mode == "enforced":
+        config["responseJsonSchema"] = schema
+    body = {"contents": contents, "generationConfig": config}
+    if system:
+        body["systemInstruction"] = {"parts": [{"text": system}]}
+    record = {"requested_model": model, "date": datetime.datetime.now().isoformat(timespec="seconds"),
+              "temperature": temperature, "schema_mode": schema_mode}
+    last = None
+    for attempt in range(GEMINI_RETRIES + 1):
+        try:
+            r = post(GEMINI_URL.format(model=model), json=body, timeout=120,
+                     headers={"x-goog-api-key": key, "Content-Type": "application/json"})
+        except requests.RequestException as exc:
+            last = f"{type(exc).__name__}"
+            sleep(min(60, 2 ** attempt))
+            continue
+        if r.status_code == 200:
+            data = r.json()
+            candidate = (data.get("candidates") or [{}])[0]
+            parts = (candidate.get("content") or {}).get("parts") or []
+            record.update(model_version=data.get("modelVersion"), attempts=attempt + 1,
+                          finish_reason=candidate.get("finishReason"),
+                          thought_parts=sum(bool(p.get("thought")) for p in parts),
+                          usage=data.get("usageMetadata"), raw_response=data)
+            return "".join(p.get("text", "") for p in parts if not p.get("thought")), record
+        text = _redact(r.text[:300], key)
+        if r.status_code == 400 and schema_mode == "enforced" and "schema" in text.lower():
+            raise SchemaRefused(f"gemini refused the response schema: {text}")
+        if r.status_code in GEMINI_RETRY_STATUS:
+            last = f"HTTP {r.status_code}"
+            sleep(min(60, 2 ** attempt))
+            continue
+        raise RuntimeError(f"gemini {r.status_code}: {text}")
+    raise RuntimeError(f"gemini: gave up after {GEMINI_RETRIES + 1} attempts ({last})")
+
+
+def b_extract(messages: list, schema: dict, post=None, sleep=None, key=None,
+              backend: str = "gemini", local=None, schema_mode: str = "enforced") -> tuple:
+    """Model B's reply as a dict validated against the schema, plus the call
+    record (model, version, date, settings, raw response). backend 'ollama'
+    is the local fallback, with the thinking check."""
+    if backend == "gemini":
+        text, record = gemini(messages, schema, post=post, sleep=sleep, key=key,
+                              schema_mode=schema_mode)
+    else:
+        call = local or (lambda m, s: ollama(MODEL_B_FALLBACK, m, s, 0.0, SEED,
+                                             sends_think(MODEL_B_FALLBACK), full=True))
+        message = call(messages, schema)
+        text = message.get("content") or ""
+        record = {"requested_model": MODEL_B_FALLBACK, "model_version": MODEL_B_FALLBACK,
+                  "date": datetime.datetime.now().isoformat(timespec="seconds"),
+                  "temperature": 0.0, "schema_mode": "enforced", "raw_response": message,
+                  "thinking_off": thinking_off(message)}
+        if not record["thinking_off"]:
+            record.update(valid=False, invalid_reason="reasoning text in the reply")
+            return {}, record
+    try:
+        raw = json.loads(text)
+        jsonschema.validate(raw, schema)
+        record["valid"] = True
+    except (json.JSONDecodeError, jsonschema.ValidationError) as exc:
+        raw, record["valid"] = {}, False
+        record["invalid_reason"] = str(exc)[:200]
+    record["parsed"] = raw
+    return raw, record
+
+
+SMOKE_B_CASES = 3
+
+
+def smoke_b(post=None, sleep=None, key=None) -> int:
+    """Model B on 3 dev texts, before any extraction (task #16). Passes only if
+    every call returns schema-valid JSON, finishes normally, carries a
+    modelVersion, and returns no thought parts. Dev texts only: the P7 dev
+    text if generated, else the dev key's facts (patient voice)."""
+    import interview
+    import protocol as protocol_mod
+    protocol = protocol_mod.load(allow_unreviewed=True)
+    keys = json.loads(KEY_FILES["dev"].read_text(encoding="utf-8"))["keys"]
+    gen_path = out_dir("dev") / "generated_dev.json"
+    gen = json.loads(gen_path.read_text(encoding="utf-8"))["cases"] if gen_path.exists() else {}
+    reached = [k for k in keys if reached_chat(k["symptoms"])][:SMOKE_B_CASES]
+    chat_q = [q for q in protocol.questions if q.input == "chat"]
+    fields = [f for q in chat_q for f in q.fields]
+    schema = interview.evidence_schema(fields)
+    mode = "enforced"
+    first_text = (gen.get(reached[0]["id"]) or {}).get("text") or " ".join(reached[0]["facts"])
+    try:
+        b_extract(transcript("triage", {"patient_words": first_text}, protocol)[0], schema,
+                  post=post, sleep=sleep, key=key, schema_mode="enforced")
+    except SchemaRefused as exc:
+        mode = "json_only"
+        print(f"schema mode for this run: json_only ({exc}); every call validates locally")
+    calls, ok = [], True
+    for k in reached:
+        text = (gen.get(k["id"]) or {}).get("text") or " ".join(k["facts"])
+        messages, _ = transcript("triage", {"patient_words": text}, protocol)
+        raw, record = b_extract(messages, schema, post=post, sleep=sleep, key=key, schema_mode=mode)
+        passed = (record["valid"] and record.get("model_version")
+                  and record.get("finish_reason") == "STOP" and not record.get("thought_parts"))
+        ok &= bool(passed)
+        calls.append({"id": k["id"], "source": "p7" if gen.get(k["id"]) else "facts",
+                      "passed": bool(passed), "record": record,
+                      "values": {f: (raw.get(f) or {}).get("value") for f in fields}})
+        print(f"{k['id']}: {'pass' if passed else 'FAIL'}; model {record['requested_model']}, "
+              f"version {record.get('model_version')}, finish {record.get('finish_reason')}, "
+              f"schema mode {record['schema_mode']}, thought parts {record.get('thought_parts')}")
+    OUT.mkdir(parents=True, exist_ok=True)
+    (OUT / "smoke_b.json").write_text(json.dumps({"model": MODEL_B, "passed": ok, "schema_mode": mode,
+                                                  "calls": calls}, indent=1), encoding="utf-8")
+    print(f"model B smoke test: {'PASSED' if ok else 'FAILED'} on {len(calls)} dev texts; "
+          f"schema mode for runs: {mode}")
+    return 0 if ok else 1
+
+
+def smoke_b_passed() -> bool:
+    return smoke_b_mode() is not None
+
+
+def smoke_b_mode():
+    """The schema mode the passed smoke test established, or None."""
+    path = OUT / "smoke_b.json"
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    ok = bool(data.get("passed")) and data.get("model") == MODEL_B
+    return data.get("schema_mode", "enforced") if ok else None
+
+
 def thinking_off(message: dict) -> bool:
     """No reasoning anywhere: no thinking field, and the content is the JSON
     object alone, with no text before or after it."""
@@ -394,10 +590,13 @@ def sends_think(model: str) -> bool:
     return entry["send_think_false"]
 
 
-def smoke() -> int:
+def smoke(models=(GENERATOR,)) -> int:
+    """Local models only (the generator, and the B fallback with --fallback);
+    model B on the API has its own smoke test, smoke-b."""
     OUT.mkdir(parents=True, exist_ok=True)
-    result = {}
-    for model in (GENERATOR, MODEL_B):
+    path = OUT / "smoke.json"
+    result = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    for model in models:
         msgs = [{"role": "user", "content": 'Reply as JSON: {"ok": true}'}]
         schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
         entry = {"date": datetime.datetime.now().isoformat(timespec="seconds")}
@@ -420,8 +619,8 @@ def smoke() -> int:
               f"{'accepted' if entry['send_think_false'] else 'REJECTED, key dropped in this harness'}; "
               f"thinking {'off' if entry['thinking_off'] else 'NOT OFF: stop and tell research-pm'}; "
               f"reply {entry['reply']!r}")
-    (OUT / "smoke.json").write_text(json.dumps(result, indent=1), encoding="utf-8")
-    return 0 if all(e.get("thinking_off") for e in result.values()) else 1
+    path.write_text(json.dumps(result, indent=1), encoding="utf-8")
+    return 0 if all(result.get(m, {}).get("thinking_off") for m in models) else 1
 
 
 # --- Generation -----------------------------------------------------------------------
@@ -642,7 +841,7 @@ def disagreement(field: str, key_value, b_value, schema: dict):
     return None if key_value == b_value else "different value"
 
 
-def extract(kind: str) -> int:
+def extract(kind: str, backend: str = "gemini") -> int:
     import interview
     keys, _, protocol, _ = _load(kind)
     by_id = {k["id"]: k for k in keys}
@@ -659,21 +858,38 @@ def extract(kind: str) -> int:
     schema = interview.evidence_schema(fields)
     path = out_dir(kind) / f"extracted_{kind}.json"
     prompt_hash = b_prompt_hash(fields)
+    model = B_MODELS[backend]
+    if backend == "gemini" and not smoke_b_passed():
+        print(f"REFUSED: the model B smoke test ({MODEL_B}) has not passed; run `smoke-b` first")
+        return 1
+    if backend == "ollama":
+        sends_think(MODEL_B_FALLBACK)   # refuses unless `smoke --fallback` showed thinking off
+    mode = smoke_b_mode() if backend == "gemini" else "enforced"
     out = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {
-        "model": MODEL_B, "temperature": 0.0, "seed": SEED, "think_sent": sends_think(MODEL_B),
+        "model": model, "backend": backend, "temperature": 0.0, "schema_mode": mode,
+        "schema_translation": SCHEMA_TRANSLATION,
         "prompt_sha256": prompt_hash, "interview_py_sha256": _sha(REPO_ROOT / "src" / "interview.py"),
         "fields": fields, "cases": {}}
+    if out["model"] != model:
+        print(f"REFUSED: {path.name} already holds {out['model']} output; one set is never mixed "
+              f"across models. Move that file aside and re-run the whole set on {model}.")
+        return 1
     if out["prompt_sha256"] != prompt_hash:
         raise SystemExit("the production extraction prompt changed mid-run; start a new run")
+    if out.get("schema_mode", "enforced") != mode:
+        print(f"REFUSED: {path.name} was run with schema mode {out.get('schema_mode')}, the smoke "
+              f"test now says {mode}; one set never mixes the two. Tell research-pm.")
+        return 1
+
     def check(key, reply):
         messages, replies = transcript(template(kind), reply, protocol)
-        raw = json.loads(ollama(MODEL_B, messages, schema, 0.0, SEED, out["think_sent"]))
-        b = verified(raw, fields, replies, asked_for)
-        return {f: {"key": key["symptoms"].get(f), "b": b[f],
-                    "b_raw": (raw.get(f) or {}).get("value"), "quote": (raw.get(f) or {}).get("quote"),
-                    "disagreement": disagreement(f, key["symptoms"].get(f), b[f],
-                                                 interview.SCHEMA["properties"][f])}
-                for f in fields}
+        try:
+            _, record = b_extract(messages, schema, backend=backend, schema_mode=mode)
+        except SchemaRefused as exc:
+            _save(path, out)
+            raise SystemExit(f"STOPPED: an enforced-schema call was refused mid-run ({exc}). "
+                             "Nothing falls through; tell research-pm.")
+        return score_b(key, record, replies, fields, asked_for), record
 
     for n, cid in enumerate(gen["order"], 1):
         key = by_id[cid]
@@ -683,9 +899,12 @@ def extract(kind: str) -> int:
             out["cases"][cid] = {"reached_chat": False}
             continue
         case = gen["cases"][cid]
-        entry = {"reached_chat": True, "fields": check(key, case["reply"])}
+        rows, record = check(key, case["reply"])
+        entry = {"reached_chat": True, "fields": rows, "b_call": record}
         if case.get("paraphrases"):
-            entry["paraphrases"] = [check(key, p["reply"]) for p in case["paraphrases"]]
+            checked = [check(key, p["reply"]) for p in case["paraphrases"]]
+            entry["paraphrases"] = [r for r, _ in checked]
+            entry["paraphrase_calls"] = [c for _, c in checked]
         out["cases"][cid] = entry
         _save(path, out)
         bad = [f for f, r in entry["fields"].items() if r["disagreement"]]
@@ -693,6 +912,46 @@ def extract(kind: str) -> int:
         print(f"{n:3d}/{len(gen['order'])} {cid} " + (f"disagree {bad}" if bad else "agree")
               + (f"; paraphrases disagree {bad_p}" if bad_p else ""))
     _save(path, out)
+    return report_extraction(out)
+
+
+def score_b(key: dict, record: dict, replies: list, fields: list, asked_for: dict) -> dict:
+    """§6 rows for one B call, computed from the stored parsed reply only."""
+    import interview
+    raw = record.get("parsed") or {}
+    b = verified(raw, fields, replies, asked_for)
+    return {f: {"key": key["symptoms"].get(f), "b": b[f],
+                "b_raw": (raw.get(f) or {}).get("value"), "quote": (raw.get(f) or {}).get("quote"),
+                "disagreement": ("B reply invalid" if not record.get("valid") else
+                                 disagreement(f, key["symptoms"].get(f), b[f],
+                                              interview.SCHEMA["properties"][f]))}
+            for f in fields}
+
+
+def rescore(kind: str) -> int:
+    """§6 recomputed from the stored B responses, with no model call."""
+    keys, _, protocol, _ = _load(kind)
+    by_id = {k["id"]: k for k in keys}
+    gen = json.loads((out_dir(kind) / f"generated_{kind}.json").read_text(encoding="utf-8"))
+    path = out_dir(kind) / f"extracted_{kind}.json"
+    out = json.loads(path.read_text(encoding="utf-8"))
+    chat_q = [q for q in protocol.questions if q.input == "chat"]
+    fields = [f for q in chat_q for f in q.fields]
+    asked_for = {f: q.id for q in chat_q for f in q.fields}
+    changed = 0
+    for cid, entry in out["cases"].items():
+        if not entry.get("reached_chat"):
+            continue
+        case = gen["cases"][cid]
+        _, replies = transcript(template(kind), case["reply"], protocol)
+        rows = score_b(by_id[cid], entry["b_call"], replies, fields, asked_for)
+        changed += rows != entry["fields"]
+        entry["fields"] = rows
+        for i, (p, call) in enumerate(zip(case.get("paraphrases", []), entry.get("paraphrase_calls", []))):
+            _, preplies = transcript(template(kind), p["reply"], protocol)
+            entry["paraphrases"][i] = score_b(by_id[cid], call, preplies, fields, asked_for)
+    _save(path, out)
+    print(f"rescored {path.name} from stored responses; {changed} cases changed")
     return report_extraction(out)
 
 
@@ -748,17 +1007,26 @@ def writeback(kind: str) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("command", choices=["smoke", "generate", "extract", "writeback", "report"])
+    ap.add_argument("command", choices=["smoke", "smoke-b", "generate", "extract", "rescore",
+                                        "writeback", "report"])
+    ap.add_argument("--b-backend", choices=sorted(B_MODELS), default="gemini",
+                    help="model B: the Gemini API, or the local gemma3:12b fallback (log a switch; "
+                         "never mix the two within one set)")
+    ap.add_argument("--fallback", action="store_true", help="smoke: also test the local B fallback")
     ap.add_argument("--file", choices=sorted(KEY_FILES), default="triage")
     ap.add_argument("--dry-run", action="store_true", help="print the prompts, call no model")
     ap.add_argument("--limit", type=int)
     args = ap.parse_args()
     if args.command == "smoke":
-        return smoke()
+        return smoke((GENERATOR, MODEL_B_FALLBACK) if args.fallback else (GENERATOR,))
+    if args.command == "rescore":
+        return rescore(args.file)
+    if args.command == "smoke-b":
+        return smoke_b()
     if args.command == "generate":
         return generate(args.file, args.dry_run, args.limit)
     if args.command == "extract":
-        return extract(args.file)
+        return extract(args.file, args.b_backend)
     if args.command == "writeback":
         return writeback(args.file)
     gen = out_dir(args.file) / f"generated_{args.file}.json"

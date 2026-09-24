@@ -214,8 +214,211 @@ class ThinkingOff(unittest.TestCase):
         self.assertFalse(p7.thinking_off({"content": '<think>hm</think>{"ok": true}'}))
         self.assertFalse(p7.thinking_off({"content": '{"ok": true} and more'}))
 
-    def test_model_b_is_gemma4(self):
-        self.assertEqual((p7.GENERATOR, p7.MODEL_B), ("llama3.1:8b", "gemma4:12b"))
+    def test_models(self):
+        self.assertEqual((p7.GENERATOR, p7.MODEL_B), ("llama3.1:8b", "gemini-3.5-flash-lite"))
+
+
+class FakeResponse:
+    def __init__(self, status, payload=None, text=""):
+        self.status_code, self._payload, self.text = status, payload, text
+
+    def json(self):
+        return self._payload
+
+
+def ok_payload(text, version="gemini-3.5-flash-lite-001", finish="STOP", thought=False):
+    parts = ([{"text": "thinking...", "thought": True}] if thought else []) + [{"text": text}]
+    return {"candidates": [{"content": {"parts": parts}, "finishReason": finish}],
+            "modelVersion": version, "usageMetadata": {"totalTokenCount": 10}}
+
+
+class Gemini(unittest.TestCase):
+    KEY = "AIza-TEST-KEY-123"
+    SCHEMA = {"type": "object", "required": ["location"],
+              "properties": {"location": {"type": "object", "required": ["value", "quote"],
+                                          "properties": {"value": {"type": ["string", "null"]},
+                                                         "quote": {"type": ["string", "null"]}}}}}
+    MSGS = [{"role": "system", "content": "sys"}, {"role": "user", "content": "It hurts."},
+            {"role": "user", "content": "Fill in the symptoms."}]
+
+    def post_seq(self, responses):
+        sent = []
+
+        def post(url, json=None, timeout=None, headers=None):
+            sent.append({"url": url, "json": json, "headers": headers})
+            r = responses.pop(0)
+            if isinstance(r, Exception):
+                raise r
+            return r
+        return post, sent
+
+    def test_request_shape_and_record(self):
+        post, sent = self.post_seq([FakeResponse(200, ok_payload('{"location": {"value": null, "quote": null}}'))])
+        text, rec = p7.gemini(self.MSGS, self.SCHEMA, post=post, sleep=lambda s: None, key=self.KEY)
+        body = sent[0]["json"]
+        self.assertIn("gemini-3.5-flash-lite:generateContent", sent[0]["url"])
+        self.assertEqual(sent[0]["headers"]["x-goog-api-key"], self.KEY)
+        self.assertNotIn(self.KEY, sent[0]["url"])                       # key never in the URL
+        self.assertEqual(body["generationConfig"]["temperature"], 0.0)
+        self.assertEqual(body["generationConfig"]["responseMimeType"], "application/json")
+        self.assertEqual(body["systemInstruction"]["parts"][0]["text"], "sys")
+        self.assertEqual(len(body["contents"]), 1)                        # two user turns merged
+        self.assertEqual(len(body["contents"][0]["parts"]), 2)
+        self.assertEqual((rec["requested_model"], rec["model_version"], rec["attempts"]),
+                         ("gemini-3.5-flash-lite", "gemini-3.5-flash-lite-001", 1))
+        self.assertIn("date", rec)
+        self.assertNotIn(self.KEY, json.dumps(rec))
+
+    def test_retries_with_backoff_then_succeeds(self):
+        waits = []
+        post, _ = self.post_seq([FakeResponse(429, text="rate"), FakeResponse(503, text="busy"),
+                                 FakeResponse(200, ok_payload("{}"))])
+        _, rec = p7.gemini(self.MSGS, self.SCHEMA, post=post, sleep=waits.append, key=self.KEY)
+        self.assertEqual((rec["attempts"], waits), (3, [1, 2]))
+
+    def test_gives_up_and_redacts_the_key(self):
+        post, _ = self.post_seq([FakeResponse(403, text=f"bad key {self.KEY}")])
+        with self.assertRaises(RuntimeError) as ctx:
+            p7.gemini(self.MSGS, self.SCHEMA, post=post, sleep=lambda s: None, key=self.KEY)
+        self.assertNotIn(self.KEY, str(ctx.exception))
+        post, _ = self.post_seq([FakeResponse(500)] * (p7.GEMINI_RETRIES + 1))
+        with self.assertRaises(RuntimeError):
+            p7.gemini(self.MSGS, self.SCHEMA, post=post, sleep=lambda s: None, key=self.KEY)
+
+    def test_schema_refused_in_enforced_mode_stops_never_falls_through(self):
+        post, sent = self.post_seq([FakeResponse(400, text="Invalid responseJsonSchema")])
+        with self.assertRaises(p7.SchemaRefused):
+            p7.b_extract(self.MSGS, self.SCHEMA, post=post, sleep=lambda s: None, key=self.KEY)
+        self.assertEqual(len(sent), 1)                                    # no second, schema-less call
+
+    def test_json_only_mode_sends_no_schema_and_validates_locally(self):
+        post, sent = self.post_seq([FakeResponse(200, ok_payload('{"location": {"value": null, "quote": null}}'))])
+        raw, rec = p7.b_extract(self.MSGS, self.SCHEMA, post=post, sleep=lambda s: None, key=self.KEY,
+                                schema_mode="json_only")
+        self.assertNotIn("responseJsonSchema", sent[0]["json"]["generationConfig"])
+        self.assertEqual((rec["schema_mode"], rec["valid"]), ("json_only", True))
+
+    def test_smoke_decides_the_mode_once_for_the_run(self):
+        import tempfile
+        fields = ["pain_relief_effect", "pain_severity", "pain_triggers", "location", "duration_days"]
+        good = json.dumps({**{f: {"value": None, "quote": None} for f in fields},
+                           "notes": {"value": None, "quote": None}})
+        sent = []
+
+        def post(url, json=None, timeout=None, headers=None):
+            sent.append(json)
+            if "responseJsonSchema" in json["generationConfig"]:
+                return FakeResponse(400, text="responseJsonSchema: unsupported schema")
+            return FakeResponse(200, ok_payload(good))
+        original = p7.OUT
+        with tempfile.TemporaryDirectory() as d:
+            p7.OUT = Path(d)
+            try:
+                self.assertEqual(p7.smoke_b(post=post, sleep=lambda s: None, key=self.KEY), 0)
+                self.assertEqual(p7.smoke_b_mode(), "json_only")
+            finally:
+                p7.OUT = original
+        self.assertEqual(sum("responseJsonSchema" in b["generationConfig"] for b in sent), 1)
+
+    def test_invalid_reply_is_marked_not_parsed_around(self):
+        post, _ = self.post_seq([FakeResponse(200, ok_payload('Sure! {"location": 1}'))])
+        raw, rec = p7.b_extract(self.MSGS, self.SCHEMA, post=post, sleep=lambda s: None, key=self.KEY)
+        self.assertEqual((raw, rec["valid"]), ({}, False))
+
+    def test_thought_parts_are_counted_not_returned(self):
+        post, _ = self.post_seq([FakeResponse(200, ok_payload("{}", thought=True))])
+        text, rec = p7.gemini(self.MSGS, self.SCHEMA, post=post, sleep=lambda s: None, key=self.KEY)
+        self.assertEqual((text, rec["thought_parts"]), ("{}", 1))
+
+    def smoke_with(self, payload):
+        import tempfile
+        import interview
+        fields = ["pain_relief_effect", "pain_severity", "pain_triggers", "location", "duration_days"]
+        good = json.dumps({**{f: {"value": None, "quote": None} for f in fields},
+                           "notes": {"value": None, "quote": None}})
+        assert interview  # the schema comes from the production module
+        original = p7.OUT
+        with tempfile.TemporaryDirectory() as d:
+            p7.OUT = Path(d)
+            try:
+                post = lambda *a, **kw: FakeResponse(200, payload(good))  # noqa: E731
+                code = p7.smoke_b(post=post, sleep=lambda s: None, key=self.KEY)
+                saved = (Path(d) / "smoke_b.json").read_text(encoding="utf-8")
+                passed = p7.smoke_b_passed()
+            finally:
+                p7.OUT = original
+        self.assertNotIn(self.KEY, saved)
+        return code, passed
+
+    def test_smoke_b_passes_on_clean_replies(self):
+        self.assertEqual(self.smoke_with(lambda t: ok_payload(t)), (0, True))
+
+    def test_smoke_b_fails_on_each_problem(self):
+        for label, payload in (("truncated", lambda t: ok_payload(t, finish="MAX_TOKENS")),
+                               ("thinking", lambda t: ok_payload(t, thought=True)),
+                               ("no version", lambda t: ok_payload(t, version=None)),
+                               ("not json", lambda t: ok_payload("Here you go: " + t))):
+            with self.subTest(label):
+                self.assertEqual(self.smoke_with(payload), (1, False))
+
+    def test_raw_response_is_stored(self):
+        post, _ = self.post_seq([FakeResponse(200, ok_payload('{"location": {"value": null, "quote": null}}'))])
+        raw, rec = p7.b_extract(self.MSGS, self.SCHEMA, post=post, sleep=lambda s: None, key=self.KEY)
+        self.assertEqual(rec["raw_response"]["modelVersion"], "gemini-3.5-flash-lite-001")
+        self.assertEqual(rec["parsed"], raw)
+
+    def test_local_fallback_backend(self):
+        good = lambda m, s: {"content": '{"location": {"value": null, "quote": null}}'}  # noqa: E731
+        raw, rec = p7.b_extract(self.MSGS, self.SCHEMA, backend="ollama", local=good)
+        self.assertEqual((rec["requested_model"], rec["valid"]), ("gemma3:12b", True))
+        thinking = lambda m, s: {"content": '{"location": {"value": null, "quote": null}}',  # noqa: E731
+                                 "thinking": "let me think"}
+        raw, rec = p7.b_extract(self.MSGS, self.SCHEMA, backend="ollama", local=thinking)
+        self.assertEqual((raw, rec["valid"]), ({}, False))
+
+    def test_scores_come_from_the_stored_reply(self):
+        key = {"symptoms": {"location": "lower_left"}}
+        record = {"valid": True, "parsed": {"location": {"value": "lower_left", "quote": "lower left"}}}
+        rows = p7.score_b(key, record, [(None, "It is my lower left tooth")], ["location"], {})
+        self.assertIsNone(rows["location"]["disagreement"])
+        rows = p7.score_b(key, {**record, "valid": False}, [(None, "x")], ["location"], {})
+        self.assertEqual(rows["location"]["disagreement"], "B reply invalid")
+
+    def test_never_mixes_models_in_one_set(self):
+        import tempfile
+        original_out, original_passed = p7.out_dir, p7.smoke_b_passed
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "generated_dev.json").write_text(json.dumps(
+                {"order": [], "cases": {}}), encoding="utf-8")
+            (Path(d) / "extracted_dev.json").write_text(json.dumps(
+                {"model": "gemma3:12b", "prompt_sha256": "x", "fields": [], "cases": {}}), encoding="utf-8")
+            p7.out_dir = lambda kind: Path(d)
+            p7.smoke_b_passed = lambda: True
+            keys_before = p7.KEY_FILES["dev"]
+            try:
+                n_keys = len(json.loads(keys_before.read_text(encoding="utf-8"))["keys"])
+                gen = {"order": [], "cases": {f"k{i}": {"status": "accepted"} for i in range(n_keys)}}
+                (Path(d) / "generated_dev.json").write_text(json.dumps(gen), encoding="utf-8")
+                import contextlib
+                import io
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    code = p7.extract("dev", backend="gemini")
+                self.assertEqual(code, 1)
+                self.assertIn("never mixed", buf.getvalue())
+            finally:
+                p7.out_dir, p7.smoke_b_passed = original_out, original_passed
+
+    def test_key_from_env_file_only_when_not_in_environment(self):
+        import os
+        old = os.environ.pop("GEMINI_API_KEY", None)
+        try:
+            os.environ["GEMINI_API_KEY"] = "from-env"
+            self.assertEqual(p7.gemini_key(), "from-env")
+        finally:
+            os.environ.pop("GEMINI_API_KEY", None)
+            if old is not None:
+                os.environ["GEMINI_API_KEY"] = old
 
 
 class Order(unittest.TestCase):

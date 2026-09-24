@@ -3,6 +3,12 @@
     python src/check_faithfulness.py                      # 8 seed cases
     python src/check_faithfulness.py --synthetic 200      # generated cases
     python src/check_faithfulness.py --model qwen3:4b --json out.json
+    python src/check_faithfulness.py --synthetic 60 --mode both   # headline + legacy line
+
+Modes: triage (default, the headline) explains the triage.py 2.0 assessment
+the way the web app does, then asks each synthetic case two follow-up
+questions; legacy explains the rules.py 1.0 assessment (Explanation() with no
+assessment), the path Test 2 measured until 2026-09-23.
 
 Three rates, as the eval spec asks:
 
@@ -27,7 +33,7 @@ import re
 from pathlib import Path
 
 import explain
-from eval_data import generate
+from eval_data import generate, generate_v2
 from explain import Explanation, fdi_label
 from retrieval import Knowledge
 
@@ -90,11 +96,15 @@ def misstated(text: str, findings: dict) -> list:
     return sorted(set(bad))
 
 
+def discourages(text: str) -> str:
+    lowered = (text or "").lower()
+    return next((phrase for phrase in DISCOURAGE if phrase in lowered), "")
+
+
 def contradiction(text: str, urgency: str) -> str:
     lowered = text.lower()
-    for phrase in DISCOURAGE:
-        if phrase in lowered:
-            return f"discourages care: {phrase!r}"
+    if discourages(text):
+        return f"discourages care: {discourages(text)!r}"
     if not any(marker in lowered for marker in URGENCY_MARKERS[urgency]):
         return f"never states {urgency}"
     return ""
@@ -112,29 +122,81 @@ def _recording_chat(log: list):
     return original, chat
 
 
-def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbose: bool = True) -> dict:
+PLACES_PAIN = "says where the patient's pain is"
+ECHO = "repeats the first response"
+
+
+def _turn_log(entries: list) -> dict:
+    """Guardrail bookkeeping for one turn: retried, fell back to the fixed
+    text, and which rules fired. An echo retry never forces the fallback."""
+    return {"retried": bool(entries),
+            "fallback": any(e["after_retry"] and e["first"] != [ECHO] for e in entries),
+            "places_pain": any(p.startswith(PLACES_PAIN) for e in entries for p in e["first"]),
+            "echo_retry": any(e["first"] == [ECHO] for e in entries),
+            "entries": entries}
+
+
+def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbose: bool = True,
+             mode: str = "triage", triage_llm=None) -> dict:
+    """mode 'triage': explain the triage.py 2.0 assessment, as the web app
+    does (the headline). mode 'legacy': Explanation() without an assessment,
+    which explains rules.py 1.0 (the old Test 2 path).
+    triage_llm: a stub for triage's model call, for tests."""
+    import triage
     knowledge = knowledge or Knowledge()
-    results = {"hallucination": 0, "omission": 0, "contradiction": 0, "misstated": 0,
+    results = {"mode": mode, "hallucination": 0, "omission": 0, "contradiction": 0, "misstated": 0,
                "n": len(cases), "cases": [],
-               "guardrail_retry": 0, "guardrail_fallback": 0}
+               "guardrail_retry": 0, "guardrail_fallback": 0, "places_pain": 0,
+               "follow_up": {"n": 0, "hallucination": 0, "discourages": 0, "misstated": 0,
+                             "echo": 0, "echo_retry": 0, "guardrail_retry": 0,
+                             "guardrail_fallback": 0, "places_pain": 0}}
 
     for case in cases:
         kwargs = {"allow_unreviewed": True, "knowledge": knowledge}
         if model:
             kwargs["model"] = model
+        if mode == "triage":
+            tkw = {"allow_unreviewed": True, **({"model": model} if model else {}),
+                   **({"llm": triage_llm} if triage_llm else {})}
+            kwargs["assessment"] = triage.assess(case["findings"], copy.deepcopy(case.get("symptoms")),
+                                                 [], **tkw)
         session = Explanation(case["findings"], case.get("symptoms"), **kwargs)
         replies = []
         original, recording = _recording_chat(replies)
         explain.chat = recording
+        follow_ups = []
         try:
             text = session.first_response()
+            first_log = _turn_log(list(session.guardrail_log))
+            if mode == "triage":
+                for question in case.get("follow_ups", []):
+                    before = len(session.guardrail_log)
+                    reply = session.ask(question)
+                    turn = _turn_log(session.guardrail_log[before:])
+                    follow_ups.append({"question": question, "reply": reply, **turn,
+                                       "echo": explain.echoes(reply, text),
+                                       "hallucinated": sorted(mentioned_teeth(reply)
+                                                              - set(case["findings"].get("teeth", {}))),
+                                       "discourages": discourages(reply),
+                                       "misstated": misstated(reply, case["findings"])})
         finally:
             explain.chat = original
         assessed = session.assessment
-        retried = bool(session.guardrail_log)
-        fell_back = any(entry["after_retry"] for entry in session.guardrail_log)
+        retried, fell_back = first_log["retried"], first_log["fallback"]
         results["guardrail_retry"] += retried
         results["guardrail_fallback"] += fell_back
+        results["places_pain"] += first_log["places_pain"]
+        fu = results["follow_up"]
+        for f in follow_ups:
+            fu["n"] += 1
+            fu["hallucination"] += bool(f["hallucinated"])
+            fu["discourages"] += bool(f["discourages"])
+            fu["misstated"] += bool(f["misstated"])
+            fu["echo"] += f["echo"]
+            fu["echo_retry"] += f["echo_retry"]
+            fu["guardrail_retry"] += f["retried"] and not f["echo_retry"]
+            fu["guardrail_fallback"] += f["fallback"]
+            fu["places_pain"] += f["places_pain"]
 
         allowed = set(case["findings"].get("teeth", {}))
         flagged = set(assessed["flagged_teeth"])
@@ -157,7 +219,8 @@ def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbos
             "hallucinated": sorted(extra), "omitted": sorted(missing), "contradiction": contra,
             "misstated": wrong_finding,
             "location": (case.get("symptoms") or {}).get("location"),
-            "guardrail_log": session.guardrail_log, "fallback": fell_back, "replies": replies,
+            "guardrail_log": first_log["entries"], "fallback": fell_back,
+            "places_pain": first_log["places_pain"], "follow_ups": follow_ups, "replies": replies,
         })
 
         if verbose:
@@ -174,12 +237,50 @@ def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbos
             if flags:
                 print("       " + "; ".join(flags))
                 print("       text: " + text.replace("\n", " ").strip()[:300])
-            for entry in session.guardrail_log:
+            for entry in first_log["entries"]:
                 print(f"       guardrail: {entry['first']} -> after retry "
                       f"{entry['after_retry'] or 'clean'}{'  (FALLBACK TEXT USED)' if fell_back else ''}")
+            for f in follow_ups:
+                marks = [m for m, on in (("ECHO", f["echo"]), ("echo retry", f["echo_retry"]),
+                                         ("FALLBACK", f["fallback"]),
+                                         ("places_pain", f["places_pain"]),
+                                         (f"HALLUCINATED {f['hallucinated']}", f["hallucinated"]),
+                                         (f"DISCOURAGES {f['discourages']!r}", f["discourages"]),
+                                         (f"MISSTATED {f['misstated']}", f["misstated"])) if on]
+                if marks:
+                    print(f"       follow-up {f['question']!r}: {', '.join(marks)}")
             if case.get("must"):
                 print(f"       must: {case['must']} | must_not: {case.get('must_not')}")
     return results
+
+
+def load_cases(mode: str, synthetic: int, seed: int) -> list:
+    if synthetic:
+        return generate_v2(synthetic, seed) if mode == "triage" else generate(synthetic, seed)
+    spec = json.loads(FAITHFULNESS.read_text(encoding="utf-8"))
+    bases = json.loads(RULE_CASES.read_text(encoding="utf-8"))
+    return [{"id": c["id"], "note": c["note"], "findings": build_findings(c, bases),
+             "symptoms": c.get("symptoms"), "must": c.get("must"),
+             "must_not": c.get("must_not")} for c in spec["cases"]]
+
+
+def report(results: dict, label: str) -> None:
+    n = results["n"]
+    print(f"\n{label}  cases: {n}")
+    for rate in ("hallucination", "omission", "contradiction", "misstated"):
+        print(f"  {rate:14s} {results[rate]}/{n}  ({results[rate] / n:.1%})")
+    print(f"  guardrail retry {results['guardrail_retry']}/{n}, fallback text used "
+          f"{results['guardrail_fallback']}/{n}, places_pain fired {results['places_pain']}/{n}")
+    located = sum(bool(c["location"]) for c in results["cases"])
+    print(f"  cases with symptoms.location set: {located}/{n}")
+    fu = results["follow_up"]
+    if fu["n"]:
+        m = fu["n"]
+        print(f"  follow-ups: {m} turns; echo in the final reply {fu['echo']}/{m}, echo retried "
+              f"{fu['echo_retry']}/{m}; hallucinated tooth {fu['hallucination']}/{m}, discourages care "
+              f"{fu['discourages']}/{m}, misstated {fu['misstated']}/{m}; guardrail retry "
+              f"{fu['guardrail_retry']}/{m}, fallback {fu['guardrail_fallback']}/{m}, "
+              f"places_pain {fu['places_pain']}/{m}")
 
 
 def main():
@@ -187,27 +288,23 @@ def main():
     ap.add_argument("--model", default=None)
     ap.add_argument("--synthetic", type=int, default=0, help="Generate N synthetic cases instead")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--mode", choices=["triage", "legacy", "both"], default="triage",
+                    help="triage: explain the triage 2.0 assessment as the web app does "
+                         "(headline); legacy: the rules.py 1.0 path")
     ap.add_argument("--json", help="Write full results here")
     args = ap.parse_args()
 
-    if args.synthetic:
-        cases = generate(args.synthetic, args.seed)
-    else:
-        spec = json.loads(FAITHFULNESS.read_text(encoding="utf-8"))
-        bases = json.loads(RULE_CASES.read_text(encoding="utf-8"))
-        cases = [{"id": c["id"], "note": c["note"], "findings": build_findings(c, bases),
-                  "symptoms": c.get("symptoms"), "must": c.get("must"),
-                  "must_not": c.get("must_not")} for c in spec["cases"]]
-
-    results = evaluate(cases, args.model)
-    n = results["n"]
-    print(f"\nmodel: {args.model or 'default'}  cases: {n}")
-    for rate in ("hallucination", "omission", "contradiction", "misstated"):
-        print(f"  {rate:14s} {results[rate]}/{n}  ({results[rate] / n:.1%})")
-    print(f"  guardrail retry {results['guardrail_retry']}/{n}, fallback text used "
-          f"{results['guardrail_fallback']}/{n}")
+    modes = ["triage", "legacy"] if args.mode == "both" else [args.mode]
+    out = {}
+    for mode in modes:
+        out[mode] = evaluate(load_cases(mode, args.synthetic, args.seed), args.model, mode=mode)
+    for mode in modes:
+        label = ("HEADLINE, triage 2.0 assessment (what patients get)" if mode == "triage"
+                 else "LEGACY, rules.py 1.0 assessment (not the app's path)")
+        report(out[mode], f"model: {args.model or 'default'}  {label}")
     if args.json:
-        Path(args.json).write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
+        data = out[modes[0]] if len(modes) == 1 else out
+        Path(args.json).write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"wrote {args.json}")
 
 

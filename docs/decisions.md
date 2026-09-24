@@ -44,6 +44,65 @@ The 20 rule cases in `llm/eval/rule_cases.json` also need blind dentist labels.
 
 ## Decided
 
+### 2026-09-23 — User decisions: Q20/Q21 approved, pus stays URGENT, explanation sentences
+Decided by the user, relayed by the lead.
+1. **Q20/Q21 wording approved as drafted.** The "awaiting approval"
+   markers are removed from the v0.2 draft and Form A, and Form A is
+   regenerated (`make_form_a.py`, from the v0.2 draft; regenerate from the live
+   path once v0.2 is live).
+2. **Pus → URGENT with or without pain stays** (option a): deliberate
+   over-triage, like any swelling or trauma. Form C, C11 stays open for the
+   dentist and now notes the project owner's provisional choice.
+3. **Explanation sentence A approved:** a hedged link to a tooth found in the
+   photo ("may be related to the tooth we found, but only a dentist can
+   confirm this").
+4. **Explanation sentence B changed:** with no photo findings, the
+   explanation must never deny a tooth cause. It must say the photos can miss
+   a problem and only a dentist can tell. Implemented by llm-dev (task #17).
+   The earlier approved wording "The pain may be related to the findings, but
+   it could also come from other issues" is superseded where there are no
+   findings.
+Sequence: protocol v0.2 goes live after qa-engineer's current Test 2 run.
+P7 proceeds once qa-engineer has verified the switch (spec §9.7 checks).
+
+### 2026-09-23 — P7 model B via the Gemini API: a scoped exception to "nothing leaves the machine" (user)
+Decided by the user, knowingly. Before agreeing, the lead explained that
+this is an exception to CLAUDE.md's "nothing leaves it", that the free tier
+may train on the data (hence the paid tier, accepted), that API models can
+change or be retired, and that only synthetic vignette text goes out.
+research-pm had separately flagged the conflict with CLAUDE.md and with the
+P7 spec ("local model"). The user chose flash-lite over the lead's
+suggestion of 3.8-flash.
+Local fallback kept in the spec: **gemma3:12b**, if the Gemini smoke test
+fails or the API becomes unavailable. A switch is logged, and the two models'
+outputs are never mixed within one set. The methods sentence is in
+`docs/plans/p7-vignette-text-spec.md` §6.
+- **Model B = `gemini-3.5-flash-lite`**, paid Gemini API, replacing
+  gemma4:12b. The generator stays llama3.1:8b, local. Families stay
+  distinct: Meta writes, Google checks, Qwen is under test.
+- **Scope of the exception, and nothing wider:** only synthetic P7 text
+  goes out (held-out, end-to-end and dev vignette text and paraphrases). No
+  patient data, no photos, no real patient messages (the P10 set, ChatDoctor,
+  LiveQA), no keys, no protocol text. The product still runs fully local; this
+  is an evaluation step only. Paid tier; the user accepted the cost.
+- **Caveats, stated in the paper:** (1) blind held-out material goes to a
+  third party. It is synthetic and shows no level or key, but a copy exists
+  outside the machine. (2) The paper cannot claim a fully local evaluation.
+  (3) Hosted models are not reproducible (below).
+- **Recorded per call:** the model id and the version string the API returns,
+  the date and time, the request settings, and the raw response. All B
+  outputs are stored, so the §6 comparison can be recomputed without calling
+  the API again.
+- **Reproducibility caveat for the paper:** a hosted model can change or be
+  retired under the same name, so the §6 extraction may not be repeatable.
+  The stored outputs and recorded versions are the record. A later re-run is
+  a new configuration, logged here.
+- B still uses the production extraction prompt and schema unchanged. Any
+  translation needed for the API's structured-output format is a harness
+  detail, logged by qa-engineer and never changes the prompt text.
+- CLAUDE.md still says "nothing leaves it". Whether to add a line there
+  about this exception is the lead's call; this entry is the record of it.
+
 ### 2026-09-23 — User decisions: S3/U8 rows, explanation wording, P7 model B
 Decided by the user, relayed by the lead.
 1. **S3/U8 gap: option 2**, two checklist-A Yes/No rows, not a free-text
@@ -176,6 +235,34 @@ after seeing the result would be a post-hoc exclusion.
 So the dev set's cue lists do not fully generalise, which is what this set
 was built to show. Fixes go to llm-dev as behaviour descriptions, never as
 the held-out wording.
+Lead's breakdown, confirmed by research-pm: the model alone was right on
+91/95. verify() dropped 3 correct values and let 1 invention through, so
+the gap from 91 to 88 is code, not model.
+
+### 2026-09-23 — Test 3 set A becomes dev; blind set B written (lead + research-pm)
+The 7 set-A misses become categories for llm-dev's task #15 (no text
+shared). After that, set A has informed a fix and is **no longer blind**.
+- **88/95 (92.6%) stays set A's one blind measurement**, reported as such.
+  Any later set-A score is a dev number.
+- **Set B** (`labels/heldout/symptom_dialogues_heldout_b.json`, gitignored,
+  not shared with llm-dev even as categories until the final measurement):
+  20 new dialogues on the same five fields, written by research-pm before #15
+  is re-measured. It gives the reported post-#15 number.
+- Because set B was written after seeing set A's misses, it may lean towards
+  known weak spots. To limit that, its make-up was fixed before any answer
+  was written: 11 answers with both arch and side, 5 that must stay null, 2
+  front, 2 whole mouth; every trigger value at least twice; 3 re-ask cases
+  (2 settle on the re-ask, 1 stays null after it; my first count of 2 missed
+  the null one, corrected before any run);
+  2 non-trigger uses of hot or cold. 1 case marked ambiguous before scoring
+  (clenching mapped to biting).
+- New wording: no multi-word answer is copied from set A or dev. The
+  one-word severity and duration answers ("Mild.", "Four days.") repeat, as
+  they must. Q12 answers overlap set A + dev by at most 0.40 token Jaccard,
+  Q17 by at most 0.57 (same template with the opposite side).
+- n = 20: 100 field cells, 40 on location and triggers. With n this small,
+  report exact CIs. 20 dialogues cannot show a difference of a few points
+  from set A.
 
 ### 2026-09-23 — Test 5 pre-scoring amendments (research-pm)
 Made before any held-out LLM scoring, in answer to qa-engineer; details in
@@ -255,11 +342,11 @@ Status at the start of wave 2: the run never happened (`dataset/dental_qa/`
 has only the 15:08 trial file); P7 had not started.
 
 ### 2026-09-23 — P7 models and generation prompt
-Generator: **llama3.1:8b** (Meta). Model B for the blind extraction:
-**gemma4:12b** (Google; user's decision 2026-09-23, replacing research-pm's
-original gemma3:12b). System under test: qwen3:14b (Alibaba). Three
-different families, as spec §4/§6 ask; each fits the 12 GB RTX 3060 alone
-(about 4.9 GB and 7.6 GB, per the lead). qwen3.5 is excluded as the same
+Generator: **llama3.1:8b** (Meta, local). Model B for the blind extraction:
+**gemini-3.5-flash-lite** via the paid Gemini API (Google; user's decision
+2026-09-23, entry above; it replaced gemma4:12b, which had replaced
+research-pm's original gemma3:12b). System under test: qwen3:14b (Alibaba).
+Three different families, as spec §4/§6 ask. qwen3.5 is excluded as the same
 family as the system under test. Not used: the `oralgpt` models (base family
 unconfirmed, so they may be Qwen) and qwen3:4b (same family as the system
 under test).

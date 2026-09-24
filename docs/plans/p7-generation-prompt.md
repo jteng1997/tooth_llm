@@ -9,10 +9,23 @@ choice and reasoning: `docs/decisions.md`, 2026-09-23 "P7 models".
 | Role | Model | Why |
 |---|---|---|
 | Generator (writes the text) | `llama3.1:8b` (Meta) | Not Qwen, so it is not the system under test writing its own exam. |
-| Model B (blind extraction, §6) | `gemma4:12b` (Google; user's decision 2026-09-23, replacing gemma3:12b) | Third family. The stronger of the two at schema-constrained extraction, which matters because B's own misreads count against the 2% bar. |
+| Model B (blind extraction, §6) | `gemini-3.5-flash-lite`, paid Gemini API (Google; user's decision 2026-09-23, replacing gemma4:12b) | Third family, and a strong extractor, which matters because B's own misreads count against the 2% bar. |
 
-- Pull both: `ollama pull llama3.1:8b` and `ollama pull gemma4:12b`. Never
-  more than one loaded at a time; do all generation first, then all of B.
+- Generator: `ollama pull llama3.1:8b`, local. Do all generation first, then
+  all of B.
+- **Local fallback for B: gemma3:12b** (Ollama), if the Gemini smoke test
+  fails or the API becomes unavailable. Log a switch, and never mix the two
+  models' outputs within one set.
+- **Model B is the only step that leaves the machine**, a scoped exception
+  logged in `docs/decisions.md`. Send only the P7 text B must read, nothing
+  else: no keys, fields, protocol text, patient data or real messages.
+- Per call, record the model id, the version string the API returns, the
+  date and time, the settings (temperature 0) and the raw response. Store
+  every response under `labels/heldout/p7/`. The §6 comparison is computed
+  from the stored responses, never from a fresh call.
+- The production extraction prompt and schema go to B unchanged. If the
+  API's structured-output format needs the schema translated, log the
+  translation; the prompt text itself never changes.
 - Generator: `temperature` 0.8, `seed` 20260923 + attempt (attempt 0 first,
   1 on the first regeneration, ...). Same seed and same prompt give the same
   text, so a regeneration must change the seed. Stop at attempt 4 and send
@@ -23,11 +36,11 @@ choice and reasoning: `docs/decisions.md`, 2026-09-23 "P7 models".
 - Order: group cases by `style`, shuffle within each group with
   `random.Random(20260923)`, run style group by style group (§4: never by
   level).
-- Smoke test before the batch: one call to each model. `src/interview.py`
-  sends `"think": false`; if Ollama rejects that for gemma4, drop the key in
-  your harness only and log it. Do not change the prompt text. If gemma4
-  has a thinking mode, `think: false` must actually turn it off: check that
-  the smoke-test reply has no reasoning text before the JSON.
+- Smoke test before the batch: one call to each model. For llama3.1:8b,
+  `src/interview.py` sends `"think": false`; if Ollama rejects it, drop the
+  key in your harness only and log it. For B, the reply must be the JSON
+  object alone, with no reasoning text, and the returned model version is
+  recorded. Do not change the prompt text.
 - Model B uses the production extraction prompt (`system_symptoms.md` +
   `EXTRACTION_INSTRUCTION` + the evidence schema for the five chat fields)
   **as it stands after llm-dev's Test 3 fixes**. Record the commit or a hash of

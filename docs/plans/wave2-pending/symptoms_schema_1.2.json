@@ -1,0 +1,223 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "symptoms",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "pain_present",
+    "swelling",
+    "fever",
+    "difficulty_swallowing_or_breathing",
+    "recent_trauma"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.2"
+    },
+    "pain_present": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "pain_triggers": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "enum": [
+          "cold",
+          "hot",
+          "sweet",
+          "biting",
+          "spontaneous",
+          "unknown"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "pain_lingers_over_30s": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "pain_wakes_at_night": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "pain_on_biting": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "pain_relief_effect": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "helped",
+        "not_helped",
+        "not_tried",
+        null
+      ]
+    },
+    "pain_severity": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "mild",
+        "moderate",
+        "severe",
+        null
+      ]
+    },
+    "swelling": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "swelling_features": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "enum": [
+          "spreading_to_eye_or_neck",
+          "worsening_fast",
+          "worsening_slowly",
+          "limited_mouth_opening",
+          "tongue_raised",
+          "none"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "fever": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "systemically_unwell": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "difficulty_swallowing_or_breathing": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "chest_pain_or_breathless": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "recent_trauma": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "trauma_features": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "enum": [
+          "head_injury_or_passed_out",
+          "tooth_knocked_out",
+          "bite_changed",
+          "none"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "bleeding_uncontrolled": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "exceeded_pain_relief_dose": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "recent_extraction": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "persistent_ulcer": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "broken_filling_or_tooth": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "pus_or_discharge": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "bleeding_gums": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "location": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "upper_left",
+        "upper_right",
+        "lower_left",
+        "lower_right",
+        "front",
+        "generalised",
+        "unknown",
+        null
+      ]
+    },
+    "duration_days": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "notes": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

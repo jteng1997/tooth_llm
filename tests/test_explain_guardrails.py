@@ -158,6 +158,17 @@ class MissingTooth(unittest.TestCase):
                          (["16"], ["17"]))
         self.assertEqual(explain.split_flagged(ASSESSMENT, GOOD), (["16"], []))
 
+    def test_assessment_2_0_cites_the_missing_tooth_as_a_reason(self):
+        reason = {"criterion_id": "R1", "statement": "A tooth appears to be missing in the photo",
+                  "evidence": [{"source": "visual_summary", "field": "unexpected_missing_teeth",
+                                "value": [{"fdi": "17"}]}]}
+        a = {**ASSESSMENT, "urgency": "ROUTINE", "flagged_teeth": [], "reasons": [reason]}
+        self.assertEqual(explain.split_flagged(a, MISSING), ([], ["17"]))
+        self.assertIn("tooth 17 (upper right second molar) appears to be missing",
+                      fallback_text(a, MISSING))
+        # Without that reason the absent tooth is not reported at all.
+        self.assertEqual(explain.split_flagged({**a, "reasons": []}, MISSING), ([], []))
+
     def test_fallback_says_missing_not_decay(self):
         text = fallback_text(MISSING_ASSESSMENT, MISSING)
         self.assertIn("tooth 17 (upper right second molar) appears to be missing", text)

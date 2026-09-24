@@ -204,11 +204,21 @@ def echoes(reply: str, first: str) -> bool:
 
 
 def split_flagged(assessment: dict, findings: dict = None) -> tuple:
-    """(decay, missing): rules.py R8 flags a tooth that is absent, and that
-    tooth must never be described as decay."""
-    absent = set(rules.missing_teeth(findings or {}))
+    """(decay, missing): the teeth the text may report, and as what. rules.py
+    R8 puts an absent tooth in flagged_teeth; assessment 2.0 keeps
+    flagged_teeth for decay and cites the missing tooth as a reason. Either
+    way a missing tooth must never be described as decay."""
+    absent = rules.missing_teeth(findings or {})
     flagged = assessment.get("flagged_teeth") or []
-    return ([t for t in flagged if t not in absent], [t for t in flagged if t in absent])
+    decay = [t for t in flagged if t not in absent]
+    missing = [t for t in flagged if t in absent]
+    cites_missing = any(
+        "missing" in (r.get("statement") or "").lower()
+        or any(e.get("field") == "unexpected_missing_teeth" for e in r.get("evidence") or [])
+        for r in assessment.get("reasons") or [])
+    if cites_missing and not assessment.get("retake_required"):
+        missing = sorted(set(missing) | set(absent))
+    return decay, missing
 
 
 _DECAY_WORDS = re.compile(r"\b(?:decay\w*|cavit\w*|caries|carious)\b", re.I)

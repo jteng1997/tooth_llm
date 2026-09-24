@@ -329,6 +329,67 @@ class Chat(unittest.TestCase):
         self.answer("Hot tea makes it worse.", pain_triggers=(["hot"], "Hot tea makes it worse."))
         self.assertEqual(self.session.symptoms["pain_triggers"], ["hot"])
 
+    # bare answers: only to their own yes/no question, only for listed values
+
+    def test_bare_no_to_the_pain_relief_question_is_not_tried(self):
+        step = self.answer("No.", pain_relief_effect=("not_tried", "No."))
+        self.assertEqual(step["id"], "Q11")
+        self.assertEqual(self.session.symptoms["pain_relief_effect"], "not_tried")
+
+    def test_bare_yes_to_the_pain_relief_question_settles_nothing(self):
+        step = self.answer("Yes.", pain_relief_effect=("helped", "Yes."))
+        self.assertEqual(step["id"], "Q10")                   # re-asked: did it help?
+        self.assertIsNone(self.session.symptoms["pain_relief_effect"])
+
+    def test_bare_no_to_another_question_settles_nothing(self):
+        self.reach("Q11")
+        self.answer("No.", pain_relief_effect=("not_tried", "No."))   # given to severity
+        self.assertEqual(self.session.symptoms["pain_relief_effect"], "not_tried")  # from Q10
+        self.setUp()
+        step = self.reach("Q12")
+        self.answer("No.", pain_triggers=(["unknown"], "No."))
+        self.assertIsNone(self.session.symptoms["pain_triggers"])
+
+    def test_no_inside_a_longer_answer_is_not_a_bare_answer(self):
+        self.reach("Q11")
+        self.answer("I know it hurts but not much.", pain_relief_effect=("not_tried", "no"))
+        self.assertEqual(self.session.symptoms["pain_relief_effect"], "not_tried")  # Q10's, kept
+        self.assertEqual(interview.verify(
+            "pain_relief_effect", "not_tried", "no", [("Q11", "I know it hurts but not much.")],
+            "Q10", True), None)
+
+    # spontaneous pain and night
+
+    def test_spontaneous_idioms_are_evidence(self):
+        for text in ("It comes out of the blue.", "It throbs even when I'm not eating.",
+                     "It keeps me awake.", "It just aches, no trigger at all.",
+                     "It hurts at night mostly.", "At night it throbs."):
+            with self.subTest(text=text):
+                self.assertEqual(interview.verify("pain_triggers", ["spontaneous"], text,
+                                                  [("Q12", text)], "Q12"), ["spontaneous"])
+
+    def test_night_not_about_the_pain_is_not_spontaneous(self):
+        for text in ("I can't tell what sets it off, I work at night.",
+                     "No idea. I noticed it last night.",
+                     "Cold, and I brush at night."):
+            with self.subTest(text=text):
+                got = interview.verify("pain_triggers", ["unknown", "spontaneous", "cold"], text,
+                                       [("Q12", text)], "Q12")
+                self.assertNotIn("spontaneous", got or [])
+
+    # informal arch words
+
+    def test_informal_arch_words(self):
+        for text, value in (("Up top on the left.", "upper_left"),
+                            ("Downstairs, right side.", "lower_right"),
+                            ("Up on the right, near the back.", "upper_right"),
+                            ("Upstairs left.", "upper_left")):
+            with self.subTest(text=text):
+                self.assertEqual(interview.verify("location", value, text, [("Q17", text)],
+                                                  "Q17"), value)
+        text = "On top of that, it's on the left."
+        self.assertIsNone(interview.verify("location", "upper_left", text, [("Q17", text)], "Q17"))
+
     def test_reply_without_an_open_question_is_refused(self):
         session = interview.Interview(protocol=PROTOCOL, llm=self.llm)
         session.start()

@@ -14,7 +14,7 @@ import yaml
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 LEVELS = ["EMERGENCY", "URGENT", "SOON", "ROUTINE"]
-PENDING_WORDING = {"Q20", "Q21"}  # remove once the project owner approves the wording
+PENDING_WORDING = set()  # question ids whose wording the project owner has not approved yet
 
 SOURCE_NAMES = [
     (r"USER-2026-09-22-(\d+)", r"project owner, 22 Sep 2026 (decision \1)"),

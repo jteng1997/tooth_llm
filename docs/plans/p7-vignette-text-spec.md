@@ -60,7 +60,9 @@ in unchanged and must read as the patient typed it.
 
 ## 4. Generation
 
-- Local model, one heavy job at a time. Use a model **other than the one under
+- Local model for generation (llama3.1:8b), one heavy job at a time. Only
+  the §6 check runs on a hosted API (amended 2026-09-23, user's decision).
+  Use a model **other than the one under
   test** where possible; if that is not practical, record which model wrote the
   text, because it is a threat to the result either way.
 - Temperature 0.7–0.9 for variety, fixed seed, one pass per key, results
@@ -92,8 +94,23 @@ Report how many keys needed a regeneration, and how many needed more than one.
 under test to mark its own homework.
 
 - **Model B:** a different family from both the generator and the system under
-  test. gemma3:12b or llama3.1:8b; record which. (Chosen: gemma4:12b, user's
-  decision 2026-09-23; see `docs/decisions.md`.)
+  test. gemma3:12b or llama3.1:8b; record which. **Amended 2026-09-23
+  (user's decision): `gemini-3.5-flash-lite` via the paid Gemini API.** This
+  is a scoped exception to running locally: only this synthetic text goes
+  out, and the model id, version and date are recorded per call, with every
+  response stored (`docs/decisions.md`).
+- **Reproducibility:** a hosted model can change or be retired under the
+  same name. The stored responses and recorded versions are the record of
+  this step; a re-run is a new configuration. Say so in the methods.
+- **Local fallback: gemma3:12b** (Ollama, Google family). It is used if the
+  Gemini smoke test fails or the API becomes unavailable. A switch is logged,
+  and outputs from the two models are never mixed within one set.
+- **Methods sentence** (use as written): "The blind second-reader check of
+  the synthetic vignette text used a hosted model (gemini-3.5-flash-lite,
+  Google, paid tier; version and date recorded per call). This was the only
+  step that left the local machine. Only synthetic vignette text was sent,
+  no patient data. Hosted models can change or be retired, so this check may
+  not be exactly repeatable; all its outputs are stored."
 - **Input:** the text only — no key, no fields, no protocol.
 - **Prompt:** the production extraction prompt, unchanged.
 - **Compare:** only the **chat** fields (Q10, Q11, Q12, Q17, Q18 and their

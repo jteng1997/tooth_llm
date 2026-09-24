@@ -30,5 +30,43 @@ class InventedItems(unittest.TestCase):
                                            {"pain_triggers": ["cold"]}), {})
 
 
+class Reporting(unittest.TestCase):
+    def test_exact_ci_known_value(self):
+        lo, hi = cs.clopper_pearson(5, 20)
+        self.assertAlmostEqual(lo, 0.0866, places=4)
+        self.assertAlmostEqual(hi, 0.4910, places=4)
+
+    def test_configuration_hashes_the_dialogue_file(self):
+        cfg = cs.configuration("stub", cs.DIALOGUES)
+        self.assertEqual(len(cfg["dialogues_sha256"]), 64)
+        self.assertEqual(cfg["model"], "stub")
+
+    def test_answer_lists_are_used_in_order_on_a_reask(self):
+        # a re-asked question gets the next scripted answer, not the canned one
+        case = {"script": {"Q10": ["hmm", "I took nothing at all."]}, "checklist": {}}
+        calls = []
+
+        class FakeInterview:
+            def __init__(self, *a, **kw):
+                self.symptoms, self.steps = {}, iter([{"type": "question", "id": "Q10"},
+                                                      {"type": "question", "id": "Q10"},
+                                                      {"type": "done"}])
+
+            def start(self):
+                return next(self.steps)
+
+            def reply(self, answer):
+                calls.append(answer)
+                return next(self.steps)
+        original = cs.Interview
+        cs.Interview = FakeInterview
+        try:
+            played = cs.run_case(case, "stub", protocol=None)
+        finally:
+            cs.Interview = original
+        self.assertEqual(calls, ["hmm", "I took nothing at all."])
+        self.assertEqual(played["unscripted"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

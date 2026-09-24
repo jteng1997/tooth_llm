@@ -108,15 +108,29 @@ NOT_ENGLISH_NOTICE = "This assistant works in English only. Please answer in Eng
 # the extractor let the "no" given to the injury question also settle
 # pain_present — the quote genuinely is in the transcript — so the pain
 # question was skipped and a patient in pain was never asked about it.
-# In the planned interview every chat question asks which, how, where or
-# how long, so there a bare answer settles nothing at all.
-BARE_ANSWERS = {"no", "nope", "nah", "none", "notreally", "never", "yes", "yeah", "yep",
-                "yup", "sure", "ok", "okay", "uhhuh", "没有", "沒有", "有", "是", "不是",
-                "不", "对", "對"}
+# In the planned interview a bare answer counts only as the patient's whole
+# reply to its field's own question, only when that question is a yes/no
+# question, and only for the values listed in BARE_VALUES.
+BARE_NO = {"no", "nope", "nah", "none", "notreally", "never", "没有", "沒有", "不是", "不"}
+BARE_ANSWERS = BARE_NO | {"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "uhhuh",
+                          "有", "是", "对", "對"}
+# "Have you taken any pain relief? If so, did it help?": "no" is not_tried;
+# "yes" says they took something but not whether it helped, so it settles nothing.
+BARE_VALUES = {("pain_relief_effect", "no"): {"not_tried"}}
+YES_NO_QUESTION = re.compile(r"^\s*(?:have|has|had|do|does|did|is|are|was|were|can|could"
+                             r"|will|would)\b", re.I)
 
 
 def _is_bare(quote: str) -> bool:
     return _normalize(quote) in BARE_ANSWERS
+
+
+def _bare_answer_holds(field: str, value, quote: str, sources: list, own_question,
+                       own_is_yes_no: bool) -> bool:
+    polarity = "no" if _normalize(quote) in BARE_NO else "yes"
+    whole_reply = any(qid == own_question and _normalize(text) == _normalize(quote)
+                      for qid, text in sources)
+    return own_is_yes_no and whole_reply and value in BARE_VALUES.get((field, polarity), ())
 
 
 def _plain(text: str) -> str:
@@ -140,10 +154,21 @@ TRIGGER_CUES = {
                         r"|biscuits?|cookies?|soda)\b"),
     "biting": re.compile(r"\b(?:bite|bites|biting|bit (?:on|down|into)|chew|chews|chewing|chewed"
                          r"|clench\w*|grind\w*)\b"),
-    "spontaneous": re.compile(r"\b(?:on its own|by itself|out of nowhere|(?:for )?no reason"
-                              r"|without (?:any )?reason|randomly|at random|all the time"
-                              r"|constant(?:ly)?|at night|wakes? me|just (?:starts|comes|happens)"
-                              r"|nothing (?:sets|brings|sparks) it)\b"),
+    "spontaneous": re.compile(
+        r"\b(?:on its own|by itself|of its own accord|out of nowhere|out of the blue"
+        r"|(?:for )?no (?:reason|trigger)|without (?:any )?(?:reason|warning|trigger)"
+        r"|randomly|at random|all the time|all day|day and night|non-?stop|constant(?:ly)?"
+        r"|spontaneous\w*|any ?time|whenever it (?:wants|likes|feels like)"
+        r"|just (?:starts|comes|happens|hurts|aches|throbs)"
+        r"|nothing (?:sets|brings|sparks|triggers) it|doing nothing"
+        r"|even when i'?m not (?:eating|drinking|doing anything)"
+        r"|(?:when|while) i'?m (?:just )?(?:resting|sitting|lying)"
+        r"|wakes? me|woke me|waking me|keeps? me (?:up|awake))\b"
+        # Night counts only in the same clause as the pain, not "I work at night".
+        r"|\b(?:hurts?|hurting|aches?|aching|throb\w*|pain\w*|sore|worse|bad)\b[^.,;!?]{0,25}"
+        r"\b(?:at night|in the night|during the night|at bedtime)\b"
+        r"|\b(?:at night|in the night|during the night)\b[^.,;!?]{0,15}"
+        r"\b(?:hurts|aches|throbs|starts|comes on|gets worse|is worse|flares)\b"),
     "unknown": re.compile(HEDGE.pattern + r"|\b(?:comes and goes|nothing in particular)\b"),
 }
 # Words that look like a trigger but describe the patient, not the pain.
@@ -154,15 +179,18 @@ NOT_A_TRIGGER = re.compile(
 # location needs arch AND side each in the patient's words ("on the left"
 # alone is not a quadrant). "bite down" is not an arch.
 ARCH_CUES = {
-    "upper": re.compile(r"\b(?:upper|top|above|maxilla\w*)\b"),
-    "lower": re.compile(r"\b(?:lower|bottom|below|down|mandib\w*)\b"),
+    "upper": re.compile(r"\b(?:upper|uppers|top|above|upstairs|roof|maxilla\w*)\b"
+                        r"|\bup (?:on|at|in) (?:the )?(?:left|right|top|back)\b"),
+    "lower": re.compile(r"\b(?:lower|lowers|bottom|below|down|downstairs|underneath"
+                        r"|mandib\w*)\b"),
 }
 SIDE_CUES = {"left": re.compile(r"\bleft\b"), "right": re.compile(r"\bright\b")}
 NOT_A_LOCATION = re.compile(
     r"\b(?:bite|bites|biting|bit|chew\w*|press\w*|push\w*|clench\w*|lie|lying|lay|goes|go|went"
     r"|come|comes|calm\w*|settle\w*|slow\w*|sit\w*) down\b"
     r"|\b(?:all|that's|that is|you're|is) right\b|\bright (?:now|away|after|before)\b"
-    r"|\b(?:nothing|none|still|have|has|had) left\b|\bleft (?:it|over|alone|untreated)\b")
+    r"|\b(?:nothing|none|still|have|has|had) left\b|\bleft (?:it|over|alone|untreated)\b"
+    r"|\bon top of (?:that|it|this|everything)\b")
 PLACE_CUES = {
     "front": re.compile(r"\b(?:front|incisors?|middle|centre|center)\b"),
     "generalised": re.compile(r"\b(?:all over|everywhere|whole|entire|both sides|all around"
@@ -178,7 +206,8 @@ def _location_named(value: str, text: str) -> bool:
     return bool(ARCH_CUES[arch].search(text) and SIDE_CUES[side].search(text))
 
 
-def verify(field: str, value, quote: str, sources: list, own_question=None):
+def verify(field: str, value, quote: str, sources: list, own_question=None,
+           own_is_yes_no: bool = False):
     """What survives of an extracted {value, quote}: the value, a trimmed
     list, or None. sources are (question_id, message) for each patient
     message holding the quote; question_id is None outside the planned
@@ -188,7 +217,8 @@ def verify(field: str, value, quote: str, sources: list, own_question=None):
         return None
     planned = any(qid is not None for qid, _ in sources)
     if planned and _is_bare(quote):
-        return None  # no chat question is answered by a bare yes/no
+        return value if _bare_answer_holds(field, value, quote, sources, own_question,
+                                           own_is_yes_no) else None
     said = " ".join(_plain(text) for _, text in sources)
     in_reply = own_question is None or any(qid == own_question for qid, _ in sources)
     hedged = bool(HEDGE.search(_plain(quote)))
@@ -227,8 +257,9 @@ EXTRACTION_INSTRUCTION = (
     "- pain_severity: 'severe' when it stops them sleeping or eating or they call "
     "it unbearable; otherwise 'mild' or 'moderate' as they describe it.\n"
     "- location needs arch and side together: 'bottom left' is lower_left, "
-    "'on the left' alone is not enough. 'front' is the front teeth, top or bottom, "
-    "with no side needed; 'generalised' is pain spread over many teeth or the whole "
+    "'on the left' alone is not enough. 'front' is the front teeth, top or bottom: "
+    "whenever they say front, use 'front' and never add a side they did not say; "
+    "'generalised' is pain spread over many teeth or the whole "
     "mouth.\n"
     "- If they corrected themselves, the later answer wins.\n"
     "Quotes are checked against the transcript, so never invent one."
@@ -415,8 +446,9 @@ class Interview:
         raw = json.loads(self.llm(messages, evidence_schema(fields)))
         turns = [m["content"] for m in self.messages if m["role"] == "user"]
         replies = list(zip(self.reply_to, turns))
-        asked_for = ({f: q.id for q in self.protocol.questions if q.input == "chat"
-                      for f in q.fields} if self.planned else {})
+        chat_questions = ([q for q in self.protocol.questions if q.input == "chat"]
+                          if self.planned else [])
+        asked_for = {f: q for q in chat_questions for f in q.fields}
 
         symptoms = {"schema_version": SCHEMA_VERSION}
         symptoms.update({f: None for f in EVIDENCE_FIELDS})
@@ -426,7 +458,9 @@ class Interview:
             value, quote = entry.get("value"), entry.get("quote")
             sources = [(qid, text) for qid, text in replies
                        if _normalize(quote) and _normalize(quote) in _normalize(text)]
-            value = verify(field, value, quote, sources, asked_for.get(field))
+            own = asked_for.get(field)
+            value = verify(field, value, quote, sources, own and own.id,
+                           bool(own and YES_NO_QUESTION.match(own.text)))
             if value is not None:
                 symptoms[field] = value
             elif self.planned:

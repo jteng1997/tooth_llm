@@ -29,7 +29,8 @@
 # v0.2 (2026-09-23, user decision "option 2"): S3 and U8 are now structured
 # criteria fed by two new checklist-A rows (Q20, Q21), because a patient with
 # no pain never reached the chat and so could never report them.
-# Q20/Q21 wording is DRAFT and awaits the user's approval before code uses it.
+# Q20/Q21 wording approved by the user 2026-09-23 as drafted; clinical
+# content (incl. U8 with or without pain) still needs a dentist (Form C, C11).
 protocol_version: "0.2"
 review_status: DRAFT-UNREVIEWED
 reviewed_by: ""
@@ -344,7 +345,7 @@ questions:
     group: A
     red_flag: false
     text: "Do you have a mouth ulcer, sore or lump that has lasted more than 3 weeks?"
-  # Q20, Q21: DRAFT wording, awaiting the user's approval (2026-09-23).
+  # Q20, Q21: wording approved by the user 2026-09-23.
   - id: Q20
     fields: [broken_filling_or_tooth]
     input: yesno_checklist
