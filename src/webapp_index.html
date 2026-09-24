@@ -148,6 +148,7 @@
 <script>
 const $ = id => document.getElementById(id);
 let session = null;
+let findings = null;
 
 function bubble(container, text, who){
   const div = document.createElement("div");
@@ -174,6 +175,7 @@ function resetPage(){
     fetch("/api/reset", {method:"POST", body:form}).catch(() => {});
   }
   session = null;
+  findings = null;
   for(const id of ["views", "chat", "followups"]) $(id).innerHTML = "";
   for(const id of ["vision-note", "findings-json", "badge", "headline", "explanation",
                    "flagged", "safety-net", "result-json", "upload-status",
@@ -376,7 +378,18 @@ function renderVision(data){
   $("vision-note").textContent = reactedCount
     ? `The detector reacted to ${reactedCount} ${reactedCount === 1 ? "tooth" : "teeth"} (boxes). The result lists only the teeth that reach the reporting threshold.`
     : "The detector did not react to any tooth. This does not rule out a problem.";
+  findings = data.findings;
   $("findings-json").textContent = JSON.stringify(data.findings, null, 2);
+}
+
+function retakeText(named){
+  const quality = Object.entries((findings && findings.image_quality) || {});
+  const bad = quality.filter(([, q]) => !q.usable).map(([view]) => view);
+  if(!bad.length || bad.length === quality.length)
+    return "The photos could not be used, so no tooth was assessed. Please retake them.";
+  const which = `The ${bad.join(" and ")} photo could not be used`;
+  return named ? `${named} ${which}. Please retake it.`
+               : `${which}, so no tooth result is shown yet. Please retake it.`;
 }
 
 $("send").onclick = async () => {
@@ -422,11 +435,10 @@ async function showResult(){
     $("headline").textContent = a.headline;
     $("result-disclaimer").textContent = data.disclaimer;
     $("explanation").textContent = data.explanation;
+    const named = data.flagged_names.length ? `${data.finding_phrase} ${data.flagged_names.join(", ")}.` : "";
     $("flagged").textContent = a.retake_required
-      ? "The photos could not be used, so no tooth was assessed. Please retake them."
-      : data.flagged_names.length
-        ? `${data.finding_phrase} ${data.flagged_names.join(", ")}.`
-        : "Nothing in the photos reached the reporting threshold. This does not rule out a problem.";
+      ? retakeText(named)
+      : named || "Nothing in the photos reached the reporting threshold. This does not rule out a problem.";
     $("safety-net").textContent = a.safety_net || "";
     $("result-json").textContent = JSON.stringify({symptoms: data.symptoms, assessment: a}, null, 2);
     $("result-card").hidden = false;

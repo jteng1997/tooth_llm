@@ -84,6 +84,65 @@ log.push((sw <= vw ? "PASS " : "FAIL ") + `no horizontal overflow at ${vw}px (co
 if(window.parent !== window) window.parent.postMessage(log.join("\n"), "*");
 const out = document.createElement("pre"); out.id = "test-log"; out.textContent = log.join("\n");
 document.body.prepend(out);
+
+// RETAKE wording on the result card, driven through showResult() with the
+// server call stubbed. A partial retake (one of two photos unusable) with a
+// non-RETAKE urgency lists the flagged teeth first, then asks for the named
+// photo; with no flagged teeth it says no tooth result is shown yet. When no
+// photo is usable (both bad, the only photo bad, no findings) the general
+// sentence shows alone, even with flagged_names present.
+(async () => {
+  const more = [];
+  const tt = (name, ok, got) => more.push((ok ? "PASS " : "FAIL ") + name + (ok ? "" : ` (got: ${got})`));
+  const OLD = "The photos could not be used, so no tooth was assessed. Please retake them.";
+  const arch = v => `The ${v} photo could not be used, so no tooth result is shown yet. Please retake it.`;
+  const NAMED = "Based on the image, tooth 36 (lower left first molar).";
+  const withTeeth = v => `${NAMED} The ${v} photo could not be used. Please retake it.`;
+  const reply = {assessment: {urgency: "URGENT", headline: "Headline.", retake_required: true, safety_net: ""},
+                 symptoms: {}, disclaimer: "Disclaimer.", explanation: "Explanation.",
+                 flagged_names: ["tooth 36 (lower left first molar)"], finding_phrase: "Based on the image,"};
+  const bad = {usable: false, reasons: ["no_teeth_detected"]}, good = {usable: true, reasons: []};
+  async function retake(imageQuality, change = {}){
+    resetPage();
+    session = "test-session";
+    findings = imageQuality === null ? null : {image_quality: imageQuality};
+    const data = JSON.parse(JSON.stringify(reply));
+    Object.assign(data.assessment, change.assessment || {});
+    if(change.flagged_names) data.flagged_names = change.flagged_names;
+    post = async () => data;
+    await showResult();
+    return $("flagged").textContent;
+  }
+  try{
+    let got = await retake({upper: bad, lower: good});
+    tt("retake: URGENT, upper photo bad, flagged tooth listed first, then the upper photo",
+       got === withTeeth("upper"), got);
+    got = await retake({upper: good, lower: bad});
+    tt("retake: URGENT, lower photo bad, flagged tooth listed first, then the lower photo",
+       got === withTeeth("lower"), got);
+    got = await retake({upper: bad, lower: good}, {assessment: {urgency: "RETAKE"}, flagged_names: []});
+    tt("retake: RETAKE with no flagged teeth says no tooth result is shown yet", got === arch("upper"), got);
+    got = await retake({upper: good, lower: good}, {assessment: {retake_required: false}});
+    tt("no retake: flagged teeth shown, no retake line", got === NAMED, got);
+    got = await retake({upper: bad, lower: bad});
+    tt("retake: both photos bad keeps the general sentence", got === OLD, got);
+    got = await retake({upper: bad});
+    tt("retake: a single photo keeps the general sentence", got === OLD, got);
+    got = await retake(null);
+    tt("retake: no findings keeps the general sentence", got === OLD, got);
+    await retake({upper: bad, lower: good});
+    resetPage();
+    tt("retake: reset clears the retake text and the findings", $("flagged").textContent === "" && findings === null,
+       $("flagged").textContent);
+    got = await retake(null);
+    tt("retake: after a reset nothing carries over from the last screening", got === OLD, got);
+  }catch(e){ more.push("FAIL retake exception: " + e); }
+  resetPage();
+  $("interview-card").hidden = false;
+  showChecklist(B, null, "B");   // back to the layout the screenshots expect
+  log.push(...more);
+  out.textContent = log.join("\n");
+})();
 """
 
 FRAME = """<!doctype html><html><body style="margin:0;display:flex;gap:10px">

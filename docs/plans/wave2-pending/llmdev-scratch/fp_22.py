@@ -31,6 +31,8 @@ for c in d["triage"]["cases"]:
         bad = explain.reports_unreported(text, allowed)
         if bad:
             hits[kind].append((c["id"], i, bad))
+        if explain.discourages_care(text):
+            print("   DISCOURAGES", c["id"], i, text[:200].replace("\n", " "))
         if explain.denies_tooth_finding(text):
             denials.append((c["id"], i, [s for s in re.split(r"(?<=[.!?])\s+", text)
                                          if explain.denies_tooth_finding(s)]))

@@ -143,11 +143,19 @@ an **open clinical decision**.
   `models/knowledge_index.npz`.
 - The LLM writes the first response and answers follow-up questions. It may
   restate the JSON but never contradict it, add teeth or change the urgency.
+  *(Correction, 2026-09-24: this is the rule, not a measured fact. Measured
+  under the stricter #22 definition, the explanation describes a tooth the
+  assessment did not flag in 8/60 cases on the current path (CI 5.9–24.6%),
+  always a detection below the 0.50 reporting threshold. Fix in progress:
+  the model sees only reportable teeth, plus a guardrail. See
+  `docs/decisions.md`, 2026-09-24.)*
 - **Code guardrails** check every reply, including follow-ups. A violation
   gets one rewrite that names the problem; a second violation gets the fixed
   fallback text.
   - `guardrail_violations`: drug names or doses, including garbled ones;
-    invented teeth; missing finding phrase.
+    invented teeth (a tooth absent from the findings — it does **not** catch
+    teeth whose detections fall below the reporting threshold; #22 adds that);
+    missing finding phrase.
   - `places_pain`: no pain side beyond what the patient said. Links to a
     found tooth are allowed only when hedged ("may be related…, only a
     dentist can confirm").
@@ -173,7 +181,7 @@ per chat turn on the RTX 3060.
 
 | Role | Model | Where |
 |---|---|---|
-| Interview extraction, triage, explanation | **qwen3:14b** (qwen3:4b not deployable: leaked reasoning, invented teeth in 40%) | Ollama, local |
+| Interview extraction, triage, explanation | **qwen3:14b** (qwen3:4b not deployable: leaked reasoning, invented teeth in 40% under the original, weaker check) | Ollama, local |
 | Embeddings | intfloat/multilingual-e5-small | local |
 | Segmentation | SegmentAnyTooth YOLO11 + SAM | local, non-commercial licence |
 | Caries | YOLOv8 DentalAI | local, GPL-3.0 |
@@ -191,7 +199,7 @@ tested.
 | Test | Script | What it measures | Latest |
 |---|---|---|---|
 | 1 Rules | `check_rules.py` | `rules.py` on 20 cases | 20/20 |
-| 2 Faithfulness | `check_faithfulness.py` | explanation: hallucination, omission, contradiction, misstated; guardrail retries; follow-ups | 0/60 on the first three (legacy path); triage-2.0 mode run paused mid-run |
+| 2 Faithfulness | `check_faithfulness.py` | explanation: hallucination, omission, contradiction, misstated; guardrail retries; follow-ups | 0/60 on the first three (legacy path) under the original hallucination definition (tooth absent from findings). **Corrected 2026-09-24:** under the stricter "only flagged teeth" definition (#22): 7/60 in the 09-17 run, 8/60 on the current path (CI 5.9–24.6%), follow-ups 1/120; fix in progress. Triage-2.0 mode run paused mid-run |
 | 3 Symptoms | `check_symptoms.py` | chat-field extraction | dev 60/60 (tuned); blind set A 88/95 = 92.6%; blind set B not yet run |
 | 5 Triage | `check_triage.py`, `check_e2e.py` | level vs SDCEP-derived keys, pre-registered spec | no-model baseline: rules.py 51/200 under-triage (25.5%), protocol check 8/200 (4.0%); LLM not yet scored |
 | Unit | `python -m unittest discover -s tests` | about 330 tests | all pass except 1 expected v0.2-transition test |

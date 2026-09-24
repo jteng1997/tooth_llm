@@ -232,6 +232,15 @@ class PartialRetake(unittest.TestCase):
         self.assertIn("take it again", text)
         self.assertEqual(guardrail_violations(text, ["16"]), [])
 
+    def test_scope_gives_the_exact_sentences(self):
+        s = Explanation(BAD_UPPER, {}, knowledge=FakeKnowledge(),
+                        assessment=copy.deepcopy(URGENT_RETAKE_16))
+        scope = s._scope_instruction()
+        self.assertIn(f'word for word: "{explain.decay_sentence(["16"])}"', scope)
+        self.assertIn(f'word for word: "{explain._retake_sentence(BAD_UPPER)}"', scope)
+        text = fallback_text(URGENT_RETAKE_16, BAD_UPPER)
+        self.assertIn(explain.decay_sentence(["16"]), text)   # one source for both
+
     def test_fallback_pure_retake_unchanged(self):
         text = fallback_text(PURE_RETAKE, BAD_UPPER)
         self.assertIn("The photos could not be used, so please take them again", text)
@@ -247,6 +256,108 @@ class PartialRetake(unittest.TestCase):
         pure = Explanation(BAD_UPPER, {}, knowledge=FakeKnowledge(),
                            assessment=copy.deepcopy(PURE_RETAKE))
         self.assertIn("Do not mention any tooth", pure._scope_instruction())
+
+
+LOW = {**GOOD, "teeth": {**GOOD["teeth"],
+                         "26": {"present": True, "detections": [{"type": "caries", "confidence": 0.30}]},
+                         "11": {"present": True, "detections": [{"type": "restoration",
+                                                                 "confidence": 0.55}]},
+                         "36": {"present": True, "detections": []}},
+       "unassigned_detections": [{"type": "caries", "confidence": 0.7}]}
+
+
+class UnreportedTeeth(unittest.TestCase):
+    """Only flagged decay teeth and reportable missing teeth may be reported."""
+
+    def test_model_sees_only_reportable_teeth(self):
+        shown = explain.model_findings(LOW, ASSESSMENT)
+        self.assertEqual(set(shown["teeth"]), {"16"})
+        self.assertNotIn("unassigned_detections", shown)
+        self.assertEqual(shown["image_quality"], LOW["image_quality"])
+        self.assertEqual(explain.tooth_names(shown), {"16": "upper right first molar"})
+        nothing = explain.model_findings(LOW, {**ASSESSMENT, "flagged_teeth": []})
+        self.assertEqual(nothing["teeth"], {})
+
+    def test_reported_missing_tooth_is_shown_as_missing(self):
+        reason = {"criterion_id": "R1", "statement": "A tooth appears to be missing in the photo",
+                  "evidence": []}
+        a = {**ASSESSMENT, "flagged_teeth": [], "reasons": [reason]}
+        shown = explain.model_findings({**GOOD, "teeth": {"17": {"present": False},
+                                                          "18": {"present": False}}}, a)
+        self.assertEqual(shown["teeth"], {"17": {"present": False, "detections": []}})
+
+    def test_a_finding_on_an_unreported_tooth_is_caught(self):
+        for text in ("Based on the image, there is an indication of tooth decay on tooth 26.",
+                     "There is also an indication of a cavity on tooth 21 (upper left central "
+                     "incisor).",
+                     "There is something unusual on your upper left first molar.",
+                     "Based on the image, there is an indication of something unusual on tooth "
+                     "26, but we are not sure what it is.",
+                     "We found possible signs of decay on teeth 16, 26 and 36."):
+            with self.subTest(text=text):
+                self.assertTrue(explain.reports_unreported(text, {"16"}))
+
+    def test_allowed_teeth_retake_and_limitation_sentences_pass(self):
+        for text in (GOOD_TEXT,
+                     "The photo of your lower teeth could not be used, so please take it again.",
+                     "These photos cannot show the sides between your teeth.",
+                     "Nothing on tooth 26 reached the level we report. That does not rule "
+                     "anything out.",
+                     "See a dentist within 24 hours."):
+            with self.subTest(text=text):
+                self.assertEqual(explain.reports_unreported(text, {"16"}), [])
+
+    def test_saying_an_unreported_tooth_is_fine_is_caught(self):
+        for text in ("Tooth 26 looks fine.", "There is no decay on tooth 26.",
+                     "Tooth 26 has no problems."):
+            with self.subTest(text=text):
+                self.assertTrue(explain.denies_tooth_finding(text))
+        self.assertFalse(explain.denies_tooth_finding(
+            "Nothing on tooth 26 reached the level we report, and that does not rule anything "
+            "out."))
+
+    def test_reassurance_is_caught(self):
+        for text in ("Tooth 48 was not part of this check. It is probably nothing to worry about.",
+                     "There is nothing to worry about.", "It is probably fine.",
+                     "There is no cause for concern.", "It's probably not serious.",
+                     "This is not something to worry about."):
+            with self.subTest(text=text):
+                self.assertTrue(explain.denies_tooth_finding(text))
+
+    def test_honest_lines_are_not_reassurance(self):
+        for text in ("This does not rule anything out.",
+                     "No urgent dental visit is needed. Keep up your routine check-ups.",
+                     "This does not mean it is nothing to worry about.",
+                     "Only a dentist can tell whether it is something to worry about.",
+                     fallback_text(ASSESSMENT)):
+            with self.subTest(text=text):
+                self.assertFalse(explain.denies_tooth_finding(text))
+
+
+class DiscouragesCare(unittest.TestCase):
+    """Prompt rule 6 in code: never tell the patient to skip or delay the dentist."""
+
+    def test_discouragement_is_caught(self):
+        for text in ("Tooth 48 looks fine, so you don't need to see a dentist.",
+                     "There is no need to see a dentist.", "It can wait.",
+                     "You can skip the dentist for now.", "You don't need a dentist yet.",
+                     "No need for an appointment.",
+                     "Tooth 48 was not part of this check. There is no need to visit today.",
+                     "You don't need to come in.", "There is no need to book anything."):
+            with self.subTest(text=text):
+                self.assertTrue(explain.discourages_care(text))
+
+    def test_legitimate_text_passes(self):
+        for text in ("You don't need to wait for the new photo to book.",
+                     "This does not mean you can wait.",
+                     "Please see a dentist within a few days.",
+                     "The retake can wait until after you have booked.",
+                     "You don't need to go to hospital, but see a dentist within a few days.",
+                     "There is no need to go to the emergency department.",
+                     "You don't need to visit a pharmacist first.",
+                     fallback_text(ASSESSMENT), fallback_text(URGENT_RETAKE, BAD_UPPER)):
+            with self.subTest(text=text):
+                self.assertFalse(explain.discourages_care(text))
 
 
 class FakeKnowledge:
@@ -373,12 +484,6 @@ class CheckedTurn(unittest.TestCase):
         self.assertEqual(s.first_response(), good)
         self.assertEqual(s.guardrail_log, [])
 
-    def test_partial_retake_that_never_asks_for_the_photo_ends_in_the_fallback(self):
-        no_retake = GOOD_TEXT.replace("within 7 days", "within a few days")
-        self.replies = [no_retake, no_retake]
-        s = self.partial(URGENT_RETAKE_16)
-        self.assertEqual(s.first_response(), fallback_text(URGENT_RETAKE_16, BAD_UPPER))
-
     def test_pure_retake_needs_no_headline_check(self):
         text = "The photos could not be used. Please take them again with good light."
         self.replies = [text]
@@ -392,6 +497,64 @@ class CheckedTurn(unittest.TestCase):
         s = self.session()
         s.first_response()
         self.assertEqual(s.ask("is my pain from a tooth?"), clean)
+
+    def test_prompt_carries_only_reportable_teeth(self):
+        self.replies = [GOOD_TEXT]
+        s = Explanation(LOW, {}, knowledge=FakeKnowledge(), assessment=copy.deepcopy(ASSESSMENT))
+        s.first_response()
+        content = s.messages[1]["content"]
+        self.assertIn('"16"', content)
+        for hidden in ('"26"', '"11"', '"36"', "unassigned_detections", "0.3"):
+            self.assertNotIn(hidden, content)
+
+    def test_first_response_with_an_unreported_tooth_is_rewritten(self):
+        bad = GOOD_TEXT + " There is also an indication of tooth decay on tooth 26."
+        self.replies = [bad, GOOD_TEXT]
+        s = Explanation(LOW, {}, knowledge=FakeKnowledge(), assessment=copy.deepcopy(ASSESSMENT))
+        self.assertEqual(s.first_response(), GOOD_TEXT)
+        self.assertIn("tooth 26", s.guardrail_log[0]["first"][0])
+
+    def test_follow_up_about_an_unreported_tooth(self):
+        honest = ("Nothing on tooth 26 reached the level we report. That does not rule anything "
+                  "out, so a dentist should still check it.")
+        self.replies = [GOOD_TEXT, "Tooth 26 looks fine.", honest]
+        s = Explanation(LOW, {}, knowledge=FakeKnowledge(), assessment=copy.deepcopy(ASSESSMENT))
+        s.first_response()
+        self.assertEqual(s.ask("what about tooth 26?"), honest)
+
+    def test_missing_retake_sentence_is_appended_without_a_second_call(self):
+        no_retake = GOOD_TEXT.replace("within 7 days", "within a few days")
+        self.replies = [no_retake]
+        s = self.partial(URGENT_RETAKE_16)
+        text = s.first_response()
+        self.assertEqual(text, no_retake + " " + explain._retake_sentence(BAD_UPPER))
+        self.assertEqual(self.calls, 1)
+        self.assertEqual(s.guardrail_log[0]["appended"], "retake sentence")
+
+    def test_append_is_not_used_when_something_else_is_wrong(self):
+        bad = ("Based on the image, there is an indication of tooth decay on tooth 26. "
+               "See a dentist within a few days.")
+        self.replies = [bad, bad]
+        s = self.partial(URGENT_RETAKE_16)
+        self.assertEqual(s.first_response(), fallback_text(URGENT_RETAKE_16, BAD_UPPER))
+
+    def test_rewrite_request_quotes_the_finding_sentence(self):
+        paraphrase = "We found possible signs of tooth decay on tooth 16. See a dentist within 7 days."
+        self.replies = [paraphrase, GOOD_TEXT]
+        s = self.session()
+        seen = []
+        real = explain.chat
+
+        def spy(messages, model=None, **kwargs):
+            seen.append(messages[-1]["content"])
+            return real(messages, model, **kwargs)
+        explain.chat = spy
+        try:
+            s.first_response()
+        finally:
+            explain.chat = real
+        self.assertIn('word for word: "Based on the image, there is an indication of tooth '
+                      'decay on tooth 16 (upper right first molar)."', seen[-1])
 
     def test_assessment_passed_in_is_the_one_explained(self):
         self.replies = [GOOD_TEXT]

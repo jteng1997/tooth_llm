@@ -371,3 +371,13 @@ returning the rules result in the 1.0 shape. That is the baseline that Test 1
 
 The explanation LLM receives `findings`, `symptoms` and `assessment` and may
 restate them. It may not contradict them, add teeth, or change the urgency.
+
+- The `findings` it is shown are reduced by code (`model_findings` in
+  `src/explain.py`) to what may be reported: `image_quality`, `arches`, and
+  in `teeth` only the flagged decay teeth (their detections at or above the
+  reporting threshold) and the missing teeth the assessment reports.
+  Detections below the threshold and `unassigned_detections` never reach
+  the model. Same shape as section 1, fewer entries.
+- Asked about any other tooth, it says nothing on that tooth reached the
+  level we report and that this does not rule anything out; it never
+  describes a finding on it and never says it is fine.

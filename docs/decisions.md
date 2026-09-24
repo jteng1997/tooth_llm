@@ -44,6 +44,97 @@ The 20 rule cases in `llm/eval/rule_cases.json` also need blind dentist labels.
 
 ## Decided
 
+### 2026-09-24 — Test 3 blind set C: the blind measurement of #20 (qa-engineer)
+Single run, 2026-09-24 18:54–19:11, qwen3:14b, commit 258e6b9.
+Configuration (the pre-run log matches the end-of-run record):
+- `interview.py` c2e00d55…1831
+- `system_symptoms.md` 4aaa06a6…36f4
+- `triage_protocol.yaml` 7de38ee9…3ab
+- set C file b2e7d4ee…96f1
+Pre-run log: `labels/heldout/results/test3_heldout_c_prerun_hashes.txt`. Dev
+immediately before: 60/60, 12/12 exact (tuned).
+
+Results, n = 24 dialogues, 120 field cells:
+- Field accuracy **116/120 = 96.7%** (exact 95% CI 91.7–99.1).
+- Dialogues fully correct 20/24 (CI 62.6–95.3).
+- Triggers **20/24** (CI 62.6–95.3). Location 24/24 (CI 85.8–100).
+  Location and triggers together 44/48 (CI 80.0–97.7).
+- Other three fields 72/72 (CI 95.0–100).
+- Guessed a value where the key is null: 0/4 cells (CI 0–60.2).
+- Null where the key has a value: 0/116 cells (CI 0–3.1).
+- Invented list items: 4/24 dialogues (CI 4.7–37.4).
+- Checklist answers overwritten: 0. The pre-declared ambiguous dialogue
+  scored 5/5.
+- Food/action trigger dialogues: 5/8.
+
+The 4 misses, all in `pain_triggers`:
+- 2 are a temperature implied only by context, with no temperature word.
+  verify() has no cue for this, before or after #20. After the harness's
+  canned re-ask reply, the value ends as `["unknown"]`.
+- 1 is an eating action that the #20 cue accepts, but the model did not
+  extract it. This is a model miss, via the same canned-reply path.
+- 1 is a false accept: a non-trigger (weather) use of "hot" in the same answer
+  was kept alongside the real trigger. This is pre-existing: verify() at
+  fdaf110 behaves the same, so it does not come from #20.
+
+No #20 cue fired wrongly on set C.
+Comparison: set B scored 97/100 (CI 91.5–99.4) before #20. With n = 24, set
+C cannot resolve a difference of a few points.
+
+research-pm checked the 4 missed cells against the keys: **0 test-set
+artifacts.** Post-hoc remark, not a re-scoring: of the two context-only
+temperature cases, the tap-water-on-a-winter-morning phrasing is the more
+indirect. Its key (cold) stands.
+
+**Set C is now spent.** It is never re-run, and any later score on it is a
+dev number. Miss categories go to llm-dev as abstract behaviour descriptions
+only, with no example wording.
+Outputs: `labels/heldout/results/test3_heldout_c_qwen3_14b.{log,json}`,
+`labels/heldout/results/test3_heldout_c_prerun_hashes.txt`.
+
+### 2026-09-24 — "0 hallucinations" corrected: the check tested existence, not reportability (#22)
+**What changed.** The Test 2 hallucination check counted a tooth as invented
+only if it was absent from `findings.teeth`. qa-engineer-2's new
+"unreported tooth" metric (#22) asks the question that matters to the
+patient: does the explanation describe only teeth the assessment *flagged*?
+The findings also hold every detection below the 0.50 reporting threshold,
+so the old check passed statements about teeth the product had decided not
+to report.
+
+**Numbers** (same 60 synthetic cases, seed 0, offline re-scores of stored
+runs; `runs/evals/test2_unreported_rescore_22.json`):
+
+| Run | First responses with an unreported tooth |
+|---|---|
+| 2026-09-17 (behind the "0 hallucinations" claim) | **7/60** (95% CI 4.8–22.6%) |
+| 2026-09-23 | 8/60 |
+| v2 (2026-09-24), legacy / triage | 9/60 / 11/60 |
+| v3, the current patient path, legacy / triage | 8/60 / **8/60** (CI 5.9–24.6%) |
+| v3 follow-up answers | 1/120 |
+
+Every hit is an affirmative finding claim about a detection below 0.50:
+caries at confidence 0.21–0.49, "other" detections, restorations. One case
+(09-17, S0027) describes a "possible spot" on a tooth with no detection at
+all.
+
+**Consequences.**
+- "0 hallucinations on 60 synthetic cases" holds only under the old
+  definition. It is corrected, with a dated note and the original wording
+  left visible, in `docs/reports/progress-2026-09-24.md` (possibly already
+  shown outside the team). It is also corrected in `docs/architecture.md`, and
+  qualified in the 2026-09-17 and 2026-09-24 Test 2 entries below. The lead
+  corrected CLAUDE.md.
+- From now on, the headline faithfulness figure uses the #22 definition. The
+  old figure may be quoted only with its definition.
+- Fix in progress (llm-dev): A1, the model is given only reportable teeth;
+  A2, a code guardrail rejects any mention of an unflagged tooth. Test 2 is
+  re-run on the fix and reported under both definitions.
+
+**Lesson.** A check is only as strong as its definition. "Not in the
+findings" tested that a tooth *exists*, not that it may be *reported*, and
+the gap between the two is exactly where the detector's low-confidence
+output lives. When a metric reads 0, ask what it could never catch.
+
 ### 2026-09-24 — P7 adjudication plan pre-declared (research-pm)
 `docs/plans/p7-adjudication-plan.md`, written before any P7 output exists.
 Additions to P7 spec §6/§7:
@@ -136,6 +227,10 @@ commit fdaf110.
   outputs:
   - hallucination 0/60, omission 0/60, misstated 0/60;
   - follow-up hallucinated tooth 0/120;
+  - *(qualified the same day: hallucination here is the original "tooth
+    absent from findings" definition. Under #22's "only flagged teeth" this
+    run is 8/60 first responses and 1/120 follow-ups; see the unreported-teeth
+    entry.)*
   - echo 0/120 (#11 closed);
   - missing tooth described as decay 0 (#13 closed).
 - **Real bug #18:** 10/10 URGENT partial-retake cases failed. 6 dropped the
@@ -720,6 +815,9 @@ and labelled tooth crops "airplane". Kept the previous caries detector.
 ### 2026-09-17 — Development LLM: qwen3:14b; 4B not deployable
 qwen3:4b leaked its private reasoning into all 60 of 60 test explanations and
 invented teeth in 40%. qwen3:14b: 0% on all three faithfulness measures.
+*(Qualified 2026-09-24: 0% only under the original definition, "tooth
+absent from the findings". Under the #22 "only flagged teeth" definition,
+this run scores 7/60; see the 2026-09-24 entry on unreported teeth.)*
 
 ### 2026-09-17 — Evidence-checked symptom extraction
 Prompt wording alone kept trading invented answers for dropped ones. Every

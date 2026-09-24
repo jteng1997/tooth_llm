@@ -298,6 +298,121 @@ def _teeth(teeth: list) -> str:
     return ", ".join(f"tooth {t} ({fdi_label(t)})" for t in teeth)
 
 
+def model_findings(findings: dict, assessment: dict) -> dict:
+    """The findings the explanation model is shown: image quality, arches, and
+    only the teeth it may report (flagged decay, reportable missing). A
+    detection below the reporting threshold never reaches the model, so it
+    cannot be told to the patient as a finding."""
+    decay, missing = split_flagged(assessment, findings)
+    teeth = (findings or {}).get("teeth") or {}
+    shown = {t: {**teeth[t], "detections": [
+                d for d in teeth[t].get("detections", [])
+                if d.get("type") in ("caries", "cavity")
+                and d.get("confidence", 0) >= rules.CARIES_CONF_THRESHOLD]}
+             for t in decay if t in teeth}
+    shown.update({t: {"present": False, "detections": []} for t in missing})
+    out = {k: v for k, v in (findings or {}).items()
+           if k not in ("teeth", "unassigned_detections")}
+    out["teeth"] = shown
+    return out
+
+
+_ALL_FDI = [f"{q}{p}" for q in "1234" for p in "12345678"]
+_TOOTH_NUMBERS = re.compile(
+    r"\b(?:tooth|teeth)\s+#?([1-4][1-8](?:(?:\s*,\s*|\s+and\s+|\s+or\s+|\s*&\s*|\s*/\s*)"
+    r"(?:tooth\s+)?#?[1-4][1-8])*)\b", re.I)
+_FINDING_WORDS = re.compile(
+    r"\b(?:decay\w*|cavit\w*|caries|carious|fillings?|restorations?|crowns?|indication|signs?"
+    r"|issues?|problems?|unusual|lesions?|spots?|damage\w*|findings?|found|detected|missing"
+    r"|broken|crack\w*|shadows?)\b", re.I)
+# "Nothing on tooth 26 reached...", "no decay on tooth 26": the negation governs
+# the tooth. "...on tooth 11, but we are not sure what it is" is still a report.
+_NEGATION = re.compile(r"\b(?:no|not|nothing|none|never|didn't|did not|doesn't|does not|isn't"
+                       r"|wasn't|without|nor)\b[^.,;]{0,40}\b(?:tooth|teeth|molar|premolar"
+                       r"|incisor|canine)\b", re.I)
+
+
+def teeth_named(sentence: str) -> set:
+    """FDI teeth a sentence names, by number ("tooth 26", "teeth 15, 31 and 34")
+    or by plain-word name ("upper left first molar"). A bare number is not a
+    tooth ("within 24 hours")."""
+    named = set()
+    for m in _TOOTH_NUMBERS.finditer(sentence):
+        named |= set(re.findall(r"[1-4][1-8]", m.group(1)))
+    low = sentence.lower()
+    return named | {t for t in _ALL_FDI if fdi_label(t) in low}
+
+
+def reports_unreported(text: str, allowed) -> list:
+    """Teeth outside `allowed` that a sentence reports a finding on. A sentence
+    that only names a tooth, or denies something on it, is not a report
+    (denials are denies_tooth_finding's)."""
+    wrong = set()
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
+        if _FINDING_WORDS.search(sentence) and not _NEGATION.search(sentence):
+            wrong |= teeth_named(sentence) - set(allowed)
+    return sorted(wrong)
+
+
+# "Tooth 26 is fine", "no decay on tooth 26": a tooth with nothing reported may
+# still have a problem the photo missed.
+_DENIES_TOOTH_FINDING = re.compile(
+    r"\bno (?:signs? of |sign of )?(?:problems?|issues?|decay|cavit\w*|caries|damage)"
+    r"[^.]{0,20}\b(?:on|in|with|for) (?:your )?(?:tooth|teeth) [1-4][1-8]\b"
+    r"|\b(?:tooth|teeth) [1-4][1-8]\b[^.]{0,40}\b(?:is|are|looks?|seems?) (?:fine|healthy|ok"
+    r"|okay|normal|good|clear|free of)\b"
+    r"|\b(?:tooth|teeth) [1-4][1-8]\b[^.]{0,30}\b(?:has|have) no\b"
+    # Reassurance is a denial too: the photos can miss a problem.
+    r"|\bnothing (?:to|you need to|you should) worry about\b"
+    r"|\bnot (?:something|anything) to worry about\b"
+    r"|\bno (?:cause|reason|need) (?:for|to) (?:concern|worry|be worried|be concerned)\b"
+    r"|\bprobably (?:fine|nothing|ok|okay|harmless|not (?:serious|a problem|anything))\b", re.I)
+
+
+def denies_tooth_finding(text: str) -> bool:
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
+        m = _DENIES_TOOTH_FINDING.search(sentence)
+        if m and not _NEGATED.search(sentence[:m.start()]):
+            return True
+    return False
+
+
+# Prompt rule 6: never tell the patient they can avoid or delay seeing a
+# dentist. "You don't need to wait for the new photo to book" is fine.
+_DISCOURAGES = re.compile(
+    r"\b(?:don't|do not|won't|will not|wouldn't) (?:really |actually )?need (?:to (?:see|visit|go to"
+    r"|book|call) )?(?:a |the |your |an? )?(?:dentist|dental (?:visit|appointment|check))"
+    r"|\bno need (?:to (?:see|visit|go to|book|call)|for) (?:a |the |your |an? )?"
+    r"(?:dentist|dental (?:visit|appointment|check)|appointment|treatment)"
+    # "There is no need to visit today": no dentist word. Going to hospital, A&E,
+    # a pharmacy or a doctor instead is a different message and stays allowed.
+    r"|\b(?:no need|(?:don't|do not|won't|will not) (?:really |actually )?need) to (?:visit|go"
+    r"|come in|book|make an appointment)\b(?!\s+(?:to\s+)?(?:the\s+|a\s+|an\s+|your\s+)?"
+    r"(?:hospital|emergency|a&e|er\b|pharmacy|pharmacist|chemist|gp|doctor))"
+    r"|\b(?:it|this|that|you) can wait\b|\bskip (?:the |your |a )?dentist"
+    r"|\bavoid (?:the |a |your )?dentist|\b(?:unnecessary|not necessary) to see (?:a )?dentist", re.I)
+
+
+def discourages_care(text: str) -> bool:
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
+        m = _DISCOURAGES.search(sentence)
+        if m and not _NEGATED.search(sentence[:m.start()]):
+            return True
+    return False
+
+
+RETAKE_MISSING = "does not ask for a retake of the photo that could not be used"
+
+
+def decay_sentence(decay: list) -> str:
+    return f"Based on the image, there is an indication of tooth decay on {_teeth(decay)}."
+
+
+def missing_sentence(missing: list) -> str:
+    return (f"Based on the image, {_teeth(missing)} "
+            f"{'appears' if len(missing) == 1 else 'appear'} to be missing.")
+
+
 def fallback_text(assessment: dict, findings: dict = None) -> str:
     """Deterministic first response, used when the model's text keeps
     breaking a guardrail. Plain, and built only from the assessment (and
@@ -309,11 +424,9 @@ def fallback_text(assessment: dict, findings: dict = None) -> str:
         parts.append(f"The photos could not be used, so please take them again: {_RETAKE_HOW}")
     elif decay or missing:
         if decay:
-            parts.append(f"Based on the image, there is an indication of tooth decay on "
-                         f"{_teeth(decay)}.")
+            parts.append(decay_sentence(decay))
         if missing:
-            parts.append(f"Based on the image, {_teeth(missing)} "
-                         f"{'appears' if len(missing) == 1 else 'appear'} to be missing.")
+            parts.append(missing_sentence(missing))
     elif not partial:
         parts.append("Nothing in these photos reached the level we report. That does not "
                      "rule anything out.")
@@ -358,14 +471,15 @@ class Explanation:
 
     def first_response(self) -> str:
         passages = self._retrieve(_first_query(self.findings, self.assessment))
+        shown = model_findings(self.findings, self.assessment)
         content = "\n\n".join([
-            "findings:\n" + json.dumps(self.findings, indent=2),
+            "findings:\n" + json.dumps(shown, indent=2),
             "symptoms:\n" + json.dumps(self.symptoms, indent=2) if self.symptoms
             else "symptoms: null (the user did not do the interview)",
             "assessment:\n" + json.dumps(self.assessment, indent=2),
             "tooth_names (plain-word location for each number; write a tooth as "
             "\"tooth 36 (lower left first molar)\", always giving both):\n"
-            + json.dumps(tooth_names(self.findings), indent=2),
+            + json.dumps(tooth_names(shown), indent=2),
             _passages_block(passages),
             self._scope_instruction(),
         ])
@@ -376,13 +490,9 @@ class Explanation:
         return self.first_text
 
     def _scope_instruction(self) -> str:
-        """What may be reported at all.
-
-        findings.teeth carries every detection the model made, including
-        ones below the reporting threshold in rules.py. Only the teeth
-        rules.py flagged may be described as possible cavities — otherwise
-        a 0.22-confidence blip gets told to the user as a finding.
-        """
+        """What may be reported at all. The model is shown model_findings()
+        only, so a detection below the reporting threshold never reaches it;
+        this instruction and reports_unreported() hold the same line."""
         partial = partial_retake(self.assessment)
         if self.assessment["retake_required"] and not partial:
             return ("Write the first response now. The photos could not be used: ask for "
@@ -392,21 +502,24 @@ class Explanation:
         if decay or missing:
             scope = "Only these teeth may be described as having a possible finding: "
             if decay:
-                scope += "possible tooth decay on " + ", ".join(decay) + ". "
+                scope += ("possible tooth decay on " + ", ".join(decay) + ". Write it as this "
+                          f"sentence, word for word: \"{decay_sentence(decay)}\" ")
             if missing:
                 scope += ("appears to be missing: " + ", ".join(missing) + " (a missing "
-                          "tooth is not decay: never say decay or a cavity for it). ")
+                          "tooth is not decay: never say decay or a cavity for it). Write it as "
+                          f"this sentence, word for word: \"{missing_sentence(missing)}\" ")
         else:
             scope = ("No tooth may be described as having a finding: nothing reached the "
                      "reporting threshold. Say nothing was found, and that this does not "
                      "rule anything out. ")
-        scope += ("Any other detection in findings was below the reporting threshold "
-                  "and must not be mentioned at all. ")
+        scope += ("Never describe a finding on any other tooth, and never say another "
+                  "tooth is fine. ")
         if partial:
             arches = unusable_arches(self.findings)
             which = (f"The photo of the {arches[0]} teeth" if len(arches) == 1
                      else "A photo")
-            scope += (f"{which} could not be used: ask for a retake of it and explain how. "
+            scope += (f"{which} could not be used: ask for a retake of it with this sentence, "
+                      f"word for word: \"{_retake_sentence(self.findings)}\" "
                       "The result still stands and must be given in full: state "
                       "assessment.headline word for word and why, from assessment.reasons. "
                       "Never make acting on it wait for the new photo. ")
@@ -468,6 +581,7 @@ class Explanation:
         fallback."""
         self.messages.append({"role": "user", "content": content})
         location = (self.symptoms or {}).get("location")
+        reportable = {t for group in split_flagged(self.assessment, self.findings) for t in group}
         # Any tooth the photo shows absent, flagged or not (third molars too).
         missing = sorted({*(missing or []),
                           *(t for t, v in (self.findings or {}).get("teeth", {}).items()
@@ -486,14 +600,31 @@ class Explanation:
                 found.append("says the pain is not from a tooth or the teeth are fine; the "
                              "photos can miss a problem and only a dentist can tell what "
                              "causes the pain")
+            unreported = reports_unreported(text, reportable)
+            if unreported:
+                found.append(f"describes a finding on tooth {', '.join(unreported)}, which is "
+                             "not one of the teeth that may be reported")
+            if discourages_care(text):
+                found.append("tells the patient they can skip or delay seeing a dentist; never "
+                             "do that")
+            if denies_tooth_finding(text):
+                found.append("says a tooth is fine or has no problem; say instead that nothing "
+                             "on it reached the level we report, and that this does not rule "
+                             "anything out")
             if first and partial_retake(self.assessment):
                 headline = self.assessment["headline"].strip()
                 if not _states_headline(text, headline):
                     found.append(f'does not state the urgency as "{headline}"; a photo to '
                                  "retake never hides the result")
                 if not _ASKS_RETAKE.search(text):
-                    found.append("does not ask for a retake of the photo that could not be used")
+                    found.append(RETAKE_MISSING)
             return found
+
+        def with_retake(text):
+            """The model's text with the fixed retake sentence appended, when
+            that sentence is all it lacks; None otherwise."""
+            patched = text.rstrip() + " " + _retake_sentence(self.findings)
+            return None if violations(patched) else patched
 
         reply = chat(self.messages, self.model)
         problems = violations(reply)
@@ -507,14 +638,26 @@ class Explanation:
                                        "after_retry": ["repeats the first response"]
                                        if echoes(rewritten, echo_of) else []})
             reply, problems = rewritten, violations(rewritten)
+        if problems == [RETAKE_MISSING] and with_retake(reply):
+            # A rewrite never added it (Test 2 v3: 8/8 identical retries), and
+            # the sentence is fixed text, so it is added here.
+            self.guardrail_log.append({"first": problems, "after_retry": [],
+                                       "appended": "retake sentence"})
+            reply, problems = with_retake(reply), []
         if problems:
-            retry = self.messages + [
-                {"role": "assistant", "content": reply},
-                {"role": "user", "content": "Rewrite your reply. It " + "; it ".join(problems)
-                                            + ". Follow the hard rules."}]
+            ask = "Rewrite your reply. It " + "; it ".join(problems) + ". Follow the hard rules."
+            if flagged_teeth and any(FINDING_PHRASE in p.lower() for p in problems):
+                ask += f" Use this sentence word for word: \"{decay_sentence(flagged_teeth)}\""
+            retry = self.messages + [{"role": "assistant", "content": reply},
+                                     {"role": "user", "content": ask}]
             reply = chat(retry, self.model)
             later = violations(reply)
-            self.guardrail_log.append({"first": problems, "after_retry": later})
+            if later == [RETAKE_MISSING] and with_retake(reply):
+                reply, later = with_retake(reply), []
+                self.guardrail_log.append({"first": problems, "after_retry": [],
+                                           "appended": "retake sentence"})
+            else:
+                self.guardrail_log.append({"first": problems, "after_retry": later})
             if later:
                 reply = fallback
         self.messages.append({"role": "assistant", "content": reply})

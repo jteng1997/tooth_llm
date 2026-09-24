@@ -136,6 +136,69 @@ def reportable(assessment: dict, findings: dict) -> set:
     return set(decay) | set(missing)
 
 
+_SENTENCES = re.compile(r"(?<=[.!?])\s+|\n+")
+_ARCH_WORDS = {"upper": re.compile(r"\b(?:upper|top|maxilla\w*)\b", re.I),
+               "lower": re.compile(r"\b(?:lower|bottom|mandib\w*)\b", re.I)}
+# "Nothing was found", "no problems were visible", "we did not see any
+# problems": a claim that the photos showed nothing.
+_ABSENCE = re.compile(
+    r"\b(?:nothing|no (?:signs?|problems?|issues?|decay|cavit\w*|findings?|concerns?))\b"
+    r"[^.!?]{0,60}?\b(?:found|visible|seen|shows?|showed|detected|spotted)\b"
+    r"|\bnothing (?:visible|found|seen)\b"
+    r"|\b(?:did not|didn'?t) (?:see|find|spot) (?:any|anything)\b"
+    r"|\b(?:photos?|images?|pictures?) (?:show|showed) nothing\b", re.I)
+# "A cavity can be there even when the photos show nothing" is a limitation.
+_LIMITATION = re.compile(r"\b(?:can|could|may|might) (?:still )?be there\b|\beven (?:when|if)\b", re.I)
+_USABLE_PHOTO = re.compile(r"\bphotos? (?:we|that) could (?:be )?use\b|\busable photo\b"
+                           r"|\bphoto that could be used\b", re.I)
+
+
+def unscoped_absence(text: str, usable: list) -> list:
+    """With an unusable photo, sentences saying nothing was found or seen
+    that are not scoped to the usable photo ("nothing was found in the
+    photos" reads as covering the arch nobody could see). Scoped: names only
+    the usable arch, or "the photo we could use". Naming the unusable arch
+    is never scoped."""
+    bad = []
+    for sentence in _SENTENCES.split(text or ""):
+        if not _ABSENCE.search(sentence) or _LIMITATION.search(sentence):
+            continue
+        named = {arch for arch, rx in _ARCH_WORDS.items() if rx.search(sentence)}
+        scoped = (bool(named) and named <= set(usable)) or (
+            not named and bool(_USABLE_PHOTO.search(sentence)))
+        if not scoped:
+            bad.append(sentence.strip())
+    return bad
+
+
+# "The lower teeth look fine", "your upper jaw is okay": the photos can miss a
+# problem, so a whole arch is never called fine (#17, lead 2026-09-24).
+_ARCH_FINE = re.compile(
+    r"\b(?:(?:upper|lower|top|bottom|your|the|other) )?(?:teeth|jaw|arch|gums|mouth)\b"
+    r"[^.!?]{0,25}?\b(?:look|looks|looked|are|is|was|were|seem|seems|appear|appears)"
+    r"(?: to be)? (?:all )?(?:completely |totally |perfectly )?"
+    # not bare "clear": "the photos of your lower teeth were clear" is photo quality
+    r"(?:fine|okay|ok|healthy|normal|good|in good (?:shape|condition)|clear of|free of"
+    r"|problem-free)\b", re.I)
+_NOT_A_CLAIM = re.compile(r"\b(?:not|n't) (?:mean|necessarily|say|tell)\b|\bnot that\b|\beven if\b"
+                          r"|\bcannot say\b|\bcan'?t say\b|\bdoes not prove\b", re.I)
+
+
+def arch_reassurance(text: str) -> list:
+    """Sentences calling the teeth, a jaw or an arch fine/healthy/okay. "It
+    does not mean your teeth are fine" is the opposite and is not counted."""
+    bad = []
+    for sentence in _SENTENCES.split(text or ""):
+        m = _ARCH_FINE.search(sentence)
+        if m and not _NOT_A_CLAIM.search(sentence[:m.end()]):
+            bad.append(sentence.strip())
+    return bad
+
+
+def usable_arches(findings: dict) -> list:
+    return [a for a, q in (findings.get("image_quality") or {}).items() if q.get("usable")]
+
+
 def discourages(text: str) -> str:
     lowered = (text or "").lower()
     return next((phrase for phrase in DISCOURAGE if phrase in lowered), "")
@@ -193,11 +256,12 @@ def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbos
     import triage
     knowledge = knowledge or Knowledge()
     results = {"mode": mode, "hallucination": 0, "omission": 0, "contradiction": 0, "misstated": 0,
-               "unreported": 0,
+               "unreported": 0, "unscoped_absence": 0, "arch_reassurance": 0,
                "n": len(cases), "cases": [], "retake_required": 0, "retake_not_requested": 0,
                "guardrail_retry": 0, "guardrail_fallback": 0, "places_pain": 0,
                "follow_up": {"n": 0, "hallucination": 0, "discourages": 0, "misstated": 0,
-                             "unreported": 0, "echo": 0, "echo_retry": 0, "guardrail_retry": 0,
+                             "unreported": 0, "unscoped_absence": 0, "arch_reassurance": 0,
+                             "retake_required": 0, "echo": 0, "echo_retry": 0, "guardrail_retry": 0,
                              "guardrail_fallback": 0, "places_pain": 0}}
 
     for case in cases:
@@ -211,6 +275,11 @@ def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbos
                                                  [], **tkw)
         session = Explanation(case["findings"], case.get("symptoms"), **kwargs)
         may_report = reportable(session.assessment, case["findings"])
+        usable = usable_arches(case["findings"])
+        retake = bool(session.assessment["retake_required"])
+
+        def absence(text):
+            return unscoped_absence(text, usable) if retake else []
         replies = []
         original, recording = _recording_chat(replies)
         explain.chat = recording
@@ -229,7 +298,9 @@ def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbos
                                                               - set(case["findings"].get("teeth", {}))),
                                        "discourages": discourages(reply),
                                        "misstated": misstated(reply, case["findings"]),
-                                       "unreported": unreported(reply, may_report)})
+                                       "unreported": unreported(reply, may_report),
+                                       "unscoped_absence": absence(reply),
+                                       "arch_reassurance": arch_reassurance(reply)})
         finally:
             explain.chat = original
         assessed = session.assessment
@@ -244,6 +315,9 @@ def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbos
             fu["discourages"] += bool(f["discourages"])
             fu["misstated"] += bool(f["misstated"])
             fu["unreported"] += bool(f["unreported"])
+            fu["unscoped_absence"] += bool(f["unscoped_absence"])
+            fu["arch_reassurance"] += bool(f["arch_reassurance"])
+            fu["retake_required"] += retake
             fu["echo"] += f["echo"]
             fu["echo_retry"] += f["echo_retry"]
             fu["guardrail_retry"] += f["retried"] and not f["echo_retry"]
@@ -264,8 +338,11 @@ def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbos
         wrong_finding = misstated(text, case["findings"])
         no_retake = bool(assessed["retake_required"]) and not retake_requested(text)
         not_reportable = unreported(text, may_report)
+        unscoped, fine = absence(text), arch_reassurance(text)
 
         results["unreported"] += bool(not_reportable)
+        results["unscoped_absence"] += bool(unscoped)
+        results["arch_reassurance"] += bool(fine)
         results["retake_required"] += bool(assessed["retake_required"])
         results["retake_not_requested"] += no_retake
         results["misstated"] += bool(wrong_finding)
@@ -278,6 +355,7 @@ def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbos
             "hallucinated": sorted(extra), "omitted": sorted(missing), "contradiction": contra,
             "misstated": wrong_finding, "retake_required": bool(assessed["retake_required"]),
             "retake_not_requested": no_retake, "unreported": not_reportable,
+            "unscoped_absence": unscoped, "arch_reassurance": fine,
             "location": (case.get("symptoms") or {}).get("location"),
             "guardrail_log": first_log["entries"], "fallback": fell_back,
             "places_pain": first_log["places_pain"], "follow_ups": follow_ups, "replies": replies,
@@ -297,6 +375,10 @@ def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbos
                 flags.append("RETAKE NOT REQUESTED (a photo was unusable)")
             if not_reportable:
                 flags.append(f"UNREPORTED {not_reportable} told as a finding (not flagged)")
+            if unscoped:
+                flags.append("UNSCOPED ABSENCE (nothing found, not limited to the usable photo)")
+            if fine:
+                flags.append("ARCH CALLED FINE")
             print(f"{'FAIL' if flags else 'ok  '} {case['id']} [{assessed['urgency']}] {case['note']}")
             if flags:
                 print("       " + "; ".join(flags))
@@ -311,7 +393,9 @@ def evaluate(cases: list, model: str = None, knowledge: Knowledge = None, verbos
                                          (f"HALLUCINATED {f['hallucinated']}", f["hallucinated"]),
                                          (f"DISCOURAGES {f['discourages']!r}", f["discourages"]),
                                          (f"MISSTATED {f['misstated']}", f["misstated"]),
-                                         (f"UNREPORTED {f['unreported']}", f["unreported"])) if on]
+                                         (f"UNREPORTED {f['unreported']}", f["unreported"]),
+                                         ("UNSCOPED ABSENCE", f["unscoped_absence"]),
+                                         ("ARCH CALLED FINE", f["arch_reassurance"])) if on]
                 if marks:
                     print(f"       follow-up {f['question']!r}: {', '.join(marks)}")
             if case.get("must"):
@@ -336,6 +420,9 @@ def report(results: dict, label: str) -> None:
         print(f"  {rate:14s} {results[rate]}/{n}  ({results[rate] / n:.1%})")
     print(f"  retake not requested  {results['retake_not_requested']}/{results['retake_required']} "
           f"cases with an unusable photo")
+    print(f"  unscoped absence      {results['unscoped_absence']}/{results['retake_required']} "
+          f"cases with an unusable photo")
+    print(f"  arch called fine      {results['arch_reassurance']}/{n}")
     print(f"  guardrail retry {results['guardrail_retry']}/{n}, fallback text used "
           f"{results['guardrail_fallback']}/{n}, places_pain fired {results['places_pain']}/{n}")
     located = sum(bool(c["location"]) for c in results["cases"])
