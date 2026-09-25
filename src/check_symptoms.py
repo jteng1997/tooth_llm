@@ -18,8 +18,15 @@ one that matters most:
             filled something in — a guessed field goes straight into triage
   missed    the key has a value but the model returned null
 
+Severity by direction (pre-declared 2026-09-26, before held-out Test 5):
+pain_severity 'severe' is a triage input (U2, URGENT), so its errors are
+counted by which way they push the level, over the headline cells whose key
+is not null:
+  false severe   key mild/moderate, extracted severe (raises urgency)
+  missed severe  key severe, extracted anything else incl. null (lowers it)
+
 Two extra lines:
-  clicks    a checklist answer that prose overwrote (must never happen)
+  clicks   a checklist answer that prose overwrote (must never happen)
   robustness  cases marked "scope": "robustness" (D05, non-English answers,
             out of scope since the English-only decision) — scored apart and
             never in the headline numbers.
@@ -111,6 +118,9 @@ def evaluate(model: str = DEFAULT_MODEL, verbose: bool = True, protocol=None, ll
                   "scored_fields": {f: (got.get(f) == want if not isinstance(want, list)
                                         else sorted(got.get(f) or []) == sorted(want))
                                     for f, want in case["expected"].items()}}
+        if "pain_severity" in case["expected"]:
+            record["severity"] = {"key": case["expected"]["pain_severity"],
+                                  "got": got.get("pain_severity")}
         if scope == "robustness":
             record["english_notice_would_show"] = any(
                 _not_latin(a["answer"]) for a in played["asked"])
@@ -140,6 +150,9 @@ def evaluate(model: str = DEFAULT_MODEL, verbose: bool = True, protocol=None, ll
     results["robustness"] = {**_aggregate(robust),
                              "english_notice": sum(c["english_notice_would_show"] for c in robust)}
     results["clicks_overwritten"] = sum(bool(c["clicks_changed"]) for c in results["cases"])
+    results["severity_errors"] = severity_errors(
+        [(c["id"], c["severity"]["key"], c["severity"]["got"]) for c in headline
+         if "severity" in c and c["severity"]["key"] is not None])
 
     if verbose:
         print(f"\nmodel: {model}   chat fields only: {spec['chat_fields']}")
@@ -168,7 +181,61 @@ def evaluate(model: str = DEFAULT_MODEL, verbose: bool = True, protocol=None, ll
             print(f"  out-of-scope robustness, separate from the above: exact {r['exact']}/{r['n']}, "
                   f"fields {r['fields_right']}/{r['fields_scored']}, guessed {r['guessed']}, "
                   f"missed {r['missed']}, English-only notice would show {r['english_notice']}/{r['n']}")
+        print_severity_errors(results["severity_errors"], "headline cells whose key is not null")
     return results
+
+
+SEVERE = "severe"
+BELOW_SEVERE = ("mild", "moderate")
+
+
+def severity_errors(pairs: list, ci=None) -> dict:
+    """pain_severity errors by the direction they push triage (U2 reads
+    'severe'). pairs: [(case_id, key_value, extracted_value)], one per scored
+    cell; n is len(pairs), so the caller picks the denominator. Each rate is
+    also given against the key's own count (n_key_below_severe, n_key_severe)."""
+    ci = ci or clopper_pearson
+    n = len(pairs)
+    false_ids = [i for i, want, got in pairs if want in BELOW_SEVERE and got == SEVERE]
+    missed_ids = [i for i, want, got in pairs if want == SEVERE and got != SEVERE]
+    guessed_ids = [i for i, want, got in pairs if want is None and got == SEVERE]
+    n_below = sum(want in BELOW_SEVERE for _, want, _ in pairs)
+    n_severe = sum(want == SEVERE for _, want, _ in pairs)
+    return {"n": n, "n_key_below_severe": n_below, "n_key_severe": n_severe,
+            "false_severe": len(false_ids), "false_severe_ids": false_ids,
+            "false_severe_ci95": ci(len(false_ids), n),
+            "false_severe_ci95_of_key_below": ci(len(false_ids), n_below),
+            "missed_severe": len(missed_ids), "missed_severe_ids": missed_ids,
+            "missed_severe_ci95": ci(len(missed_ids), n),
+            "missed_severe_ci95_of_key_severe": ci(len(missed_ids), n_severe),
+            "severe_where_key_null": len(guessed_ids), "severe_where_key_null_ids": guessed_ids}
+
+
+def _ci_text(ci) -> str:
+    lo, hi = ci
+    return "n/a" if lo != lo else f"[{lo:.1%}, {hi:.1%}]"
+
+
+def print_severity_errors(sev: dict, over: str, show_ids: bool = True) -> None:
+    """The pre-declared severity block (2026-09-26); an addition, no headline
+    number depends on it. show_ids=False for held-out output."""
+    n = sev["n"]
+
+    def ids(key):
+        return f"  {sev[key]}" if show_ids and sev[key] else ""
+    print(f"  pain_severity errors by direction (n = {n} {over}; exact 95% CIs):")
+    print(f"    false severe  (key mild/moderate, got severe; raises urgency)  "
+          f"{sev['false_severe']}/{n} {_ci_text(sev['false_severe_ci95'])}; "
+          f"of key mild/moderate {sev['false_severe']}/{sev['n_key_below_severe']} "
+          f"{_ci_text(sev['false_severe_ci95_of_key_below'])}{ids('false_severe_ids')}")
+    print(f"    missed severe (key severe, got other or null; lowers urgency)  "
+          f"{sev['missed_severe']}/{n} {_ci_text(sev['missed_severe_ci95'])}; "
+          f"of key severe {sev['missed_severe']}/{sev['n_key_severe']} "
+          f"{_ci_text(sev['missed_severe_ci95_of_key_severe'])}{ids('missed_severe_ids')}")
+    if n - sev["n_key_below_severe"] - sev["n_key_severe"]:
+        print(f"    severe where the key is null (in neither count above)  "
+              f"{sev['severe_where_key_null']}/{n - sev['n_key_below_severe'] - sev['n_key_severe']}"
+              f"{ids('severe_where_key_null_ids')}")
 
 
 def clopper_pearson(k: int, n: int, alpha: float = 0.05) -> tuple:

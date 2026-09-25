@@ -68,5 +68,79 @@ class Reporting(unittest.TestCase):
         self.assertEqual(played["unscripted"], [])
 
 
+class SeverityErrors(unittest.TestCase):
+    """Pre-declared 2026-09-26: pain_severity errors by the direction they push
+    triage. Extra block only; no other number may move."""
+
+    PAIRS = [("A", "mild", "severe"), ("B", "moderate", "severe"), ("C", "moderate", "moderate"),
+             ("D", "severe", "moderate"), ("E", "severe", None), ("F", "severe", "severe"),
+             ("G", "mild", "moderate")]
+
+    def test_directions_and_ids(self):
+        s = cs.severity_errors(self.PAIRS)
+        self.assertEqual((s["n"], s["n_key_below_severe"], s["n_key_severe"]), (7, 4, 3))
+        self.assertEqual((s["false_severe"], s["false_severe_ids"]), (2, ["A", "B"]))
+        self.assertEqual((s["missed_severe"], s["missed_severe_ids"]), (2, ["D", "E"]))
+        self.assertEqual(s["false_severe_ci95"], cs.clopper_pearson(2, 7))
+        self.assertEqual(s["false_severe_ci95_of_key_below"], cs.clopper_pearson(2, 4))
+        self.assertEqual(s["missed_severe_ci95_of_key_severe"], cs.clopper_pearson(2, 3))
+
+    def test_a_correct_run_counts_nothing(self):
+        s = cs.severity_errors([(i, v, v) for i, v in (("A", "mild"), ("B", "severe"))])
+        self.assertEqual((s["false_severe"], s["missed_severe"]), (0, 0))
+        self.assertEqual(s["missed_severe_ci95"][0], 0.0)
+
+    def test_mild_moderate_swaps_are_neither(self):
+        s = cs.severity_errors([("A", "mild", "moderate"), ("B", "moderate", "mild"),
+                                ("C", "moderate", None)])
+        self.assertEqual((s["false_severe"], s["missed_severe"]), (0, 0))
+
+    def test_null_key_is_kept_apart(self):
+        s = cs.severity_errors([("A", None, "severe"), ("B", "mild", "mild")])
+        self.assertEqual((s["false_severe"], s["severe_where_key_null_ids"]), (0, ["A"]))
+
+    def test_empty_gives_nan_not_a_crash(self):
+        s = cs.severity_errors([])
+        self.assertNotEqual(s["false_severe_ci95"][0], s["false_severe_ci95"][0])
+
+    def test_evaluate_on_the_dev_dialogues_with_a_stub_extractor(self):
+        """The real evaluate() and report on llm/eval/symptom_dialogues.json,
+        with run_case stubbed to return the key except for pain_severity."""
+        import contextlib
+        import io
+        import json
+        spec = json.loads(cs.DIALOGUES.read_text(encoding="utf-8"))
+        cases = [c for c in spec["cases"] if c.get("scope", "headline") == "headline"
+                 and c["expected"].get("pain_severity") is not None]
+        below = [c["id"] for c in cases if c["expected"]["pain_severity"] != "severe"]
+        severe = [c["id"] for c in cases if c["expected"]["pain_severity"] == "severe"]
+        self.assertTrue(below and severe, "the dev dialogues need both kinds of key")
+        flip = {below[0]: "severe", severe[0]: None}
+        by_id = {c["id"]: c for c in spec["cases"]}
+
+        def fake_run_case(case, model, protocol, llm=None):
+            got = dict(case["expected"])
+            if case["id"] in flip:
+                got["pain_severity"] = flip[case["id"]]
+            got.update(case.get("expected_clicks_unchanged") or {})
+            return {"symptoms": got, "asked": [], "unscripted": [], "unused": {}}
+        original = cs.run_case
+        cs.run_case = fake_run_case
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                r = cs.evaluate("stub", protocol=object())
+        finally:
+            cs.run_case = original
+        s = r["severity_errors"]
+        self.assertEqual(s["n"], len(cases))
+        self.assertEqual((s["false_severe_ids"], s["missed_severe_ids"]), ([below[0]], [severe[0]]))
+        self.assertIn(f"false severe  (key mild/moderate, got severe; raises urgency)  1/{len(cases)}",
+                      buf.getvalue())
+        # the existing numbers see exactly two wrong fields, as before
+        self.assertEqual(r["fields_scored"] - r["fields_right"], 2)
+        self.assertIn(by_id[below[0]]["id"], [c["id"] for c in r["cases"] if c["wrong"]])
+
+
 if __name__ == "__main__":
     unittest.main()

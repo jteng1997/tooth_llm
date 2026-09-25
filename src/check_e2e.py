@@ -24,6 +24,10 @@ exactly one bucket, first failure in the chain wins; research-pm confirms it:
   2 extraction  a symptom field differs from the key
   3 triage      every field matches the key, the level does not
   4 protocol gap  never proposed by code; research-pm's call
+Severity block (pre-declared 2026-09-26, reported after the above): false
+severe / missed severe over the cases that reached the chat (as in
+check_symptoms), and, where pain_severity differs from the key, how often the
+level moved up or down from the level the key's own symptoms give.
 --mock replaces both models: an oracle extractor that returns the key's value
 for every answered chat question (quoting the patient's reply), and a triage
 model that always proposes ROUTINE with no criteria, so the final level is
@@ -39,6 +43,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import check_symptoms as cs  # noqa: E402
 import check_triage as ct  # noqa: E402
 import interview as interview_mod  # noqa: E402
 
@@ -253,9 +258,38 @@ def evaluate(keys: list, texts: dict, protocol, model: str, extract_llm_for, tri
                           for r in results),
                       "reasked": sum(len(r["reasked"]) for r in results),
                       "unscripted": sum(len(r["unscripted"]) for r in results)},
+        "severity": severity_block(results, by_id),
         "cases": results,
     }
     return summary
+
+
+def severity_block(results: list, by_id: dict) -> dict:
+    """Pre-declared 2026-09-26, before held-out Test 5; an addition, no
+    pre-registered metric depends on it. pain_severity errors by direction
+    over the cases that reached the chat, and the cases whose level differs
+    from the level the key's own symptoms give (protocol_on_key_symptoms)
+    while pain_severity differs from the key, split up/down."""
+    reached = [r for r in results if r["chat_asked"]]
+    errors = cs.severity_errors(
+        [(r["id"], by_id[r["id"]]["symptoms"].get("pain_severity"), r["symptoms"].get("pain_severity"))
+         for r in reached], ct.clopper_pearson)
+    differs = [r for r in results
+               if by_id[r["id"]]["symptoms"].get("pain_severity") != r["symptoms"].get("pain_severity")]
+    shift = {"n_severity_differs": len(differs)}
+    for system in ("final", "protocol_check"):
+        up, down, other = [], [], []
+        for r in differs:
+            ref, got = r["protocol_on_key_symptoms"], r[system]
+            if got not in ct.ORDER:          # RETAKE or no answer: not on the scale
+                other.append(r["id"])
+            elif ct.ORDER[got] < ct.ORDER[ref]:
+                up.append(r["id"])
+            elif ct.ORDER[got] > ct.ORDER[ref]:
+                down.append(r["id"])
+        shift[system] = {"up": len(up), "up_ids": up, "down": len(down), "down_ids": down,
+                         "not_a_level": len(other), "not_a_level_ids": other}
+    return {"errors": errors, "level_shift": shift}
 
 
 def print_report(summary: dict, mock: bool) -> None:
@@ -292,6 +326,16 @@ def print_report(summary: dict, mock: bool) -> None:
             print(f"final vs rules (n = {c['n_common']}): b {c['only_first_under']}, c {c['only_second_under']}"
                   + ("; underpowered: fewer than 10 discordant pairs, so no test of a difference is reported"
                      if c["underpowered"] else f"; exact McNemar p = {c['p_exact']:.3g}"))
+    sev = summary["severity"]
+    cs.print_severity_errors(sev["errors"], "cases that reached the chat")
+    sh = sev["level_shift"]
+    print(f"  level vs the key's own symptoms (protocol on the key), in the "
+          f"{sh['n_severity_differs']} cases whose pain_severity differs from the key:")
+    for system in ("final", "protocol_check"):
+        x = sh[system]
+        print(f"    {system:<15} up {x['up']}/{sh['n_severity_differs']} {x['up_ids'] or ''}  "
+              f"down {x['down']}/{sh['n_severity_differs']} {x['down_ids'] or ''}"
+              + (f"  not a level {x['not_a_level']} {x['not_a_level_ids']}" if x["not_a_level"] else ""))
     print("\nThese numbers must be reported with:")
     for i, text in enumerate(ct.CAVEATS[:2], 1):
         print(f"  {i}. {text}")

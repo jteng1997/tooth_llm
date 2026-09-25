@@ -187,6 +187,106 @@ class Scoring(unittest.TestCase):
         self.assertEqual(s["extraction"]["wrong_cells"], 1)
 
 
+def _with_severity(oracle, value):
+    """The oracle extractor, but pain_severity is `value` (quoted from the Q11
+    reply the oracle found) whenever the oracle settled it."""
+    def llm(messages, schema):
+        out = json.loads(oracle(messages, schema))
+        if out.get("pain_severity", {}).get("value") is not None:
+            out["pain_severity"]["value"] = value
+        return json.dumps(out)
+    return llm
+
+
+@unittest.skipIf(ERR, f"protocol does not load: {ERR}")
+class SeverityBlock(unittest.TestCase):
+    """Pre-declared 2026-09-26: severity errors by direction, and the level
+    moves they cause, as an extra block that leaves every other number alone."""
+
+    def keys(self):
+        mild = make_key("SOON", ["S1"], **{**PAIN, "pain_relief_effect": "helped"})
+        severe = make_key("URGENT", ["U2", "S1"],
+                          **{**PAIN, "pain_relief_effect": "helped", "pain_severity": "severe"})
+        out = []
+        for i, k in enumerate((mild, mild, severe, severe, ROUTINE_KEY), 1):
+            k = copy.deepcopy(k)
+            k["id"] = f"S{i:03d}"
+            out.append(k)
+        for k in out:
+            case = ct._case_from_key(k, {"author": "t"})
+            self.assertEqual(ct._check_key(case, PROTOCOL), [], k["id"])
+        return out
+
+    def run_all(self, keys, wrong):
+        """wrong: {id: extracted severity}; everything else from the oracle."""
+        texts = {k["id"]: e2e.placeholder_text(k) for k in keys}
+
+        def extract_for(k):
+            oracle = e2e.oracle_extractor(k, PROTOCOL)
+            return _with_severity(oracle, wrong[k["id"]]) if k["id"] in wrong else oracle
+        return e2e.evaluate(keys, texts, PROTOCOL, "mock", extract_for, e2e.mock_triage, "drop")
+
+    def test_directions_ids_and_level_moves(self):
+        s = self.run_all(self.keys(), {"S001": "severe", "S003": "moderate"})
+        err, shift = s["severity"]["errors"], s["severity"]["level_shift"]
+        self.assertEqual(err["n"], 4)                      # S005 has no pain: never reaches the chat
+        self.assertEqual((err["n_key_below_severe"], err["n_key_severe"]), (2, 2))
+        self.assertEqual((err["false_severe"], err["false_severe_ids"]), (1, ["S001"]))
+        self.assertEqual((err["missed_severe"], err["missed_severe_ids"]), (1, ["S003"]))
+        self.assertEqual(err["false_severe_ci95"], ct.clopper_pearson(1, 4))
+        self.assertEqual(err["missed_severe_ci95_of_key_severe"], ct.clopper_pearson(1, 2))
+        self.assertEqual(shift["n_severity_differs"], 2)
+        for system in ("final", "protocol_check"):
+            self.assertEqual((shift[system]["up_ids"], shift[system]["down_ids"]),
+                             (["S001"], ["S003"]), system)
+        # the pre-registered numbers are those of the same run's systems, untouched
+        final = s["systems"]["final"]
+        self.assertEqual((final["under_ids"], final["over_ids"]), (["S003"], ["S001"]))
+
+    def test_null_extraction_is_a_missed_severe(self):
+        s = self.run_all(self.keys(), {"S004": None})
+        err = s["severity"]["errors"]
+        self.assertEqual((err["missed_severe_ids"], err["false_severe"]), (["S004"], 0))
+        self.assertEqual(s["severity"]["level_shift"]["final"]["down_ids"], ["S004"])
+
+    def test_a_perfect_run_counts_nothing(self):
+        # the checker must be able to report zero: nothing flagged on the oracle
+        s = self.run_all(self.keys(), {})
+        err, shift = s["severity"]["errors"], s["severity"]["level_shift"]
+        self.assertEqual((err["false_severe"], err["missed_severe"], shift["n_severity_differs"]),
+                         (0, 0, 0))
+
+    def test_a_severity_diff_that_moves_nothing_is_not_a_shift(self):
+        # mild -> moderate: pain_severity differs, the level cannot move
+        s = self.run_all(self.keys(), {"S002": "moderate"})
+        shift = s["severity"]["level_shift"]
+        self.assertEqual(shift["n_severity_differs"], 1)
+        self.assertEqual((shift["final"]["up"], shift["final"]["down"]), (0, 0))
+        self.assertEqual(s["severity"]["errors"]["false_severe"], 0)
+
+    def test_retake_is_not_placed_on_the_scale(self):
+        results = [{"id": "X1", "chat_asked": ["Q11"], "symptoms": {"pain_severity": "severe"},
+                    "protocol_on_key_symptoms": "SOON", "final": "RETAKE",
+                    "protocol_check": "URGENT"}]
+        by_id = {"X1": {"symptoms": {"pain_severity": "mild"}}}
+        shift = e2e.severity_block(results, by_id)["level_shift"]
+        self.assertEqual(shift["final"]["not_a_level_ids"], ["X1"])
+        self.assertEqual(shift["protocol_check"]["up_ids"], ["X1"])
+
+    def test_report_prints_the_block(self):
+        import contextlib
+        import io
+        s = self.run_all(self.keys(), {"S001": "severe", "S003": "moderate"})
+        s.update(mock=True)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            e2e.print_report(s, mock=True)
+        text = buf.getvalue()
+        self.assertIn("false severe  (key mild/moderate, got severe; raises urgency)  1/4", text)
+        self.assertIn("missed severe (key severe, got other or null; lowers urgency)  1/4", text)
+        self.assertIn("final           up 1/2 ['S001']  down 1/2 ['S003']", text)
+
+
 @unittest.skipUnless((REPO_ROOT / "labels" / "heldout" / "e2e_keys.json").exists() and not ERR,
                      "held-out e2e keys are local-only")
 class HeldoutMockRun(unittest.TestCase):
