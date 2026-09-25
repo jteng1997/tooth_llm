@@ -135,6 +135,110 @@ findings" tested that a tooth *exists*, not that it may be *reported*, and
 the gap between the two is exactly where the detector's low-confidence
 output lives. When a metric reads 0, ask what it could never catch.
 
+### 2026-09-25 — P7 dev adjudication, round 1 (research-pm)
+13/190 chat cells disagreed before adjudication (6.8%, exact 95% CI
+3.7–11.4; 38 cases reached the chat). Outcomes: text wrong 5, key wrong 0,
+ambiguous 2, B wrong 3. **No key was changed.** B error rate 3/190 = 1.6%
+(CI 0.3–4.5), under the 5% stop rule. The provisional residual is 2/190 =
+1.1% (CI 0.1–3.8), which assumes the 5 regenerated texts come back clean.
+Record: `runs/p7/adjudication_dev.jsonl`, `runs/p7/adjudication_dev_summary.md`.
+
+**Post-hoc amendment to the plan (made after the outputs were seen):** a
+fifth outcome, **check artifact**. It applies when the text is clear and
+matches the key, B's raw value matches too, and the harness's `verify()`
+step alone drops it. Three cells had this (the `['unknown']` triggers of V016,
+V070, V073). A triage text is passed as one message with no question id,
+and `verify()` keeps `unknown` only in the reply to Q12, so the value can
+never survive. Counting these as B errors would blame B for a harness
+property, and switching B to gemma3:12b would not remove them. They are
+reported separately, and the summary gives the rates both ways. Fixing the
+harness is qa-engineer's and the lead's call; I proposed a rescore from the
+stored responses.
+
+Also found: B read 4 of 9 moderate-severity texts as mild, because the
+extraction prompt gives no anchor between mild and moderate. It does not
+affect any triage level (only "severe" is a criterion input).
+
+**Round 2 (same day).** The lead fixed the harness (a one-message triage
+text now calls `verify()` with `own_question=None`) and rescored, which
+cleared the 3 artifact cells. After regenerating the 7 cases and
+re-extracting, n = 195 cells: 7 disagree (3.6%, CI 1.5–7.3).
+- **B error rate 2/195 = 1.0% (CI 0.1–3.7)**: the 5% rule is cleared.
+- **Residual 5/195 = 2.6%**: not yet under the 2% bar. It reaches 3/195 =
+  1.5% only if the round-2 regenerations of V081 and V082 come back clean.
+- New in round 2: V086 triggers marked ambiguous (the severe brief makes the
+  text say eating hurts). V028 regenerated for an added symptom it was not
+  given ("headaches"), found outside §6.
+- Still no key changed.
+
+**Round 3 / hand edits (same day).** After the round-2 regenerations, V081
+triggers and V082 severity were still text wrong, and V028 still added a
+symptom.
+- **Seed reuse fault** in `regenerate_cases()`: the seed is `base +
+  len(current history)`, which ignores superseded attempts. V081's round 2
+  repeated seed 20260925 and returned the identical text. Fix before
+  held-out (qa-engineer); the seed must count every attempt ever made for
+  the case.
+- **Hand edits, deletion only, by research-pm** (`hand_edited: true`, before
+  and after text stored in `generated_dev.json`, §5 checks re-run and
+  passed):
+  - V081: ", I don't know what triggers it" removed.
+  - V028: the added "painkillers for my headache" sentence removed.
+  2/100 dev cases are hand-edited.
+- **V082 unresolved**: the text lacks "fairly bad", which deletion cannot
+  restore. The options go to the lead (a genuine regeneration after the seed
+  fix is recommended).
+- **Dev verdict:**
+  - B error 2/195 = 1.0% (CI 0.1–3.7): the 5% rule is cleared.
+  - Residual 4/195 = 2.05% (CI 0.6–5.2): the 2% bar is **not cleared**, by
+    one cell. It becomes 3/195 = 1.5% if V082 is fixed. The V081 figure
+    assumes its re-extraction agrees with the key.
+
+**Final (same day).**
+- **Seed fault fixed** by the lead: `seeds_used()` counts every attempt,
+  including superseded ones.
+- **V082 round 2 voided** for seed reuse (lead decision, recorded in
+  `void_rounds`). V082 got one fresh regeneration from seed 20260933.
+- V081 re-extracted after its edit: it agrees.
+- V082's fresh text was text wrong for the third time ("a bit of
+  discomfort" for a moderate key). With no rounds left, I edited "a bit of
+  discomfort" → "pretty bad pain" (a substitution, not deletion only;
+  `hand_edited: true`). I chose this over "no acceptable text" because plan
+  §4 names the edit as the route and "no acceptable text" would block the
+  dev set. It still needs re-extraction.
+- **Correction (same day):** after the edit, B read V082 as severe ("pretty
+  bad pain"), where it had read the previous text as mild. I marked the cell
+  ambiguous rather than B wrong, because I wrote the span and it omits
+  "sleeps and eats normally". No further edits. **Corrected dev verdict:**
+  - B error 2/195 = 1.03% (CI 0.1–3.7): the 5% rule is cleared.
+  - Residual 4/195 = 2.05% (CI 0.6–5.2) as written, and 5/195 = 2.56%
+    conservatively: the **2% bar is not cleared**, either way.
+  - No-split residual: 6/195 (3.1%) as written, 7/195 (3.6%)
+    conservatively.
+  - 4 of the 5 residual cells are severity (the anchor gap, which the lead
+    is taking to the user).
+  - Under plan §5 the run stops here. Going on to held-out after the
+    generator-line changes is the lead's and the user's call.
+  - The verdict below is superseded.
+- **Dev verdict (n = 195; assumes V082 then agrees; superseded):**
+  - B error 2/195 = 1.0% (CI 0.1–3.7): the 5% rule is cleared.
+  - Residual 3/195 = 1.54% (CI 0.3–4.4): the 2% bar is **cleared under the
+    pre-declared rule**. Counting the 2 hand-edited scored cells as
+    generator failures, it is 5/195 = 2.56%, which fails.
+  - The no-split residual is 5/195 (2.6%), or 7/195 (3.6%) counted
+    conservatively.
+  - Hand edits: 3/100 dev cases. Keys changed: 0.
+  - Held-out will be reported both ways.
+- **Proposed before held-out generation** (wording in
+  `runs/p7/adjudication_dev_summary.md`; the lead applies, and
+  `docs/plans/p7-generation-prompt.md` §3.3/§3.5 is updated once applied):
+  1. The spontaneous line says they know nothing sets it off, and forbids
+     "I don't know what sets it off".
+  2. The moderate line says "pretty bad" plainly and forbids playing it down.
+  3. The self_correcting style line drops its left/right example, which
+     primed a side while location was null.
+  4. A smoke check of these lines on about 12 dev keys, stored separately.
+
 ### 2026-09-24 — P7 adjudication plan pre-declared (research-pm)
 `docs/plans/p7-adjudication-plan.md`, written before any P7 output exists.
 Additions to P7 spec §6/§7:

@@ -95,9 +95,11 @@ STYLE_LINES = {
              "get across is still there.",
     "non_native": "English as a second language: simple tenses, some missing articles, small "
                   "word-order slips. Stay respectful; no invented accent or dialect.",
-    "self_correcting": 'At least once, first say something slightly wrong, then correct it ("the '
-                       'left — no, the right side"). The corrected version must match what you '
-                       "were given. Correct only details you were given.",
+    "self_correcting": 'At least once, first say something slightly wrong, then correct it ("... — '
+                       'no, I mean ..."). Correct only a detail from your facts or your '
+                       "must-get-across points; never bring in a side of the mouth, a time or a "
+                       "trigger you were not given just to correct it. The corrected version must "
+                       "match what you were given.",
     "verbose": "Long and chatty, with everyday life detail unrelated to the teeth. The extra "
                "detail must not add symptoms, times, sides or medicines.",
     "terse": "A few words, little or no punctuation. Every point still there.",
@@ -108,12 +110,15 @@ RELIEF = {"helped": "They took painkillers or something from the pharmacy and it
           "not_tried": "They have not taken anything for the pain."}
 SEVERITY = {"mild": "The pain is mild — noticeable but easy to put up with.",
             "moderate": "The pain is fairly bad and bothers them, but they still sleep and eat "
-                        "normally.",
+                        "normally. Say both parts plainly; do not play the pain down as \"a bit\", "
+                        "\"slight\" or \"discomfort\".",
             "severe": "The pain is so bad they cannot sleep or eat properly."}
 TRIGGER = {"cold": "The pain is set off by cold things.", "hot": "The pain is set off by hot things.",
            "sweet": "The pain is set off by sweet things.",
            "biting": "The pain is set off by biting down.",
-           "spontaneous": "The pain comes on by itself, with nothing setting it off.",
+           "spontaneous": "The pain starts on its own, for example while they are resting or doing "
+                          "nothing. They know it is not set off by anything; they must not say "
+                          "they don't know what sets it off or what causes it.",
            "unknown": "They cannot tell what sets the pain off."}
 QUADRANT = {"upper_left": "upper left", "upper_right": "upper right", "lower_left": "lower left",
             "lower_right": "lower right"}
@@ -729,6 +734,16 @@ def generate(kind: str, dry_run: bool = False, limit: int = None) -> int:
 MAX_ADJUDICATION_ROUNDS = 2
 
 
+def seeds_used(case: dict, part: str) -> int:
+    """Attempts ever made for the text ('') or one paraphrase ('p1'/'p2'):
+    the current history plus every superseded one, so a regeneration never
+    reuses a seed (research-pm, 2026-09-25: V081 round 2 repeated round 1)."""
+    current = case["paraphrases"][int(part[1]) - 1] if part else case
+    old = sum(len(s["text"]["history"]) for s in case.get("superseded", [])
+              if s["part"] == (part or "text"))
+    return len(current["history"]) + old
+
+
 def regenerate_cases(gen: dict, extracted: dict, ids: list, by_id: dict, prompts: dict, checker,
                      call, kind: str) -> dict:
     """Regenerate the texts research-pm's adjudication listed (never on a
@@ -746,7 +761,9 @@ def regenerate_cases(gen: dict, extracted: dict, ids: list, by_id: dict, prompts
             refused.append((item, "not generated"))
             continue
         rounds = case.get("adjudication_rounds", 0)
-        if rounds >= MAX_ADJUDICATION_ROUNDS:
+        # A round voided by the lead (e.g. it reused old seeds) does not count
+        # towards the limit; the reason is recorded on the case.
+        if rounds - len(case.get("void_rounds", [])) >= MAX_ADJUDICATION_ROUNDS:
             refused.append((item, f"already {rounds} adjudication rounds"))
             continue
         key, prompt = by_id[cid], prompts[cid]
@@ -760,12 +777,12 @@ def regenerate_cases(gen: dict, extracted: dict, ids: list, by_id: dict, prompts
             versus = [("near-copy of its own text", case["text"])] + [
                 (f"near-copy of paraphrase {i}", q["text"])
                 for i, q in enumerate(case["paraphrases"], 1) if i != p and q["text"]]
-            seed = base + PARAPHRASE_SEED_STEP * p + len(old["history"])
+            seed = base + PARAPHRASE_SEED_STEP * p + seeds_used(case, part)
             new = generate_one(call, prompt, template(kind), checker, seed, versus)
             case["paraphrases"][p - 1] = new
         else:
             old = {k: case[k] for k in ("reply", "text", "history", "attempts", "status")}
-            seed = base + len(case["history"])
+            seed = base + seeds_used(case, "")
             new = generate_one(call, prompt, template(kind), checker, seed, others)
             case.update({k: new[k] for k in ("reply", "text", "history", "attempts", "status",
                                               "regeneration_reasons", "advisory")})
@@ -888,13 +905,18 @@ def transcript(tmpl: str, reply: dict, protocol) -> tuple:
 def verified(raw: dict, fields: list, replies: list, asked_for: dict) -> dict:
     """interview.extract()'s evidence check, field by field."""
     import interview
+    # A triage text is one unprompted message (question id None): no question
+    # was asked, so no field has an own question. Passing Q12 there made
+    # verify() drop 'unknown' from every triage text (research-pm, 2026-09-25).
+    planned = any(qid is not None for qid, _ in replies)
     out = {}
     for field in fields:
         entry = raw.get(field) or {}
         value, quote = entry.get("value"), entry.get("quote")
         sources = [(qid, text) for qid, text in replies
                    if interview._normalize(quote) and interview._normalize(quote) in interview._normalize(text)]
-        out[field] = interview.verify(field, value, quote, sources, asked_for.get(field))
+        out[field] = interview.verify(field, value, quote, sources,
+                                      asked_for.get(field) if planned else None)
     return out
 
 
