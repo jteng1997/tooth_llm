@@ -738,7 +738,7 @@ def harness_note() -> dict:
             "system_sha256": hashlib.sha256(SYSTEM_MESSAGE.encode()).hexdigest(),
             "injection": "the VERBATIM sentence is not in the prompt; code appends it unchanged "
                          "after the model's text, and every check runs on the final text",
-            "terse_min_words": TERSE_MIN_WORDS}
+            "terse_min_words": TERSE_MIN_WORDS, "terse_min_answer_words": TERSE_MIN_ANSWER_WORDS}
 
 
 def key_file_check(gen: dict, kind: str, ack: str = None) -> str:
@@ -1308,7 +1308,8 @@ def recheck(kinds=("triage", "e2e")) -> int:
     key files only to rebuild each case's prompt (VERBATIM line, questions,
     style); prints counts only, never a text."""
     out = {"date": datetime.date.today().isoformat(),
-           "what": "check_reply (2026-09-26 checks: VERBATIM label, terse floor 5) re-run on every "
+           "what": "check_reply (2026-09-26 checks: VERBATIM label; terse floors 5 words for a "
+                   "text or opening, 1 for a scripted answer) re-run on every "
                    "accepted text and paraphrase; the generated files are not modified",
            "files": {}}
     for kind in kinds:

@@ -726,8 +726,9 @@ class TerseFloor(unittest.TestCase):
         self.assertEqual(p7.word_bounds("patient_words", "terse"), (5, 90))
         self.assertEqual(p7.word_bounds("opening", "terse"), (5, 90))
         self.assertEqual(p7.word_bounds("patient_words", "plain"), (15, 90))
-        self.assertEqual(p7.word_bounds("answer", "terse"), (3, 40))
+        self.assertEqual(p7.word_bounds("answer", "terse"), (1, 40))
         self.assertEqual(p7.word_bounds("answer", "verbose"), (3, 40))
+        self.assertEqual(p7.word_bounds("answer", None), (3, 40))
 
     def test_check_reply_uses_the_style(self):
         c = checker()
@@ -739,12 +740,21 @@ class TerseFloor(unittest.TestCase):
                                           {"verbatim": [], "questions": [], "style": style}, "triage", c)
                 self.assertEqual(not any("length" in f for f in failures), ok, failures)
 
-    def test_terse_answers_keep_three_words(self):
+    def test_terse_answers_need_one_word_others_three(self):
+        script = {"Q10": "nothing", "Q11": "mild", "Q18": "3 days"}
+        for style, bad in (("terse", []), ("plain", ["Q10", "Q11", "Q18"])):
+            with self.subTest(style):
+                prompt = {"verbatim": [], "questions": list(script), "style": style}
+                failures = p7.check_reply({"opening": GenerateOne.GOOD, "script": script},
+                                          prompt, "e2e", checker())
+                self.assertEqual(sorted(f.split(":")[0] for f in failures if "length" in f), bad)
         prompt = {"verbatim": [], "questions": ["Q10"], "style": "terse"}
-        reply = {"opening": self.SHORT, "script": {"Q10": "nothing"}}
-        failures = p7.check_reply(reply, prompt, "e2e", checker())
-        self.assertIn("Q10: length 1 outside 3-40", failures)
+        failures = p7.check_reply({"opening": self.SHORT, "script": {"Q10": ""}}, prompt, "e2e", checker())
+        self.assertIn("Q10: length 0 outside 1-40", failures)          # an empty answer still fails
         self.assertFalse(any(f.startswith("opening: length") for f in failures), failures)
+        failures = p7.check_reply({"opening": "tooth hurts cold", "script": {"Q10": "x"}},
+                                  prompt, "e2e", checker())
+        self.assertIn("opening: length 3 outside 5-90", failures)        # terse opening floor is 5
 
     def test_prompt_records_the_style(self):
         self.assertEqual(p7.build_prompt(key(style="terse"), "triage", REWRITES)["style"], "terse")
