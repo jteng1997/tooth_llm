@@ -257,6 +257,112 @@ class Fallback(TriageBase):
         self.assertEqual((a["urgency"], a["decided_by"]), ("URGENT", "protocol_check"))
 
 
+class LevelBelowCitations(TriageBase):
+    """Every citation checks out but the level is below them: fed back once,
+    then kept on the last attempt with the level raised in code. The model's
+    own level stays in llm_proposed; code never lowers (2026-09-26)."""
+
+    def test_below_twice_is_kept_and_raised(self):
+        low = {"criteria_met": [cite("U2", "pain_on_biting")], "level": "SOON", "uncertain": False}
+        stub = Stub(low, low)
+        a = self.run_triage(stub, {"pain_present": True, "pain_on_biting": True})
+        self.assertIn("imply URGENT", stub.calls[1]["messages"][-1]["content"])  # fed back first
+        # Not "llm": Test 5 reads decided_by llm as the model's own level deciding.
+        self.assertEqual((a["urgency"], a["decided_by"]), ("URGENT", "llm_raised"))
+        t = a["triage"]
+        self.assertTrue(t["llm_valid"])
+        self.assertEqual(t["llm_proposed"], "SOON")          # the model's own level
+        self.assertEqual(t["level_raised_from"], "SOON")
+        self.assertIsNone(t["overridden_by"])                # no source raised past the citations
+        self.assertEqual(t["attempts"], 2)
+        self.assertIn("attempt 2: kept, level raised in code from SOON to URGENT",
+                      t["validation_errors"])
+        self.assertEqual([r["criterion_id"] for r in a["reasons"]], ["U2"])
+
+    def test_phantom_photo_citation_then_level_below(self):
+        # The dev Test 5 pattern: a photo criterion cited with no flagged
+        # teeth, then the valid pain criterion cited with the level left low.
+        s = {"pain_present": True}
+        phantom = {"criteria_met": [cite("P1", "flagged_teeth", None, "visual_summary")],
+                   "level": "SOON", "uncertain": False}
+        low = {"criteria_met": [cite("N1", "pain_present")], "level": "ROUTINE", "uncertain": False}
+        a = self.run_triage(Stub(phantom, low), s)
+        self.assertEqual((a["urgency"], a["decided_by"]), ("SOON", "llm_raised"))
+        self.assertEqual((a["triage"]["llm_proposed"], a["triage"]["level_raised_from"]),
+                         ("ROUTINE", "ROUTINE"))
+
+    def test_protocol_raises_past_the_citations(self):
+        # Cited level SOON, stated ROUTINE, protocol URGENT: the protocol decides.
+        s = {"pain_present": True, "pain_severity": "severe"}
+        low = {"criteria_met": [cite("N1", "pain_present")], "level": "ROUTINE", "uncertain": False}
+        a = self.run_triage(Stub(low, low), s)
+        self.assertEqual((a["urgency"], a["decided_by"]), ("URGENT", "protocol_check"))
+        self.assertEqual(a["triage"]["overridden_by"], "protocol_check")
+        self.assertEqual(a["triage"]["llm_proposed"], "ROUTINE")
+        self.assertEqual(a["triage"]["level_raised_from"], "ROUTINE")
+        self.assertIn("U3", [r["criterion_id"] for r in a["reasons"]])
+
+    def test_consistent_level_is_not_marked_raised(self):
+        stub = Stub({"criteria_met": [cite("N1", "pain_present")], "level": "SOON", "uncertain": False})
+        a = self.run_triage(stub, {"pain_present": True})
+        self.assertIsNone(a["triage"]["level_raised_from"])
+        self.assertEqual(a["decided_by"], "llm")
+        self.assertIsNone(a["triage"]["overridden_by"])
+
+    def test_above_twice_is_still_rejected(self):
+        high = {"criteria_met": [cite("N1", "pain_present")], "level": "URGENT", "uncertain": False}
+        a = self.run_triage(Stub(high, high), {"pain_present": True})
+        self.assertFalse(a["triage"]["llm_valid"])
+        self.assertIsNone(a["triage"]["llm_proposed"])
+        self.assertIsNone(a["triage"]["level_raised_from"])
+        self.assertEqual(a["decided_by"], "fallback_rules")
+
+    def test_invalid_citation_with_level_below_is_still_rejected(self):
+        # U1 does not hold (pain relief helped); N1 does. The level is below
+        # both, but a bad citation is never repaired.
+        s = {"pain_present": True, "pain_relief_effect": "helped"}
+        bad = {"criteria_met": [cite("U1", "pain_relief_effect"), cite("N1", "pain_present")],
+               "level": "ROUTINE", "uncertain": False}
+        a = self.run_triage(Stub(bad, bad), s)
+        self.assertFalse(a["triage"]["llm_valid"])
+        self.assertIsNone(a["triage"]["level_raised_from"])
+        self.assertNotEqual(a["decided_by"], "llm")
+        self.assertFalse(any("raised in code" in e for e in a["triage"]["validation_errors"]))
+
+    def test_invented_quote_with_level_below_is_still_rejected(self):
+        bad = {"criteria_met": [cite("N1", "pain_present"),
+                                cite("U5", "free_text", "my tooth was pushed back", "patient_words")],
+               "level": "ROUTINE", "uncertain": False}
+        a = self.run_triage(Stub(bad, bad), {"pain_present": True},
+                            messages=said("it just aches a bit"))
+        self.assertFalse(a["triage"]["llm_valid"])
+        self.assertIsNone(a["triage"]["level_raised_from"])
+        self.assertFalse(any("raised in code" in e for e in a["triage"]["validation_errors"]))
+
+    def test_unanswered_symptom_with_level_below_is_still_rejected(self):
+        bad = {"criteria_met": [cite("U3", "pain_severity")], "level": "ROUTINE", "uncertain": False}
+        a = self.run_triage(Stub(bad, bad), {"pain_present": True, "pain_severity": None})
+        self.assertFalse(a["triage"]["llm_valid"])
+        self.assertIsNone(a["triage"]["level_raised_from"])
+        self.assertFalse(any("raised in code" in e for e in a["triage"]["validation_errors"]))
+
+    def test_below_then_fixed_on_the_retry_is_the_models_own_level(self):
+        # The raise happens only on the last attempt: a model that corrects
+        # its level when told keeps decided_by "llm", with nothing raised.
+        s = {"pain_present": True, "pain_on_biting": True}
+        low = {"criteria_met": [cite("U2", "pain_on_biting")], "level": "SOON", "uncertain": False}
+        fixed = {"criteria_met": [cite("U2", "pain_on_biting")], "level": "URGENT", "uncertain": False}
+        stub = Stub(low, fixed)
+        a = self.run_triage(stub, s)
+        self.assertIn("imply URGENT", stub.calls[1]["messages"][-1]["content"])   # fed back
+        t = a["triage"]
+        self.assertEqual((a["urgency"], a["decided_by"]), ("URGENT", "llm"))
+        self.assertEqual((t["llm_proposed"], t["level"], t["attempts"]), ("URGENT", "URGENT", 2))
+        self.assertIsNone(t["level_raised_from"])
+        self.assertIsNone(t["overridden_by"])
+        self.assertFalse(any("raised in code" in e for e in t["validation_errors"]))
+
+
 class AlwaysHasAReason(TriageBase):
     """The patient is never shown an urgency with nothing behind it."""
 
@@ -336,6 +442,15 @@ class Inputs(TriageBase):
         self.assertIn("no pain at all", prompt)
         self.assertNotIn("question?", prompt)       # assistant turns are left out
 
+    def test_structured_criteria_show_their_condition(self):
+        stub = Stub({"criteria_met": [], "level": "ROUTINE", "uncertain": False})
+        self.run_triage(stub, {"pain_present": False})
+        prompt = stub.calls[0]["messages"][-1]["content"]
+        shown = json.loads(prompt.split("protocol_criteria:\n")[1].split("\n\n")[0])
+        by_id = {c["id"]: c for c in shown}
+        self.assertEqual(by_id["P1"]["holds_when"], "visual_summary.flagged_teeth non-empty")
+        self.assertNotIn("holds_when", by_id["U5"])     # narrative: needs a quote instead
+
     def test_unanswered_fields_are_listed_apart_from_answered_ones(self):
         stub = Stub({"criteria_met": [], "level": "ROUTINE", "uncertain": False})
         self.run_triage(stub, {"pain_present": False, "pain_lingers_over_30s": None,
@@ -397,6 +512,9 @@ class OnlyRaises(TriageBase):
                 self.assertLessEqual(final, rank[self.protocol.protocol_level(symptoms, visual)])
                 if rules.red_flag_floor(symptoms)["level"]:
                     self.assertEqual(a["urgency"], "EMERGENCY")
+                if a["decided_by"] == "llm":   # only the model's own level, unraised
+                    self.assertEqual(a["triage"]["level"], a["triage"]["llm_proposed"])
+                    self.assertIsNone(a["triage"]["level_raised_from"])
                 if a["triage"]["llm_valid"]:
                     self.assertLessEqual(final, rank[a["triage"]["llm_proposed"]])
                 else:

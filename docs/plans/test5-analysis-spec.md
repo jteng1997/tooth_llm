@@ -438,3 +438,46 @@ block applies to dev runs and to any new blind set.
 
 Implemented by qa-engineer in `check_symptoms.py` and `check_e2e.py`
 (`check_triage.py` is unchanged).
+
+### 9.9 `decided_by: "llm_raised"` (pre-scoring, 2026-09-26)
+
+Written before any held-out Test 5 LLM run. The dev rehearsal found 15/75
+fallbacks (20%) by a single pattern. llm-dev changed validation rule 3 (design
+§3.3): on the last attempt, a proposal whose only error is a level below its
+own verified citations is kept, and code raises it to those citations. It is
+recorded as `decided_by: "llm_raised"`, and `llm_proposed` keeps the model's
+own lower level. How it is scored:
+
+- **`final`**: scored as usual. It is the raised level the patient would
+  see.
+- **`llm_proposed`**: the model's own level, **not** the raised one. A
+  raised case whose own level is below the key counts as `llm_proposed`
+  under-triage.
+- **`decided_by` distribution** (§3 Operational): `llm_raised` is its own
+  category and does **not** count as "the LLM's own level decided". The
+  headline "LLM decided" share is `llm` only; `llm_raised` is shown beside
+  it.
+- **Fallback rate (bar ≤ 1%)**: `fallback_rules` as the code now defines it,
+  **and next to it** the `llm_raised` row and the "rule as first registered"
+  sum. Each has an exact CI. The two are defined as follows (confirmed
+  2026-09-26, pre-scoring):
+  - The **`llm_raised` row** counts cases with `decided_by == "llm_raised"`
+    only.
+  - The **sum** counts `fallback_rules` plus **every raised proposal**
+    (`triage.level_raised_from` set). That includes proposals the protocol
+    check then raised further, which end with `decided_by ==
+    "protocol_check"`: under the old rule each of them would have been a
+    fallback.
+  - The report prints the difference as "+ j raised, then raised further by
+    the protocol".
+  - On the dev replay, 12 `llm_raised` + 3 raised further = 15 in the sum.
+  - The bar is judged on `fallback_rules`.
+  - The report must state that the rule changed after a dev finding, so a
+    pass cannot rest on relabelling alone.
+  - If `llm_raised` alone is above 1%, that is reported as a finding against
+    the model: its levels disagree with its own citations.
+- **Valid-output rate**: a raised proposal counts as valid (it is kept), and
+  the number of raised proposals among the valid ones is stated.
+- **Head-to-head and κ**: use `final` and `llm_proposed` as defined above.
+  Nothing else changes.
+

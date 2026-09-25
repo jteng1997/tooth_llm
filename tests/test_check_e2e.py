@@ -185,6 +185,31 @@ class Scoring(unittest.TestCase):
         self.assertEqual(s["attribution"]["proposed"], {"extraction": 1})
         self.assertEqual(s["extraction"]["cells"], 10)          # two cases reached the chat
         self.assertEqual(s["extraction"]["wrong_cells"], 1)
+        tc = s["triage_calls"]
+        called = [r for r in s["cases"] if r["model_called"]]
+        self.assertEqual(tc["n"], len(called))
+        self.assertEqual(tc["llm_decided"], sum(r["decided_by"] == "llm" for r in called))
+        self.assertEqual(tc["level_raised"], 0)          # the stub's ROUTINE cites nothing
+
+    def test_triage_calls_counts_raised_apart(self):
+        results = [{"id": "A", "model_called": True, "decided_by": "llm", "level_raised_from": None,
+                    "llm_valid": True, "rejections": 0},
+                   {"id": "B", "model_called": True, "decided_by": "llm_raised",
+                    "level_raised_from": "SOON", "llm_valid": True, "rejections": 2},
+                   {"id": "C", "model_called": True, "decided_by": "protocol_check",
+                    "level_raised_from": "ROUTINE", "llm_valid": True, "rejections": 2},
+                   {"id": "E", "model_called": True, "decided_by": "fallback_rules",
+                    "level_raised_from": None, "llm_valid": False, "rejections": 2},
+                   {"id": "D", "model_called": False, "decided_by": "red_flag_floor",
+                    "level_raised_from": None, "llm_valid": False, "rejections": 0}]
+        tc = e2e.triage_calls(results)
+        self.assertEqual((tc["n"], tc["llm_decided"], tc["level_raised_ids"], tc["rejections"]),
+                         (4, 1, ["B", "C"], 6))
+        self.assertEqual(tc["level_raised_ci95"], ct.clopper_pearson(2, 4))
+        # spec 9.9: the bar's count, llm_raised, and the sum under the first rule
+        self.assertEqual((tc["fallback_rules"], tc["llm_raised"], tc["fallback_as_first_registered"],
+                          tc["valid"]), (1, 1, 3, 3))
+        self.assertEqual(tc["fallback_as_first_registered_ci95"], ct.clopper_pearson(3, 4))
 
 
 def _with_severity(oracle, value):
@@ -285,6 +310,7 @@ class SeverityBlock(unittest.TestCase):
         self.assertIn("false severe  (key mild/moderate, got severe; raises urgency)  1/4", text)
         self.assertIn("missed severe (key severe, got other or null; lowers urgency)  1/4", text)
         self.assertIn("final           up 1/2 ['S001']  down 1/2 ['S003']", text)
+        self.assertIn(f"as encoded in protocol v{PROTOCOL.version}, including", text)
 
 
 @unittest.skipUnless((REPO_ROOT / "labels" / "heldout" / "e2e_keys.json").exists() and not ERR,

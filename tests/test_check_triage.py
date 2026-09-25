@@ -334,6 +334,41 @@ class SanityRun(unittest.TestCase):
                 self.assertIn(words[outcome], case["key"]["rationale"])
 
 
+class CaveatVersion(unittest.TestCase):
+    """The SDCEP caveat names the protocol version the run loaded, not a
+    hard-coded one (it said v0.1 after v0.2 went live)."""
+
+    def report(self, protocol):
+        import contextlib
+        import io
+        summary = ct.evaluate(SANITY, "rules", protocol=protocol, verbose=False)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ct.print_report(summary)
+        return summary, buf.getvalue()
+
+    def test_version_comes_from_the_loaded_protocol(self):
+        protocol, err = ct.load_protocol()
+        if err:
+            self.skipTest(f"protocol does not load: {err}")
+        summary, text = self.report(protocol)
+        self.assertEqual(summary["protocol_version"], protocol.version)
+        self.assertIn(f"as encoded in protocol v{protocol.version}, including", text)
+        self.assertNotIn("{version}", text)
+
+    def test_another_version_is_named_as_such(self):
+        from types import SimpleNamespace
+        stub = SimpleNamespace(version="9.9", protocol_level=lambda s, v: "ROUTINE")
+        _, text = self.report(stub)
+        self.assertIn("protocol v9.9,", text)
+        self.assertNotIn("v0.1", text)
+
+    def test_no_protocol_says_so(self):
+        _, text = self.report(None)
+        self.assertIn("protocol (version unknown: protocol not loaded)", text)
+        self.assertEqual(ct.caveats(None)[1:], list(ct.CAVEATS[1:]))    # the others unchanged
+
+
 class Sensitivity(unittest.TestCase):
     """Spec §9.5: the same runs, recomputed without the exposed cases."""
 
@@ -674,6 +709,125 @@ class LlmPathWithStub(unittest.TestCase):
                 self.assertLessEqual(ct.ORDER[run["final"]], ct.ORDER[run["llm_proposed"]], case["id"])
         self.assertIn("final_vs_rules", s["comparisons"])
         self.assertIn("final", s["code_ceiling"])
+
+    def test_level_raised_in_code_is_counted_apart_from_llm_decided(self):
+        # N1 (pain present, SOON) cited with level ROUTINE on every attempt:
+        # triage.py keeps it on the last attempt and raises the level in code.
+        s = self.run_with('{"criteria_met": [{"criterion_id": "N1", "evidence": [{"source": '
+                          '"symptoms", "field": "pain_present", "quote": null}]}], '
+                          '"level": "ROUTINE", "uncertain": false}')
+        ops = s["operations"]
+        runs = [c["runs"][0] for c in s["cases"] if c["runs"][0]["model_called"]]
+        raised = [c["id"] for c in s["cases"] if c["runs"][0].get("level_raised_from")]
+        self.assertTrue(raised)
+        self.assertTrue(all(c["runs"][0]["level_raised_from"] == "ROUTINE" for c in s["cases"]
+                            if c["id"] in raised))
+        self.assertEqual((ops["level_raised"], ops["level_raised_ids"]), (len(raised), raised))
+        self.assertEqual(ops["level_raised_ci95"], ct.clopper_pearson(len(raised), ops["triage_calls"]))
+        self.assertEqual(ops["llm_decided"], 0)                   # a raised level is not the model's
+        self.assertEqual(ops["llm_decided_n"], ops["first_runs_model_called"])
+        self.assertNotIn("llm", ops["decided_by"])
+        # raised proposals are valid: not fallbacks
+        self.assertEqual(ops["fallback"], ops["triage_calls"] - len(raised))
+        notes = sum("kept, level raised in code" in e for r in runs for e in r["validation_errors"])
+        self.assertEqual(notes, len(raised))
+        self.assertEqual(ops["rejections"],
+                         sum(len(r["validation_errors"]) for r in runs) - notes)
+        # the model's own level is what llm_proposed scores; triage.py's final
+        # shape (2026-09-26): llm_raised with no override, or the protocol past it
+        for c in s["cases"]:
+            if c["id"] in raised:
+                run = c["runs"][0]
+                self.assertEqual(run["llm_proposed"], "ROUTINE")
+                self.assertIn(run["decided_by"], ("llm_raised", "protocol_check"))
+                if run["decided_by"] == "llm_raised":
+                    self.assertIsNone(run["overridden_by"])
+        self.assertIn("llm_raised", ops["decided_by"])
+        # spec 9.9: the bar's count, llm_raised, and their sum (the first rule)
+        n_raised_llm = sum(c["runs"][0]["decided_by"] == "llm_raised" for c in s["cases"]
+                           if c["id"] in raised)
+        self.assertEqual(ops["llm_raised"], n_raised_llm)
+        self.assertEqual(ops["raised_then_protocol"], len(raised) - n_raised_llm)
+        self.assertEqual(ops["fallback_as_first_registered"], ops["fallback"] + len(raised))
+        self.assertEqual(ops["fallback_as_first_registered"], ops["triage_calls"])   # this stub: all
+        self.assertEqual(ops["fallback_as_first_registered_ci95"],
+                         ct.clopper_pearson(ops["triage_calls"], ops["triage_calls"]))
+        self.assertEqual(ops["valid_output_raised"], len(raised))
+        self.assertEqual(ops["valid_output"], len(raised))
+        self.assertTrue(ops["raised_above_bar"])
+        text = self.printed(s)
+        self.assertIn(f"valid output {len(raised)}/{ops['triage_calls']}", text)
+        self.assertIn(f"of which {len(raised)} kept with the level raised in code", text)
+        self.assertIn("fallback_rules (the bar, <= 1%)", text)
+        self.assertIn("sum, the rule as first registered", text)
+        self.assertIn(ct.FALLBACK_RULE_NOTE, text)
+        self.assertIn("FINDING:", text)
+
+    def printed(self, summary):
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ct.print_report(summary)
+        return buf.getvalue()
+
+    def test_report_from_a_saved_run_recomputes_operations(self):
+        import contextlib
+        import io
+        s = self.run_with('{"criteria_met": [{"criterion_id": "N1", "evidence": [{"source": '
+                          '"symptoms", "field": "pain_present", "quote": null}]}], '
+                          '"level": "ROUTINE", "uncertain": false}')
+        want = s["operations"]["level_raised"]
+        saved = json.loads(json.dumps(s, default=str))
+        for c in saved["cases"]:                  # a run saved before the field was carried
+            for r in c["runs"]:
+                r.pop("level_raised_from", None)
+        saved["operations"] = {k: v for k, v in saved["operations"].items()
+                               if not k.startswith(("level_raised", "llm_raised", "fallback_as"))}
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "run.json"
+            path.write_text(json.dumps(saved), encoding="utf-8")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.assertEqual(ct.report_from(path), 0)
+            self.assertEqual([p.name for p in Path(d).iterdir()], ["run.json"])   # nothing written
+        text = buf.getvalue()
+        self.assertGreater(want, 0)
+        self.assertIn("re-report of run.json", text)
+        self.assertIn(f"of which {want} kept with the level raised in code", text)   # from the notes
+        self.assertIn(ct.FALLBACK_RULE_NOTE, text)
+
+    def test_no_raise_no_finding(self):
+        s = self.run_with('{"criteria_met": [], "level": "ROUTINE", "uncertain": false}')
+        ops = s["operations"]
+        self.assertEqual((ops["level_raised"], ops["llm_raised"]), (0, 0))
+        self.assertEqual(ops["fallback_as_first_registered"], ops["fallback"])
+        self.assertFalse(ops["raised_above_bar"])
+        self.assertNotIn("FINDING:", self.printed(s))
+
+    def test_consistent_proposal_counts_as_llm_decided(self):
+        s = self.run_with('{"criteria_met": [], "level": "ROUTINE", "uncertain": false}')
+        ops = s["operations"]
+        self.assertEqual(ops["level_raised"], 0)
+        self.assertEqual(ops["llm_decided"], ops["decided_by"].get("llm", 0))
+        self.assertGreater(ops["llm_decided"], 0)
+
+    def test_report_prints_the_new_line(self):
+        import contextlib
+        import io
+        s = self.run_with('{"criteria_met": [], "level": "ROUTINE", "uncertain": false}')
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ct.print_report(s)
+        self.assertIn("the model's own level decided (decided_by 'llm')", buf.getvalue())
+        self.assertIn("kept with the level raised in code to its own citations 0/", buf.getvalue())
+
+    def test_rejection_lines_skip_the_note(self):
+        lines = ["attempt 1: level SOON but the cited criteria imply URGENT",
+                 "attempt 2: level SOON but the cited criteria imply URGENT",
+                 "attempt 2: kept, level raised in code from SOON to URGENT"]
+        self.assertEqual(ct.rejection_lines(lines), lines[:2])
+        self.assertEqual(ct.rejection_lines(None), [])
 
     def test_stability_runs(self):
         spec = copy.deepcopy(SANITY)

@@ -8,7 +8,8 @@ reads it.
 ## Your inputs
 
 - `protocol_criteria`: the only criteria you may use, each with an id, a
-  level, a kind and a statement.
+  level, a kind and a statement. A structured criterion also has
+  `holds_when`: the exact condition on the fields below that makes it met.
 - `symptoms_answered`: what the patient's answers established. Every value
   was checked against the patient's own words or ticked on a checklist.
 - `symptoms_not_answered`: fields the patient did not answer, including
@@ -24,8 +25,12 @@ reads it.
 ## How to decide
 
 1. Go through every criterion. A **structured** criterion is met only if
-   its statement is true of the values in `symptoms` or `visual_summary`.
-   Never treat a `null` value as met.
+   its `holds_when` condition is true of the values in `symptoms_answered`
+   or `visual_summary`. Never treat a `null` value as met. The patient's
+   words never make a structured criterion met: a condition on
+   `flagged_teeth` needs a non-empty `flagged_teeth` list, even if the
+   patient thinks they have a cavity, and a condition on a symptom field
+   needs that field's value, not your reading of their words.
 2. A **narrative** criterion is met only if the patient's own words say so.
    Quote those words exactly as the patient wrote them.
 3. List every met criterion in `criteria_met`, each with its evidence:
@@ -37,7 +42,9 @@ reads it.
 4. `level` is the **most urgent** level among the criteria you listed:
    EMERGENCY, then URGENT, then SOON, then ROUTINE. If you listed none,
    the level is ROUTINE. Do not pick a level that your listed criteria do
-   not support, in either direction.
+   not support, in either direction. If a criterion you listed is
+   rejected, remove it and work the level out again from the criteria you
+   still list; do not lower the level below them.
 5. Set `uncertain` to true if the patient's words were ambiguous about a
    criterion that would change the level.
 

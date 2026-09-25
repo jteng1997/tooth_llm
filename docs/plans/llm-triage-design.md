@@ -97,7 +97,10 @@ final `assessment`:
 
 1. **Validate** the proposal (§3.3). If it is invalid, retry once with the
    validation errors appended. If it is invalid again, the final level falls
-   back to `rules.assess()`, with `decided_by: "fallback_rules"`.
+   back to `rules.assess()`, with `decided_by: "fallback_rules"`. One
+   exception (2026-09-26, §3.3 item 3): on the last attempt, a proposal whose
+   only error is a level below what its verified citations imply is kept and
+   raised in code (`decided_by: "llm_raised"`).
 2. **Protocol-consistency check.** For every *structured* criterion (§3.1),
    code evaluates the predicate itself on the verified `symptoms` and
    `visual_summary`. The result is `protocol_level`, the most urgent level
@@ -281,10 +284,14 @@ These keys are unchanged in name and meaning, so the UI keeps working:
   under decision 9 (a). The screen then shows both routes with their
   conditions. The UI uses this field to pick the emergency screen, and it
   needs app-dev's agreement.
-- `decided_by` ∈ `llm`, `red_flag_floor`, `protocol_check`,
-  `fallback_rules`: which source set the final level.
+- `decided_by` ∈ `llm`, `llm_raised`, `red_flag_floor`, `protocol_check`,
+  `fallback_rules`: which source set the final level. `llm_raised`
+  (2026-09-26, §3.3 item 3): the model's citations all verified, but its level
+  was below them, so code raised it to the level they imply. This is not the
+  model's own level deciding.
 - `triage.llm_proposed` is what the model said (`null` if skipped or invalid
-  twice). `triage.overridden_by` ∈ `null`, `red_flag_floor`,
+  twice). It keeps the model's own level when code raised it, and
+  `triage.level_raised_from` records that level (else `null`). `triage.overridden_by` ∈ `null`, `red_flag_floor`,
   `protocol_check`. It is set only when that source raised the level above
   `llm_proposed`.
 - `reasons` is the evidence the explanation step restates. For the floor
@@ -443,6 +450,26 @@ A proposal is **invalid** if any of these hold:
    the most urgent level among the cited criteria.** Citing only SOON
    criteria and answering URGENT is rejected. So is citing U2 and answering
    SOON. With no criteria cited, the level must be ROUTINE.
+   **Amended 2026-09-26 (dev finding, before any held-out LLM scoring):**
+   - **Too high is still rejected** (over-triage needs cited support).
+   - **Too low, first attempt:** rejected and retried as before.
+   - **Too low, last attempt, and the level is the only error** (every
+     citation verified): the proposal is **kept**, and code raises the level
+     to what the citations imply. `decided_by: "llm_raised"`;
+     `llm_proposed` and `triage.level_raised_from` keep the model's own
+     level.
+   - **Why.** In the dev Test 5 rehearsal, 15/75 calls (20%, CI 11.6–30.8)
+     fell back to rules, all by one pattern: phantom photo citations (S2/S3)
+     on attempt 1, then, on attempt 2, a level below its own valid
+     citations. Discarding a correctly cited proposal for rules.py gave a
+     worse-supported result.
+   - **Safety.** Code only raises, so the rule cannot lower urgency. The
+     model's lower level stays visible in `llm_proposed`, where Test 5
+     counts it as the model's own under-triage.
+   - The prompt now also shows each structured criterion's predicate
+     (`holds_when`), aimed at the phantom citations.
+   - A replay on stored dev outputs rescued 15/15. A live dev re-run is
+     pending.
 4. It is inconsistent with the protocol check (§1.5), under option A.
 
 Over-triage is therefore allowed only when it has cited support. A model that
@@ -453,6 +480,9 @@ itself can only land at or above the rules baseline.
 On invalid output: retry once, with the validation errors listed in a system
 turn. If it is still invalid, use `fallback_rules` and log it. The fallback rate is a
 reported metric (§5). A rate above 1% is itself a finding against that model.
+Since the item-3 amendment, `llm_raised` is reported next to the fallback
+rate, and so is their sum. Otherwise the relabelling alone would lower the
+fallback rate (Test 5 spec §9.9).
 
 What validation **cannot** check: whether a narrative quote actually means
 what the criterion says ("it sort of goes to my ear" for U7). These cases are

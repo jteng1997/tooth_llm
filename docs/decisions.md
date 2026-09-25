@@ -44,6 +44,42 @@ The 20 rule cases in `llm/eval/rule_cases.json` also need blind dentist labels.
 
 ## Decided
 
+### 2026-09-26 — LLM triage: a level below its own valid citations is raised, not discarded (dev finding; lead, llm-dev)
+**Finding (dev Test 5 rehearsal, `runs/evals/test5_dev_llm_qwen3_14b.json`,
+dev data only):**
+- The LLM triage fell back to rules on **15/75 calls = 20% (CI
+  11.6–30.8)**, against a bar of ≤ 1%.
+- All 15 had one pattern: phantom photo citations (S2/S3) on attempt 1,
+  then, on attempt 2, a level below what its own now-valid citations imply.
+
+**Change (validation-rule change, before any held-out LLM scoring):**
+- On the last attempt, a proposal whose *only* error is a level below its
+  verified citations is kept, and code raises it to those citations.
+- `decided_by: "llm_raised"`; `llm_proposed` and `triage.level_raised_from`
+  keep the model's own level.
+- The prompt now also shows each structured criterion's predicate
+  (`holds_when`).
+- A replay on stored dev outputs rescued 15/15. A live dev re-run is
+  pending.
+
+**Why it is acceptable:**
+- Code only raises, so hard rule 2 (the floor can only raise) holds and no
+  urgency can be lowered.
+- The alternative, falling back to rules.py, discarded a proposal whose
+  every citation was correct.
+- Levels too high still need cited support, and are still rejected.
+
+**Evaluation consequence:** Test 5 spec §9.9 (pre-scoring).
+- `llm_raised` does not count as "LLM decided".
+- `llm_proposed` keeps the model's own level, so its under-triage is still
+  counted.
+- The fallback rate is reported with `llm_raised` beside it, plus their sum
+  (the rate under the rule as first registered).
+
+Recorded in `docs/plans/llm-triage-design.md` §1.4, §2.3 and §3.3.
+`llm/interface.md` should list `llm_raised` and `level_raised_from` as well;
+that is for llm-dev and app-dev.
+
 ### 2026-09-26 — Pain severity definitions (user); the code guard on "severe" was tried and removed
 **Decision (user, 2026-09-26; option A as proposed by research-pm and the
 lead):** one set of definitions, shared by the production extraction prompt

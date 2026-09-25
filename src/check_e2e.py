@@ -177,6 +177,8 @@ def run_case(key: dict, text: dict, protocol, extract_llm, triage_llm, model: st
         "final": a["urgency"], "llm_proposed": t["llm_proposed"],
         "protocol_check": t["protocol_level"], "rules": a["rules_baseline"]["urgency"],
         "decided_by": a["decided_by"], "llm_valid": t["llm_valid"], "attempts": t["attempts"],
+        "level_raised_from": t.get("level_raised_from"),
+        "rejections": len(ct.rejection_lines(t["validation_errors"])),
         "model_called": t["model"] is not None,
         "protocol_on_key_symptoms": protocol.protocol_level(key["symptoms"], visual),
     }
@@ -242,7 +244,8 @@ def evaluate(keys: list, texts: dict, protocol, model: str, extract_llm_for, tri
     wrong = Counter(d["field"] for r in reached for d in field_diffs(by_id[r["id"]]["symptoms"], r["symptoms"])
                     if d["field"] in chat_fields)
     summary = {
-        "n_cases": len(results), "opening": opening, "model": model, "systems": systems,
+        "n_cases": len(results), "opening": opening, "model": model,
+        "protocol_version": getattr(protocol, "version", None), "systems": systems,
         "comparisons": {f"{a}_vs_{b}": ct.paired(systems[a], systems[b]) for a, b in ct.COMPARISONS},
         "code_ceiling": ct.code_ceiling(systems),
         "attribution": {"proposed": dict(Counter(a["proposed"] for a in attributions.values())),
@@ -259,9 +262,32 @@ def evaluate(keys: list, texts: dict, protocol, model: str, extract_llm_for, tri
                       "reasked": sum(len(r["reasked"]) for r in results),
                       "unscripted": sum(len(r["unscripted"]) for r in results)},
         "severity": severity_block(results, by_id),
+        "triage_calls": triage_calls(results),
         "cases": results,
     }
     return summary
+
+
+def triage_calls(results: list) -> dict:
+    """Report-only: over the cases whose triage called the model, how often
+    its own level decided (decided_by 'llm' only) and how often code kept it
+    with the level raised to its own citations."""
+    called = [r for r in results if r["model_called"]]
+    n = len(called)
+    decided = sum(r["decided_by"] == "llm" for r in called)
+    raised = [r["id"] for r in called if r.get("level_raised_from") is not None]
+    fallback = sum(not r["llm_valid"] for r in called)
+    llm_raised = sum(r["decided_by"] == "llm_raised" for r in called)
+    old_rule = fallback + len(raised)       # spec 9.9: the rule as first registered
+    return {"n": n, "llm_decided": decided, "llm_decided_ci95": ct.clopper_pearson(decided, n),
+            "level_raised": len(raised), "level_raised_ids": raised,
+            "level_raised_ci95": ct.clopper_pearson(len(raised), n),
+            "llm_raised": llm_raised, "llm_raised_ci95": ct.clopper_pearson(llm_raised, n),
+            "fallback_rules": fallback, "fallback_rules_ci95": ct.clopper_pearson(fallback, n),
+            "fallback_as_first_registered": old_rule,
+            "fallback_as_first_registered_ci95": ct.clopper_pearson(old_rule, n),
+            "valid": n - fallback,
+            "rejections": sum(r.get("rejections", 0) for r in called)}
 
 
 def severity_block(results: list, by_id: dict) -> dict:
@@ -326,6 +352,20 @@ def print_report(summary: dict, mock: bool) -> None:
             print(f"final vs rules (n = {c['n_common']}): b {c['only_first_under']}, c {c['only_second_under']}"
                   + ("; underpowered: fewer than 10 discordant pairs, so no test of a difference is reported"
                      if c["underpowered"] else f"; exact McNemar p = {c['p_exact']:.3g}"))
+    tc = summary.get("triage_calls")
+    if tc:
+        print(f"triage calls {tc['n']}: the model's own level decided {tc['llm_decided']}/{tc['n']} "
+              f"{ct._ci(tc['llm_decided_ci95'])}; level raised in code to its own citations "
+              f"{tc['level_raised']}/{tc['n']} {ct._ci(tc['level_raised_ci95'])}; "
+              f"rejected attempts {tc['rejections']}")
+        if "fallback_rules" in tc:
+            n = tc["n"]
+            print(f"  valid output {tc['valid']}/{n}, of which {tc['level_raised']} kept with the level "
+                  f"raised in code; fallback_rules (the bar, <= 1%) {tc['fallback_rules']}/{n} "
+                  f"{ct._ci(tc['fallback_rules_ci95'])}; llm_raised {tc['llm_raised']}/{n} "
+                  f"{ct._ci(tc['llm_raised_ci95'])}; sum, the rule as first registered "
+                  f"{tc['fallback_as_first_registered']}/{n} {ct._ci(tc['fallback_as_first_registered_ci95'])}")
+            print(f"  {ct.FALLBACK_RULE_NOTE}")
     sev = summary["severity"]
     cs.print_severity_errors(sev["errors"], "cases that reached the chat")
     sh = sev["level_shift"]
@@ -337,7 +377,7 @@ def print_report(summary: dict, mock: bool) -> None:
               f"down {x['down']}/{sh['n_severity_differs']} {x['down_ids'] or ''}"
               + (f"  not a level {x['not_a_level']} {x['not_a_level_ids']}" if x["not_a_level"] else ""))
     print("\nThese numbers must be reported with:")
-    for i, text in enumerate(ct.CAVEATS[:2], 1):
+    for i, text in enumerate(ct.caveats(summary.get("protocol_version"))[:2], 1):
         print(f"  {i}. {text}")
 
 

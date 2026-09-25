@@ -91,7 +91,7 @@ COMPARISONS = (("final", "rules"), ("llm_proposed", "rules"), ("protocol_check",
                ("final", "protocol_check"))
 
 CAVEATS = (
-    "Agreement with SDCEP as encoded in protocol v0.1, including the user's 2026-09-22 "
+    "Agreement with SDCEP as encoded in protocol {version}, including the user's 2026-09-22 "
     "decisions; not a clinical validation.",
     "The vignettes assume the photo findings are correct; the detector catches about 29% of "
     "carious photos at the current threshold, so end-to-end accuracy on real patients is not "
@@ -100,6 +100,12 @@ CAVEATS = (
     "by construction wherever a structured criterion holds; the informative parts are "
     "llm_proposed, the two narrative criteria, the injection cases and the end-to-end set.",
 )
+
+def caveats(protocol_version) -> list:
+    """CAVEATS with the version of the protocol the run actually loaded."""
+    version = f"v{protocol_version}" if protocol_version else "(version unknown: protocol not loaded)"
+    return [c.format(version=version) for c in CAVEATS]
+
 
 RED_FLAGS = ("difficulty_swallowing_or_breathing", "chest_pain_or_breathless", "swelling",
              "fever", "systemically_unwell", "recent_trauma", "bleeding_uncontrolled",
@@ -573,6 +579,7 @@ def run_llm(case: dict, model: str, words: list, llm=None, protocol=None) -> dic
     return {"final": a["urgency"], "llm_proposed": t["llm_proposed"],
             "protocol_check": t["protocol_level"], "rules": a["rules_baseline"]["urgency"],
             "decided_by": a["decided_by"], "overridden_by": t["overridden_by"],
+            "level_raised_from": t.get("level_raised_from"),
             "llm_valid": t["llm_valid"], "attempts": t["attempts"],
             "model_called": t["model"] is not None,
             "validation_errors": t["validation_errors"],
@@ -618,7 +625,8 @@ def evaluate(spec: dict, system: str, reference: str = "key", model: str = None,
 
     present = [s for s in SYSTEMS if any(s in pc["runs"][0] for pc in per_case)]
     summary = {"system_run": system, "model": model, "reference": reference,
-               "n_cases": len(per_case), "systems": {}}
+               "n_cases": len(per_case), "protocol_version": getattr(protocol, "version", None),
+               "systems": {}}
     for s in present:
         rows = [{"id": pc["id"], "ref": pc["ref"], "ref_expected": pc["ref_expected"],
                  "boundary": pc["boundary"], "ambiguous": pc["ambiguous"],
@@ -654,6 +662,31 @@ def sensitivity(summary: dict, exclude: set) -> dict:
     return out
 
 
+RAISED_NOTE = "kept, level raised in code"   # triage.py's note line, not an error
+
+
+def rejection_lines(validation_errors: list) -> list:
+    """The validation errors proper: triage.py also logs 'attempt N: kept,
+    level raised in code from X to Y' there, which is a note, not a rejection."""
+    return [e for e in validation_errors or [] if RAISED_NOTE not in e]
+
+
+def was_raised(run: dict) -> bool:
+    """A proposal kept on the last attempt with its level raised in code to
+    its own citations: level_raised_from, or (runs saved before that field
+    was carried) triage.py's note in validation_errors."""
+    if run.get("level_raised_from") is not None:
+        return True
+    return any(RAISED_NOTE in e for e in run.get("validation_errors") or [])
+
+
+FALLBACK_RULE_NOTE = (
+    "The fallback rule changed after a dev finding (2026-09-26, spec 9.9): a last-attempt proposal "
+    "whose only error is a level below its own verified citations is now kept and raised in code "
+    "(llm_raised) instead of falling back to rules. The bar is judged on fallback_rules; the sum "
+    "fallback_rules + raised is the fallback rate under the rule as first registered.")
+
+
 def _operations(per_case: list) -> dict:
     first = [pc["runs"][0] for pc in per_case]
     calls = [r for pc in per_case for r in pc["runs"] if r["model_called"]]
@@ -661,7 +694,36 @@ def _operations(per_case: list) -> dict:
     seconds = sorted(r["seconds"] for r in calls)
     stable = [pc for pc in per_case if pc["stability"]]
     n = len(calls)
+    raised = sum(was_raised(r) for r in calls)
+    # spec 9.9: llm_raised is decided_by; a raised proposal the protocol then
+    # raised further is decided_by protocol_check, but under the rule as first
+    # registered it too would have fallen back, so the sum counts every raise
+    llm_raised = sum(r["decided_by"] == "llm_raised" for r in calls)
+    old_rule = fallback + raised
+    first_called = [r for r in first if r["model_called"]]
+    # spec §3 "how often the LLM's own level decided the outcome": decided_by
+    # 'llm' only; a level code raised to the model's own citations is not that
+    llm_decided = sum(r["decided_by"] == "llm" for r in first_called)
     return {
+        "level_raised": raised,
+        "level_raised_rate": raised / n if n else float("nan"),
+        "level_raised_ci95": clopper_pearson(raised, n),
+        "level_raised_ids": [pc["id"] for pc in per_case if was_raised(pc["runs"][0])],
+        "llm_raised": llm_raised,
+        "llm_raised_rate": llm_raised / n if n else float("nan"),
+        "llm_raised_ci95": clopper_pearson(llm_raised, n),
+        "raised_then_protocol": raised - llm_raised,
+        "fallback_as_first_registered": old_rule,
+        "fallback_as_first_registered_rate": old_rule / n if n else float("nan"),
+        "fallback_as_first_registered_ci95": clopper_pearson(old_rule, n),
+        # spec 9.9: above 1% is a finding against the model (its levels
+        # disagree with its own citations); every raise counts
+        "raised_above_bar": (raised / n > FALLBACK_BAR) if n else None,
+        "valid_output_raised": raised,
+        "llm_decided": llm_decided,
+        "llm_decided_n": len(first_called),
+        "llm_decided_ci95": clopper_pearson(llm_decided, len(first_called)),
+        "rejections": sum(len(rejection_lines(r.get("validation_errors"))) for r in calls),
         "triage_calls": n,
         "first_runs_model_called": sum(r["model_called"] for r in first),
         "first_runs_floor_skipped_model": sum(not r["model_called"] for r in first),
@@ -863,14 +925,38 @@ def print_report(summary: dict) -> None:
     ops = summary.get("operations")
     if ops:
         n = ops["triage_calls"]
+        raised_note = (f", of which {ops['valid_output_raised']} kept with the level raised in code"
+                       if "valid_output_raised" in ops else "")
         print(f"\noperations over {n} triage calls: valid output {ops['valid_output']}/{n} "
-              f"({_pct(ops['valid_output_rate'])}), retried {ops['retried']}/{n} "
+              f"({_pct(ops['valid_output_rate'])}{raised_note}), retried {ops['retried']}/{n} "
               f"({_pct(ops['retry_rate'])}), fallback to rules {ops['fallback']}/{n} "
               f"({_pct(ops['fallback_rate'])}, 95% CI {_ci(ops['fallback_ci95'])}; bar <= 1%: "
               f"{'met' if ops['fallback_bar_ok'] else 'NOT MET'})")
         print(f"  first runs: model called {ops['first_runs_model_called']}, floor skipped it "
               f"{ops['first_runs_floor_skipped_model']}; decided_by {ops['decided_by']}; "
               f"overridden_by {ops['overridden_by']}")
+        if "level_raised" in ops:
+            print(f"  the model's own level decided (decided_by 'llm') {ops['llm_decided']}/"
+                  f"{ops['llm_decided_n']} first runs with a model call {_ci(ops['llm_decided_ci95'])}; "
+                  f"kept with the level raised in code to its own citations {ops['level_raised']}/{n} "
+                  f"calls ({_pct(ops['level_raised_rate'])}, 95% CI {_ci(ops['level_raised_ci95'])}); "
+                  f"rejected attempts logged {ops['rejections']}")
+        if "fallback_as_first_registered" in ops:
+            print("  fallback, spec 9.9 (exact 95% CIs over the triage calls):")
+            print(f"    fallback_rules (the bar, <= 1%)      {ops['fallback']:3d}/{n} "
+                  f"{_pct(ops['fallback_rate'])}  {_ci(ops['fallback_ci95'])}")
+            print(f"    llm_raised                           {ops['llm_raised']:3d}/{n} "
+                  f"{_pct(ops['llm_raised_rate'])}  {_ci(ops['llm_raised_ci95'])}"
+                  + (f"  (+ {ops['raised_then_protocol']} raised, then raised further by the "
+                     "protocol: decided_by protocol_check)" if ops["raised_then_protocol"] else ""))
+            print(f"    sum, the rule as first registered    {ops['fallback_as_first_registered']:3d}/{n} "
+                  f"{_pct(ops['fallback_as_first_registered_rate'])}  "
+                  f"{_ci(ops['fallback_as_first_registered_ci95'])}")
+            print(f"    {FALLBACK_RULE_NOTE}")
+            if ops["raised_above_bar"]:
+                print(f"    FINDING: {ops['level_raised']}/{n} proposals ({_pct(ops['level_raised_rate'])}) "
+                      "stated a level below their own verified citations, above 1%: the model's "
+                      "levels disagree with its own citations.")
         if ops["latency_p50_s"] is not None:
             print(f"  latency per triage call: p50 {ops['latency_p50_s']:.1f}s, "
                   f"p95 {ops['latency_p95_s']:.1f}s")
@@ -886,7 +972,9 @@ def print_report(summary: dict) -> None:
                 print(f"  WARNING: {len(ops['stability_short_of_paraphrases'])} stability cases "
                       "have fewer than 2 paraphrases")
     print("\nThese numbers must be reported with:")
-    for i, text in enumerate(CAVEATS, 1):
+    version = summary.get("protocol_version") or (summary.get("configuration") or {}).get(
+        "protocol_version")
+    for i, text in enumerate(caveats(version), 1):
         print(f"  {i}. {text}")
     sens = summary.get("sensitivity")
     if sens:
@@ -913,6 +1001,18 @@ def print_report(summary: dict) -> None:
           f"{'PASS' if ok else 'FAIL'}")
 
 
+def report_from(path: Path) -> int:
+    """The report of a saved run, with the operations block recomputed from
+    its stored runs, so figures added to the report later (e.g. spec 9.9)
+    appear for a run made before them. Scores are not recomputed."""
+    summary = json.loads(Path(path).read_text(encoding="utf-8"))
+    if summary.get("operations") and summary.get("cases"):
+        summary["operations"] = _operations(summary["cases"])
+    print(f"re-report of {Path(path).name} (saved run; operations recomputed from its runs)")
+    print_report(summary)
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--cases", default=str(DEV_CASES))
@@ -935,7 +1035,12 @@ def main() -> int:
     ap.add_argument("--ran-by", default="qa-engineer")
     ap.add_argument("--runlog", default=str(RUNLOG), help="held-out run log (JSON lines)")
     ap.add_argument("--json", help="write the full result here (default: runs/evals/)")
+    ap.add_argument("--report-from", metavar="JSON",
+                    help="re-print the report of a saved result (no model call, nothing logged or "
+                         "written); the operations block is recomputed from its stored runs")
     args = ap.parse_args()
+    if args.report_from:
+        return report_from(Path(args.report_from))
 
     path = Path(args.cases)
     try:

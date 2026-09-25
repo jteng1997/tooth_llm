@@ -10,7 +10,11 @@ checks every citation and then decides what the patient is told
    come from the protocol. A proposal is invalid if a cited criterion does
    not hold on the verified symptoms, a quote is not the patient's, or the
    level is not the most urgent level cited. Invalid -> one retry with the
-   errors listed -> otherwise the rules.py result.
+   errors listed -> otherwise the rules.py result. One exception on the
+   last attempt: if every citation checks out and only the level is below
+   what those citations imply, the proposal is kept and code raises the
+   level to them: `decided_by` "llm_raised", and
+   `triage.level_raised_from` keeps the model's own level.
 3. Protocol check (decision 2026-09-22 #10, option A): the structured
    criteria are evaluated in code too, and if they imply a more urgent
    level than the model chose, the level is raised. A model level below the
@@ -139,7 +143,11 @@ def _fence(words: list) -> str:
 
 
 def build_messages(protocol, symptoms: dict, visual: dict, words: list) -> list:
-    criteria = [{"id": c.id, "level": c.level, "kind": c.kind, "statement": c.statement}
+    # A structured criterion's condition is shown with it: from the statement
+    # alone the model cited "A possible cavity seen in the photo" on a
+    # patient's own guess, with flagged_teeth empty (dev Test 5, 2026-09-26).
+    criteria = [{"id": c.id, "level": c.level, "kind": c.kind, "statement": c.statement,
+                 **({"holds_when": c.predicate} if c.kind == "structured" else {})}
                 for c in protocol.criteria]
     # Answered and unanswered are shown apart, because a null buried in a JSON
     # dump is easy to read past: in a live run the model cited a criterion about
@@ -162,12 +170,14 @@ def build_messages(protocol, symptoms: dict, visual: dict, words: list) -> list:
 
 def check_proposal(proposal: dict, protocol, symptoms: dict, visual: dict,
                    words: list) -> tuple:
-    """(errors, reasons). errors is empty when the proposal may be used;
-    reasons are the cited criteria with their checked evidence."""
+    """(errors, reasons, implied). errors is empty when the proposal may be
+    used; reasons are the cited criteria with their checked evidence;
+    implied is the level those criteria imply, or None if a citation or the
+    level itself failed a check."""
     errors, reasons, levels = [], [], []
     said = _normalize(" ".join(words))
     if proposal.get("level") not in protocol_mod.LEVELS:
-        return [f"level {proposal.get('level')!r} is not a triage level"], []
+        return [f"level {proposal.get('level')!r} is not a triage level"], [], None
 
     seen = set()
     for cited in proposal.get("criteria_met") or []:
@@ -220,12 +230,13 @@ def check_proposal(proposal: dict, protocol, symptoms: dict, visual: dict,
             reasons.append({"criterion_id": cid, "statement": criterion.statement,
                             "evidence": evidence})
 
-    if not errors:
-        implied = protocol_mod.most_urgent(levels) or "ROUTINE"
-        if proposal["level"] != implied:
-            errors.append(f"level {proposal['level']} does not match the criteria cited, "
-                          f"which imply {implied}")
-    return errors, reasons
+    if errors:
+        return errors, reasons, None
+    implied = protocol_mod.most_urgent(levels) or "ROUTINE"
+    if proposal["level"] != implied:
+        errors.append(f"level {proposal['level']} does not match the criteria cited, "
+                      f"which imply {implied}")
+    return errors, reasons, implied
 
 
 def _baseline_reason(baseline: dict) -> dict:
@@ -256,8 +267,10 @@ def _code_reasons(criteria: list, symptoms: dict, visual: dict) -> list:
 # --- The step ------------------------------------------------------------------
 
 def _ask_model(llm, protocol, symptoms, visual, words, schema, log: dict):
-    """Up to MAX_ATTEMPTS proposals. Returns (proposal, reasons) for the first
-    usable one, or (None, []) if none was usable."""
+    """Up to MAX_ATTEMPTS proposals. Returns (proposal, reasons, implied) for
+    the first usable one, or (None, [], None) if none was usable. implied is
+    the level the proposal's valid citations imply; it is below the model's
+    own level only when the last attempt was kept for code to raise."""
     messages = build_messages(protocol, symptoms, visual, words)
     protocol_level = protocol.protocol_level(symptoms, visual)
     last_valid = None
@@ -267,13 +280,23 @@ def _ask_model(llm, protocol, symptoms, visual, words, schema, log: dict):
         try:
             proposal = json.loads(raw)
         except (TypeError, json.JSONDecodeError):
-            errors, reasons, proposal = [f"output is not JSON: {str(raw)[:80]!r}"], [], None
+            errors, reasons, implied = [f"output is not JSON: {str(raw)[:80]!r}"], [], None
         else:
-            errors, reasons = check_proposal(proposal, protocol, symptoms, visual, words)
+            errors, reasons, implied = check_proposal(proposal, protocol, symptoms, visual, words)
         log["validation_errors"] += [f"attempt {attempt}: {e}" for e in errors]
+        # Every citation checked out and only the level is below them: fed
+        # back like any error first; on the last attempt the proposal is kept
+        # and code raises the level. A level above them is never kept, since
+        # code may not lower. (Dev Test 5, 2026-09-26: 15/15 fallbacks were
+        # this case on the retry.)
+        if (errors and implied and attempt == MAX_ATTEMPTS
+                and protocol_mod.LEVEL_RANK[proposal["level"]] > protocol_mod.LEVEL_RANK[implied]):
+            log["validation_errors"].append(f"attempt {attempt}: kept, level raised in code "
+                                            f"from {proposal['level']} to {implied}")
+            errors = []
         if not errors:
-            last_valid = (proposal, reasons)
-            missed = protocol_mod.LEVEL_RANK[proposal["level"]] > protocol_mod.LEVEL_RANK[protocol_level]
+            last_valid = (proposal, reasons, implied)
+            missed = protocol_mod.LEVEL_RANK[implied] > protocol_mod.LEVEL_RANK[protocol_level]
             if not missed:
                 return last_valid
             # Option A: say which criteria were missed, once; raise in code after.
@@ -291,9 +314,12 @@ def _ask_model(llm, protocol, symptoms, visual, words, schema, log: dict):
         messages = messages + [
             {"role": "assistant", "content": str(raw)},
             {"role": "user", "content": "Your answer was rejected:\n- " + "\n- ".join(errors)
-                                        + "\nCorrect it and output the JSON again."},
+                                        + "\nCorrect it and output the JSON again. Leave out "
+                                        "any criterion rejected above, and set `level` again "
+                                        "to the most urgent level among the criteria you "
+                                        "still list."},
         ]
-    return last_valid or (None, [])
+    return last_valid or (None, [], None)
 
 
 def _default_llm(model: str):
@@ -320,7 +346,8 @@ def assess(findings: dict, symptoms: dict = None, messages: list = None,
     protocol_level = protocol.protocol_level(symptoms, visual)
     log = {"protocol_version": protocol.version,
            "protocol_review_status": protocol.review_status,
-           "model": None, "llm_proposed": None, "llm_valid": False, "attempts": 0,
+           "model": None, "llm_proposed": None, "level_raised_from": None,
+           "llm_valid": False, "attempts": 0,
            "validation_errors": [], "protocol_level": protocol_level,
            "floor": floor, "overridden_by": None}
 
@@ -338,13 +365,20 @@ def assess(findings: dict, symptoms: dict = None, messages: list = None,
     else:
         log["model"] = model
         schema = output_schema(protocol, protocol.symptom_fields)
-        proposal, reasons = _ask_model(llm, protocol, symptoms, visual, words, schema, log)
+        proposal, reasons, implied = _ask_model(llm, protocol, symptoms, visual, words,
+                                                schema, log)
         if proposal is not None:
             log["llm_valid"] = True
-            log["llm_proposed"] = proposal["level"]
-            level = protocol_mod.most_urgent([proposal["level"], protocol_level])
+            log["llm_proposed"] = proposal["level"]   # the model's own level, even if raised
+            level = protocol_mod.most_urgent([proposal["level"], implied, protocol_level])
             decided_by = "llm"
-            if level != proposal["level"]:
+            if implied != proposal["level"]:
+                # Raised to the model's own valid citations. Not decided_by
+                # "llm": Test 5 reads that as the model's own level deciding.
+                # overridden_by stays for a source that raised past the citations.
+                log["level_raised_from"] = proposal["level"]
+                decided_by = "llm_raised"
+            if level != implied:
                 decided_by = log["overridden_by"] = "protocol_check"
                 cited_ids = {r["criterion_id"] for r in reasons}
                 reasons = reasons + _code_reasons([c for c in met if c.id not in cited_ids],

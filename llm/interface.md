@@ -311,6 +311,7 @@ Schema **2.0**. The keys the UI already uses keep their names and meaning:
     "protocol_review_status": "DRAFT-UNREVIEWED",
     "model": "qwen3:14b",
     "llm_proposed": "URGENT",
+    "level_raised_from": null,
     "llm_valid": true,
     "attempts": 1,
     "validation_errors": [],
@@ -338,14 +339,24 @@ Schema **2.0**. The keys the UI already uses keep their names and meaning:
 - `emergency_route` ∈ `medical`, `dental`, `either`, `null`. Recorded for
   research only; **not shown** to the patient. `null` unless EMERGENCY.
   Set by code from the EMERGENCY criteria that hold (medical wins).
-- `decided_by` ∈ `llm`, `red_flag_floor`, `protocol_check`,
-  `fallback_rules`: which source set the final level.
+- `decided_by` ∈ `llm`, `llm_raised`, `red_flag_floor`, `protocol_check`,
+  `fallback_rules`: which source set the final level. `llm_raised` = the
+  model's valid citations set the level, but code raised the model's own
+  stated level to them.
 - `reasons`: the validated criteria behind the final level. When the floor,
   the protocol check or the fallback decides, code writes them.
 - `triage.llm_proposed`: the model's level, `null` if the model was not
-  called (red-flag stop) or was invalid twice.
+  called (red-flag stop) or was invalid twice. Always the model's own level,
+  even when code raised it.
   `triage.overridden_by` ∈ `null`, `red_flag_floor`, `protocol_check`: set
-  only when that source raised the level above `llm_proposed`.
+  only when that source raised the level above both `llm_proposed` and the
+  level the model's valid citations imply. So it stays `null` for
+  `llm_raised`.
+- `triage.level_raised_from`: the model's own level when every citation
+  checked out but the level was below what those citations imply; code
+  raised it to them (`decided_by` `llm_raised`, or `protocol_check` if the
+  protocol raised it further, which also sets `overridden_by`). `null`
+  otherwise.
 - `triage.level`: the composed level **before** the photo-quality step, so a
   case whose photos were unusable can still be scored on the level it
   reached. `urgency` is what the patient is shown; `triage.level` is what
