@@ -64,7 +64,9 @@ Each key already carries one of six styles. What each must still preserve:
 | `terse` | a few words, no punctuation | facts present even if bare |
 
 The injection cases carry their injection line verbatim from `facts`; it goes
-in unchanged and must read as the patient typed it.
+in unchanged and must read as the patient typed it. Since 2026-09-26, code
+appends it after the model's text; the model is never asked to copy it
+(`p7-generation-prompt.md` §3.2).
 
 ## 4. Generation
 

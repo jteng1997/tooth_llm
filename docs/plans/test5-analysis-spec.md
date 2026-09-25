@@ -280,8 +280,11 @@ the same level; repeats-only and paraphrases-only shares also reported. It
 does not describe EMERGENCY cases, which never reach the model; say so.
 
 Paraphrases are written in P7 by the same generator, prompt and style as the
-case's `patient_words`, with seeds 20260923 + 1000 and + 2000, stored in the
-key as `paraphrases`. They pass every P7 automatic check and the §6 blind
+case's `patient_words`. Paraphrase p (1, 2) adds 1000 × p to the case's
+own seed: 20260923 + 1000 × p + attempt under seed scheme 1, and
+20260923 + 10000 × (index + 1) + 1000 × p + attempt under scheme 2
+(2026-09-26, `docs/plans/p7-generation-prompt.md` §1). They are stored in
+the key as `paraphrases`. They pass every P7 automatic check and the §6 blind
 extraction, and are regenerated if their token Jaccard with the case's own
 `patient_words` or the other paraphrase is above 0.8 (a near-copy measures
 nothing).
