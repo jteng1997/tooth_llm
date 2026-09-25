@@ -220,6 +220,29 @@ symptom.
   - Under plan §5 the run stops here. Going on to held-out after the
     generator-line changes is the lead's and the user's call.
   - The verdict below is superseded.
+- **Generator lines, smoke check** (`runs/p7/smoke_lines_dev.json`, 14 dev
+  texts). All three new lines kept:
+  - self_correcting: 0/7 texts name a side.
+  - spontaneous: 2/3 clean.
+  - moderate: 9/10 texts clearly moderate by my text-first reading.
+  B still misread 4 of the 9 clear moderate texts, in both directions (V081
+  → severe despite "doesn't stop me sleeping or eating"). **Research-pm's
+  view:** severity cells on moderate keys cannot be reliable without one
+  anchored definition shared by the generator brief and the production
+  extraction prompt, and possibly a code check on "severe" (it moves
+  levels). That decision is the user's. The held-out P7 reporting of
+  severity must be pre-declared before held-out runs.
+- **Prompt-input amendments before held-out generation** (all recorded in
+  `docs/plans/p7-generation-prompt.md` §3.3–§3.5):
+  - applied by the lead in code: the moderate, spontaneous, sweet ("no ice
+    cream as the example") and self_correcting lines;
+  - applied by research-pm in `labels/heldout/p7_fact_rewrites.json`: the
+    unclear-answers line now reads "... they may say they cannot remember,
+    but they never say whether they took anything for it, and never give any
+    length of time". Evidence: V031 and V005 answered the null pain-relief
+    field.
+  The sweet and unclear-answers lines are not smoke-checked. The backup copy
+  in `wave2_backup_2026-09-24/` keeps the old line, by design (a snapshot).
 - **Dev verdict (n = 195; assumes V082 then agrees; superseded):**
   - B error 2/195 = 1.0% (CI 0.1–3.7): the 5% rule is cleared.
   - Residual 3/195 = 1.54% (CI 0.3–4.4): the 2% bar is **cleared under the

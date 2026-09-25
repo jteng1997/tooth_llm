@@ -114,7 +114,8 @@ SEVERITY = {"mild": "The pain is mild — noticeable but easy to put up with.",
                         "\"slight\" or \"discomfort\".",
             "severe": "The pain is so bad they cannot sleep or eat properly."}
 TRIGGER = {"cold": "The pain is set off by cold things.", "hot": "The pain is set off by hot things.",
-           "sweet": "The pain is set off by sweet things.",
+           "sweet": "The pain is set off by sweet things. Do not use ice cream or other cold "
+                    "sweets as the example.",
            "biting": "The pain is set off by biting down.",
            "spontaneous": "The pain starts on its own, for example while they are resting or doing "
                           "nothing. They know it is not set off by anything; they must not say "

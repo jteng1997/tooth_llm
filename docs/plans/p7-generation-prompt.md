@@ -124,10 +124,10 @@ that file).
 | = not_helped | They took painkillers or something from the pharmacy and it did not help. |
 | = not_tried | They have not taken anything for the pain. |
 | severity = mild | The pain is mild — noticeable but easy to put up with. |
-| = moderate | The pain is fairly bad and bothers them, but they still sleep and eat normally. |
+| = moderate | The pain is fairly bad and bothers them, but they still sleep and eat normally. Say both parts plainly; do not play the pain down as "a bit", "slight" or "discomfort". |
 | = severe | The pain is so bad they cannot sleep or eat properly. |
-| triggers = cold / hot / sweet / biting | The pain is set off by cold things / hot things / sweet things / biting down. (One line per item; say only these.) |
-| = spontaneous | The pain comes on by itself, with nothing setting it off. |
+| triggers = cold / hot / sweet / biting | The pain is set off by cold things / hot things / sweet things / biting down. (One line per item; say only these.) The sweet line adds: Do not use ice cream or other cold sweets as the example. |
+| = spontaneous | The pain starts on its own, for example while they are resting or doing nothing. They know it is not set off by anything; they must not say they don't know what sets it off or what causes it. |
 | = unknown | They cannot tell what sets the pain off. |
 | location = upper_left etc. | The pain is in the upper left / upper right / lower left / lower right of the mouth. Name both top-or-bottom and left-or-right. |
 | = front | The pain is at the front of the mouth. |
@@ -150,7 +150,19 @@ For a reached case, one line per chat field that is null in the key:
 
 For the "unclear answers" keys (null pain relief and duration), add: `They
 are vague and unsure when it comes to painkillers and to how long it has been
-going on.`
+going on: they may say they cannot remember, but they never say whether they
+took anything for it, and never give any length of time.`
+
+**Amended 2026-09-25, after the dev adjudication and before held-out
+generation** (`docs/decisions.md`, P7 dev entry;
+`runs/p7/adjudication_dev_summary.md`):
+- moderate, spontaneous and sweet lines above (§3.3);
+- the self_correcting style line (§3.5);
+- the unclear-answers line (it lives in `labels/heldout/p7_fact_rewrites.json`).
+
+The dev texts were generated with the earlier lines. The new lines were
+smoke-checked on 14 dev texts (`runs/p7/smoke_lines_dev.json`), except the
+sweet and unclear-answers lines, which were added after the smoke check.
 
 ### 3.5 Style lines (given with the style name)
 
@@ -159,7 +171,7 @@ going on.`
 | plain | Ordinary, clear everyday English. |
 | vague | Hedged and imprecise ("sort of", "I think", "maybe"), but every point you must get across is still there. |
 | non_native | English as a second language: simple tenses, some missing articles, small word-order slips. Stay respectful; no invented accent or dialect. |
-| self_correcting | At least once, first say something slightly wrong, then correct it ("the left — no, the right side"). The corrected version must match what you were given. Correct only details you were given. |
+| self_correcting | At least once, first say something slightly wrong, then correct it ("... — no, I mean ..."). Correct only a detail from your facts or your must-get-across points; never bring in a side of the mouth, a time or a trigger you were not given just to correct it. The corrected version must match what you were given. |
 | verbose | Long and chatty, with everyday life detail unrelated to the teeth. The extra detail must not add symptoms, times, sides or medicines. |
 | terse | A few words, little or no punctuation. Every point still there. |
 
