@@ -44,6 +44,127 @@ The 20 rule cases in `llm/eval/rule_cases.json` also need blind dentist labels.
 
 ## Decided
 
+### 2026-09-26 — Pain severity definitions (user); the code guard on "severe" was tried and removed
+**Decision (user, 2026-09-26; option A as proposed by research-pm and the
+lead):** one set of definitions, shared by the production extraction prompt
+and the P7 generator brief:
+- **mild**: they notice it, but it does not get in the way;
+- **moderate**: it bothers them, but they still sleep and eat normally;
+- **severe**: it stops them sleeping or eating, or they call it unbearable.
+
+This is a clinical definition. "Severe" is the input to criterion U2
+(URGENT, "Severe pain that stops normal sleeping or eating"). The user signed
+it off; a dentist has not reviewed it yet.
+
+**Applied by the lead (uncommitted until measured):**
+1. `interview.EXTRACTION_INSTRUCTION` uses these definitions, and adds:
+   strong words alone ("really bad", "throbbing badly") are moderate while
+   they still sleep and eat.
+2. `verify()` guard: "severe" is kept only if the patient's words meet the
+   definition. That means disrupted sleep or eating that is not denied in
+   the same clause, or "unbearable"; in a reply to Q11, choosing its severe
+   option also counts. Otherwise the value becomes null. Checks only drop
+   values.
+3. The P7 `SEVERITY` lines use the same definitions.
+Suite 407/407; check_rules 20/20.
+
+**Why:** on dev, model B misread 4/9 clearly moderate texts, in both
+directions. One of them (V081) was read as severe against an explicit "doesn't
+stop me sleeping or eating". qwen3:14b uses the same prompt, and a
+moderate → severe misread moves a level (P7 dev summary, smoke check).
+
+**Caveat found the same day (research-pm; not resolved):** dropping
+"severe" lowers urgency, because U2 is lost. That is the direction code must
+never move urgency (hard rule 2). A probe of `_severe_said` with 15 severe
+phrasings of my own, identical as opening message and as Q11 reply, found
+7 dropped:
+- meeting the definition: "It doesn't let me sleep", "I don't sleep because
+  of it", "I'm up all night with it", "I can only eat soup now, chewing is
+  impossible";
+- a user call on whether they count as unbearable: "agony",
+  "excruciating", "worst pain I've ever had".
+The 5 moderate/mild controls were all correctly not severe. This shows the
+fault exists; it is not a rate. The proposed conditions before commit are
+listed below. They are the lead's and the user's call.
+- A severe-phrasing test set with 0 false drops (written by research-pm or
+  qa-engineer).
+- The user's ruling on agony-type words.
+- Optionally, re-asking Q11 when the guard drops "severe" in the live
+  interview.
+
+**Update (same day): guard redesigned, and the P7 dev result.**
+- **Guard.** The cue-based guard failed the independent set
+  (`llm/eval/severity_phrases.json`, 44 severe + 33 controls): 8/44 false
+  drops and 7/33 false keeps. The lead changed the design: "severe" is now
+  dropped only when the patient denies the disruption and nothing meets
+  the definition, with the later answer winning. Result: 0/44 false drops
+  and 16/33 false keeps (the safe direction). The later-answer fix was made
+  after seeing SV25, so that set is now tuned. A fresh set,
+  `llm/eval/severity_phrases_b.json` (22 severe, heavy on self-corrections
+  and mixed clauses; 14 controls, each with a real denial), was written by
+  research-pm without reading the guard code. It is for the claim.
+- **What the guard now protects.** Only the case of an explicit denial.
+  Keeping false "severe" (which raises urgency) out rests on the prompt
+  anchor.
+- **P7 dev in the anchored configuration** (prompt dfaad381bd32, all dev
+  cases re-read by B): 1/195 disagree (V087 triggers, B wrong: a stitched
+  quote).
+  - Residual 0/195 as written, 2/195 = 1.03% (CI 0.1–3.7) conservatively.
+  - B error 1/195 = 0.51%.
+  - Without severity: residual 0/156, B error 1/156.
+  - **Dev clears both rules, both ways.** This is tuned: the anchor and the
+    guard were designed after seeing these dev texts, so it is a
+    calibration result. The first untuned measurement is held-out P7.
+  - All earlier severity cells (ambiguous and B wrong) agree under the
+    anchor.
+
+**Guard removed (lead decision, same day).** The denial-only guard failed
+the fresh set too (one run on `severity_phrases_b.json`): **3/22 false drops**
+and 7/14 false keeps. The false drops were SB02 (a self-correction:
+"doesn't stop me eating. Well, it does now…"), SB14 ("I wish I could say I'm
+sleeping okay, but I'm not") and SB17 (a denial about someone else: "kids
+are sleeping well … but I haven't had a decent night").
+- Summary of both independent sets:
+
+  | Guard version | Set | False drops | False keeps |
+  |---|---|---|---|
+  | cue-based | A | 8/44 | 7/33 |
+  | denial-only | A | 1/44 | before the later-answer fix, which was tuned on A |
+  | denial-only | B | 3/22 | 7/14 |
+
+- A false drop removes criterion U2 (URGENT), which lowers urgency, and on
+  a single-message text there is no Q11 re-ask to recover it. Two
+  independent sets missed the zero bar, so **no code drops "severe"**.
+  `interview.py` cites both sets in a comment.
+- Severity now rests only on the anchored definitions, in the extraction
+  prompt and the P7 brief.
+- The P7 dev rescore without the guard is unchanged (pain_severity 0/39,
+  all fields 1/195). The anchor did the work, so the dev verdict above
+  stands. Suite 404/404; check_rules 20/20.
+- Both phrase sets are now spent for guard claims. A future guard needs a
+  new set.
+
+**For Test 3 and Test 5 (research-pm; to be pre-declared before held-out).**
+With no code check, both severity errors can come straight from the model.
+Each is counted separately, with n, ids and an exact CI, next to the
+headline figures:
+- **false severe:** key mild or moderate, extracted severe. This raises
+  urgency (U2).
+- **missed severe:** key severe, extracted mild, moderate or null. This
+  lowers urgency, the more serious direction.
+In Test 5 each is also counted at the level it produces: cases whose triage
+level was raised, or lowered, because of the severity field.
+
+### 2026-09-26 — P7 held-out: severity shown separately (pre-declared, research-pm)
+Declared before any held-out P7 text is generated: the held-out B-error rate
+and the residual text-attributable rate are reported **with all five chat
+fields** (the rule, as before) **and also without `pain_severity`**. Both
+are shown, and nothing is excluded. The 2% bar and the 5% B rule are judged
+on the all-fields figures. The without-severity figures are shown to reveal
+how much of any miss comes from the severity definition. Also reported, as
+on dev: hand-edited cells counted as fixed and as generator failures, and
+the no-split residual. Added to `docs/plans/p7-adjudication-plan.md` §5.
+
 ### 2026-09-24 — Test 3 blind set C: the blind measurement of #20 (qa-engineer)
 Single run, 2026-09-24 18:54–19:11, qwen3:14b, commit 258e6b9.
 Configuration (the pre-run log matches the end-of-run record):

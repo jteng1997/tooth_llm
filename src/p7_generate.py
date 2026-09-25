@@ -108,11 +108,14 @@ STYLE_LINES = {
 RELIEF = {"helped": "They took painkillers or something from the pharmacy and it helped.",
           "not_helped": "They took painkillers or something from the pharmacy and it did not help.",
           "not_tried": "They have not taken anything for the pain."}
-SEVERITY = {"mild": "The pain is mild — noticeable but easy to put up with.",
-            "moderate": "The pain is fairly bad and bothers them, but they still sleep and eat "
+# The user's severity definitions (2026-09-26), shared word for word with the
+# production extraction prompt (interview.EXTRACTION_INSTRUCTION).
+SEVERITY = {"mild": "The pain is mild: they notice it but it does not get in the way.",
+            "moderate": "The pain is moderate: it bothers them but they still sleep and eat "
                         "normally. Say both parts plainly; do not play the pain down as \"a bit\", "
                         "\"slight\" or \"discomfort\".",
-            "severe": "The pain is so bad they cannot sleep or eat properly."}
+            "severe": "The pain is severe: it stops them sleeping or eating, or they call it "
+                      "unbearable. Say which plainly."}
 TRIGGER = {"cold": "The pain is set off by cold things.", "hot": "The pain is set off by hot things.",
            "sweet": "The pain is set off by sweet things. Do not use ice cream or other cold "
                     "sweets as the example.",

@@ -337,8 +337,15 @@ EXTRACTION_INSTRUCTION = (
     "say' when asked what sets it off is itself an answer — ['unknown'], not null.\n"
     "- pain_relief_effect: 'helped' or 'not_helped' if they took something; "
     "'not_tried' if they say they have not taken anything.\n"
-    "- pain_severity: 'severe' when it stops them sleeping or eating or they call "
-    "it unbearable; otherwise 'mild' or 'moderate' as they describe it.\n"
+    # Severity definitions: the user's, 2026-09-26. There is deliberately no
+    # code check on 'severe' in verify(): two independent phrase sets
+    # (llm/eval/severity_phrases*.json) showed pattern checks dropping real
+    # severe pain (8/44, then 3/22), and a drop lowers urgency.
+    "- pain_severity, by these definitions: 'mild' — they notice it but it does not "
+    "get in the way; 'moderate' — it bothers them but they still sleep and eat "
+    "normally; 'severe' — it stops them sleeping or eating, or they call it "
+    "unbearable. Strong words alone ('really bad', 'throbbing badly') are "
+    "'moderate' while they still sleep and eat.\n"
     "- location needs arch and side together: 'bottom left' is lower_left, "
     "'on the left' alone is not enough. 'front' is the front teeth, top or bottom: "
     "whenever they say front, use 'front' and never add a side they did not say; "

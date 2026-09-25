@@ -470,6 +470,18 @@ class Chat(unittest.TestCase):
             session.reply("hello")
 
 
+class SevereIsNeverDroppedByCode(unittest.TestCase):
+    """No pattern check drops 'severe' (lead, 2026-09-26): on two independent
+    phrase sets such checks dropped real severe pain, which lowers urgency."""
+
+    def test_severe_stands_on_any_supported_quote(self):
+        for text in ["I wish I could say I'm sleeping okay, but I'm not, it's too painful.",
+                     "It doesn't stop me eating. Well, it does now, I skipped lunch.",
+                     "The pain is really bad."]:
+            self.assertEqual(interview.verify("pain_severity", "severe", text, [(None, text)]),
+                             "severe", text)
+
+
 class ProtocolV02(unittest.TestCase):
     """Q20 broken filling/tooth and Q21 pus: checklist-A rows, not red flags,
     feeding S3 (SOON) and U8 (URGENT) with or without pain."""

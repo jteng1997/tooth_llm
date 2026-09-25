@@ -68,6 +68,13 @@ output exists. A B misread on clear text says nothing about the text.
   fallback as the option (the lead's and the user's call).
 - The same residual computed without the B-wrong split, so a reader can see
   what the bar would have been under §6 as first written.
+- **Added 2026-09-26, before any held-out text exists** (after dev; see
+  `docs/decisions.md`):
+  - The B-error rate and the residual are also shown **without
+    `pain_severity`**. Nothing is excluded. The bar and the 5% rule are
+    judged on the all-fields figures.
+  - Hand-edited cells are reported both ways: as fixed, and as generator
+    failures.
 
 ## 6. The 50-case human read (§7)
 
