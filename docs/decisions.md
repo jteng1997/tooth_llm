@@ -166,6 +166,60 @@ Details are in `labels/heldout/p7/adjudication_e2e_summary.md` (gitignored).
   terse scripted answer. This is post-hoc, before scoring.
 - No keys changed. No hand edits.
 
+### 2026-09-26 — P7 held-out: census of the not-reached texts before Test 5 (lead's decision, pre-scoring)
+**Decision (lead, 2026-09-26, before any held-out scoring):**
+- Research-pm reads all 151 texts of cases that do not reach the chat (116
+  triage, 35 e2e openings), with the 50-case read's row definition.
+- Every case with a fact missing or contradicted, a null field answerable
+  or a broken style is regenerated. The normal limit applies (2 rounds, then
+  a marked hand edit), red-flag cases first.
+- The regenerated texts are re-read.
+- Then both key files are written back once, and Test 5 runs. **E2e is held
+  too.**
+
+**Why:** the 50-case read found 9/29 errors among these texts. The blind B
+check never reads them, and the triage-level check passes the patient's
+words to the model.
+
+**Result, pre-fix** (details in the gitignored census summary):
+- 36/151 = 23.8% (CI 17.3–31.4) errors; 28/151 without borderline calls.
+- Triage 22/116, e2e 14/35.
+- 17 fact missing, 17 fact contradicted, 4 style broken.
+- 5 would add or lose a red flag, and 9 would raise urgency on a low-level
+  key.
+- The main cause: no-problem keys get no line telling the model to say
+  there is no problem. A one-line prompt input is proposed.
+
+### 2026-09-26 — P7 held-out: final result and the 50-case read (research-pm)
+Details are in the gitignored summaries (`labels/heldout/p7/`). No held-out
+text is quoted here.
+
+**Final, after round 2** (all 260 texts accepted, no hand edits, 0 keys
+changed after the round-1 fix):
+- **Triage** (n = 420): residual 6/420 = 1.43% (CI 0.5–3.1), as written and
+  conservatively; **the 2% bar is met**.
+  - B error 8/420 = 1.9% (CI 0.8–3.7).
+  - Without severity: 3/336 and 5/336.
+  - No-split residual 17/420 = 4.05%.
+- **E2e** (n = 125): residual 1/125 = 0.8%; **the bar is met**. B error
+  0/125.
+- Neither CI rules out a true rate above 2%.
+
+**50-case human read, reported as written:** **11/50 = 22.0% (CI
+11.5–36.0)** errors (8/50 without my 3 borderline calls).
+- 5 fact contradicted, 5 fact missing, 1 null field answerable, 1 style
+  broken.
+- **9 of the 11 are in cases that do not reach the chat** (9/29, 31%, CI
+  15–51), against 2/21 among reached cases. The blind B check never reads
+  those texts, so the 2% bar does not cover them.
+- 7 more cases add content that was not asked for.
+- The read was not blind.
+
+**Consequence.** Test 5's triage-level check passes the patient's words to
+the model, so a text that contradicts its key can move the level and be
+scored as a model error. Research-pm's recommendation (the lead's and the
+user's call) is to screen the not-reached texts before Test 5.
+
 ### 2026-09-26 — P7 held-out, round 2 (research-pm)
 After the round-1 regeneration on harness 960ce57 (details in the gitignored
 summaries):

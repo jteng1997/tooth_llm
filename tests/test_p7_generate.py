@@ -94,6 +94,12 @@ class PromptLines(unittest.TestCase):
         self.assertNotIn("Must not say", prompt["user"])
         self.assertIn("dull ache near one tooth", prompt["user"])
 
+    def test_no_problem_key_is_told_to_say_so(self):
+        k = key(facts=["no pain or other problems"],
+                symptoms={**key()["symptoms"], "pain_present": False})
+        self.assertIn(p7.NO_PROBLEM_LINE, p7.build_prompt(k, "triage", REWRITES)["user"])
+        self.assertNotIn(p7.NO_PROBLEM_LINE, p7.build_prompt(key(), "triage", REWRITES)["user"])
+
     def test_e2e_questions_only_when_expected(self):
         k = key(expected_questions=["Q1", "Q10", "Q11", "Q12", "Q17", "Q18"])
         prompt = p7.build_prompt(k, "e2e", REWRITES)
