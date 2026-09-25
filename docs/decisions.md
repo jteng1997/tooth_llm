@@ -166,6 +166,33 @@ Details are in `labels/heldout/p7/adjudication_e2e_summary.md` (gitignored).
   terse scripted answer. This is post-hoc, before scoring.
 - No keys changed. No hand edits.
 
+### 2026-09-26 — P7 held-out, round 2 (research-pm)
+After the round-1 regeneration on harness 960ce57 (details in the gitignored
+summaries):
+- **Triage** (n = 420, full set): 19/420 = 4.5% disagreed before
+  adjudication.
+  - B error 8/420 = 1.9% (CI 0.8–3.7).
+  - Residual 8/420 = 1.90% (CI 0.8–3.7): **the 2% bar is met now**, with no
+    room for one more text-attributable cell.
+  - Without severity: residual 4/336, B error 5/336.
+  - Round 2 regenerates 2 texts.
+- **E2e** (n = 125, full set): 5/125 = 4.0% disagreed.
+  - B error 0/125.
+  - Residual 5/125 = 4.0%: **not met yet**. It becomes 1/125 if the 4
+    round-2 regenerations come back clean. Three of those 4 are a null
+    location answered with "everywhere".
+- No hand edits so far. A third `verify()` gap was found (known
+  limitations, above).
+- **Generator-prompt amendment, pre-scoring** (research-pm's wording,
+  applied by the lead in commit f88397b before the round-2 regenerations):
+  - the "must not say" line for location also forbids "everywhere", "all
+    over" and "at the front";
+  - the e2e rule for replies to a "must not say" question now forbids
+    partial answers and guesses.
+  It applies only to texts generated from round 2 on; earlier accepted
+  texts keep the old wording on record (`p7-generation-prompt.md` §3.4,
+  §3.7). No held-out Test 5 scoring has happened.
+
 ### 2026-09-26 — P7 held-out triage set: adjudication round 1 (research-pm)
 Details are in `labels/heldout/p7/adjudication_triage_summary.md`
 (gitignored). No held-out text is quoted here.
@@ -212,7 +239,10 @@ scoring**, since a fix now would be tuning on held-out).
 2. The rule that stops an illness word from counting as a temperature
    trigger also blanks some ordinary mentions of a cold food or drink, so a
    real "cold" trigger can be dropped.
-Both drop a value, and neither adds one. Test 5 e2e results are reported
+3. (Found in round 2.) In unpunctuated text, the denial of a different
+   situation cancels a trigger named just before it in the same run of
+   words.
+All three drop a value, and none adds one. Test 5 e2e results are reported
 with these as known limitations. They are fixed after held-out scoring, or
 earlier only on independent (non-held-out) evidence, with a fresh test.
 The exact phrases stay in the gitignored summary.

@@ -171,7 +171,7 @@ For a reached case, one line per chat field that is null in the key:
 
 | Null field | Line |
 |---|---|
-| location | Do not say which side or whether it is top or bottom. |
+| location | Do not say which side or whether it is top or bottom, and do not say it is everywhere, all over or at the front: the patient simply cannot tell where it is. *(Wording since 2026-09-26, commit f88397b; before: "Do not say which side or whether it is top or bottom." Changed after held-out round 2, where some e2e answers to a null location described the pain as spread over the whole mouth, which is itself a location.)* |
 | pain relief | Do not make clear whether they took anything or whether it helped. |
 | duration | Do not say how long it has been going on. |
 | severity / triggers | Do not say how bad it is / what sets it off. |
@@ -242,10 +242,17 @@ Then write the patient's reply, 3 to 40 words, to each of these questions:
 - Q17: where in the mouth the pain is
 - Q18: how long they have had the pain
 Each reply answers only its own question. A reply to a question listed under
-"must not say" must not answer it: the patient is unsure, or cannot tell.
+"must not say" must not answer it, not even partly or as a guess: the patient
+says only that they are unsure or cannot tell.
 
 Reply as JSON: {"opening": "...", "script": {"Q10": "...", ...}}
 ```
+
+*Amended 2026-09-26 (commit f88397b), pre-scoring, for the held-out round-2
+regenerations:* the last sentence was "A reply to a question listed under
+"must not say" must not answer it: the patient is unsure, or cannot tell."
+Some held-out e2e replies to such questions had given a partial or hedged
+answer.
 
 Include only the Q lines in the key's `expected_questions` (in practice all
 five or none). Schema: `opening` string, `script` object with exactly those
