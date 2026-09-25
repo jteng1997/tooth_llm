@@ -142,7 +142,9 @@ QUADRANT = {"upper_left": "upper left", "upper_right": "upper right", "lower_lef
             "lower_right": "lower right"}
 DURATION = {1: "since yesterday", 7: "a week", 10: "about ten days", 14: "two weeks",
             21: "three weeks", 30: "about a month"}
-MUST_NOT = {"location": "Do not say which side or whether it is top or bottom.",
+MUST_NOT = {"location": "Do not say which side or whether it is top or bottom, and do not say it "
+                        "is everywhere, all over or at the front: the patient simply cannot tell "
+                        "where it is.",
             "pain_relief_effect": "Do not make clear whether they took anything or whether it helped.",
             "duration_days": "Do not say how long it has been going on.",
             "pain_severity": "Do not say how bad it is.",
@@ -264,7 +266,8 @@ def build_prompt(key: dict, kind: str, rewrites: dict) -> dict:
             lines.append("Then write the patient's reply, 3 to 40 words, to each of these questions:")
             lines += [f"- {q}: {QUESTION_TOPICS[q]}" for q in questions]
             lines += ["Each reply answers only its own question. A reply to a question listed under",
-                      '"must not say" must not answer it: the patient is unsure, or cannot tell.']
+                      '"must not say" must not answer it, not even partly or as a guess: the '
+                      'patient says only that they are unsure or cannot tell.']
         example = ", ".join(f'"{q}": "..."' for q in questions)
         lines += ["", 'Reply as JSON: {"opening": "...", "script": {' + example + "}}"]
         schema = {"type": "object", "required": ["opening", "script"],
