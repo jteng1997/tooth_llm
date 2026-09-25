@@ -199,6 +199,41 @@ PAIN_DENIED = re.compile(
 _CLAUSE = re.compile(r"[.;!?]+|,?\s+\bbut\b|,?\s+\bthough\b|,?\s+\bwhereas\b")
 
 
+# A temperature word about the weather or the surroundings ("the weather has
+# been hot", "a cold office", "it's freezing outside") is not a trigger unless
+# its own part of the sentence ties it to the pain ("the cold weather makes it
+# ache"). "Cold air" on the tooth is a real cold trigger and is not matched.
+_TEMP = r"(?:hot|cold|warm|freezing|chilly|cool|icy|boiling)"
+SURROUNDINGS = re.compile(
+    rf"\b{_TEMP}\s+(?:weather|days?|mornings?|evenings?|nights?|rooms?|house|office|climate"
+    r"|seasons?|summers?|winters?|spell|snap|wind|temperatures?|outside|out there|out today)\b"
+    r"|\b(?:it|weather|the day|the room|the house|the office|outside|summer|winter|here|there)"
+    r"(?:'s| is| was| were| has been| had been| gets| got| is getting| feels| felt| been)"
+    rf"\s+(?:so |really |very |quite |too |a bit |pretty |been )*{_TEMP}\b"
+    r"(?!\s+(?:drinks?|water|food|things?|stuff|tea|coffee|soup|milk|juice))"
+    r"|\b(?:heat ?waves?|in the heat|the heat outside|cold snap|in the cold(?! (?:drinks?|water"
+    r"|food|things?)))\b")
+_SEGMENT = re.compile(r",|;|\band\b|\bbut\b|\bso\b|\bwhile\b|\bwhereas\b")
+
+
+# Drawing outside air in, or wind on the teeth: then the outdoor temperature IS
+# the stimulus ("it hurts when I breathe in and it's freezing outside").
+_INTAKE = re.compile(r"\b(?:breath\w*|inhal\w*|air|wind|gulp\w*|suck\w* in"
+                     r"|mouth (?:open|breathing)|through (?:my|the) mouth)\b")
+
+
+def _drop_surroundings(clause: str) -> str:
+    """The clause with weather/surroundings temperature phrases blanked, except
+    where their own segment ties them to the pain, or the clause has the
+    patient taking outside air in."""
+    if _INTAKE.search(clause):
+        return clause
+    kept = []
+    for segment in _SEGMENT.split(clause):
+        kept.append(segment if PAIN_LINK.search(segment) else SURROUNDINGS.sub(" ", segment))
+    return " , ".join(kept)
+
+
 def _trigger_named(item: str, sources: list, own_question) -> bool:
     """Is this trigger named, and not denied, in one of the patient's messages?"""
     for qid, text in sources:
@@ -208,6 +243,8 @@ def _trigger_named(item: str, sources: list, own_question) -> bool:
         for clause in _CLAUSE.split(text):
             if PAIN_DENIED.search(clause):
                 continue
+            if item in ("hot", "cold"):
+                clause = _drop_surroundings(clause)
             if TRIGGER_CUES[item].search(clause):
                 return True
             food = FOOD_CUES.get(item)

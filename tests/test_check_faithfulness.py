@@ -136,8 +136,23 @@ class UnscopedAbsence(unittest.TestCase):
                      "We looked at the bottom teeth and did not see any problems on the biting "
                      "surfaces.",
                      "A cavity can be there even when the photos show nothing.",
-                     "The photo of your upper teeth could not be used, so please retake it."):
+                     "The photo of your upper teeth could not be used, so please retake it.",
+                     "This result means nothing was found on the lower teeth in the photo, but "
+                     "the upper teeth photo could not be used."):
             self.assertEqual(cf.unscoped_absence(text, self.USABLE), [], text)
+
+    def test_an_arch_named_only_as_unusable_does_not_widen_or_give_scope(self):
+        for text in ("Based on the lower teeth photo, nothing was found that reached the level we "
+                     "report.",
+                     "The photos did not show the upper teeth at all and did not find anything on "
+                     "the lower teeth."):
+            self.assertEqual(cf.unscoped_absence(text, self.USABLE), [], text)
+        # naming only the unusable arch as its scope is still unscoped
+        text = "Nothing was found in the photos, and the upper photo could not be used."
+        self.assertEqual(len(cf.unscoped_absence(text, self.USABLE)), 1)
+        # a claim about the unusable arch itself is counted
+        text = "This result means that nothing was found on the upper teeth in the photo."
+        self.assertEqual(len(cf.unscoped_absence(text, self.USABLE)), 1)
 
     def test_scored_only_when_a_photo_is_unusable(self):
         good = base_findings()

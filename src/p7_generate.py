@@ -918,17 +918,21 @@ def disagreement(field: str, key_value, b_value, schema: dict):
     return None if key_value == b_value else "different value"
 
 
-def extract(kind: str, backend: str = "gemini") -> int:
+def extract(kind: str, backend: str = "gemini", allow_pending: bool = False) -> int:
+    """allow_pending: read the accepted cases now and leave the ones waiting for
+    research-pm; a later run adds them (same model and schema mode, by id)."""
     import interview
     keys, _, protocol, _ = _load(kind)
     by_id = {k["id"]: k for k in keys}
     gen_path = out_dir(kind) / f"generated_{kind}.json"
     gen = json.loads(gen_path.read_text(encoding="utf-8"))
     pending = [i for i, c in gen["cases"].items() if c["status"] != "accepted"]
-    if pending or len(gen["cases"]) != len(keys):
+    if len(gen["cases"]) != len(keys) or (pending and not allow_pending):
         print(f"REFUSED: generation not finished ({len(gen['cases'])}/{len(keys)} cases, "
-              f"{len(pending)} waiting for research-pm)")
+              f"{len(pending)} waiting for research-pm; --allow-pending reads the accepted ones now)")
         return 1
+    if pending:
+        print(f"{len(pending)} cases wait for research-pm and are left for a later run: {pending}")
     chat_q = [q for q in protocol.questions if q.input == "chat"]
     fields = [f for q in chat_q for f in q.fields]
     asked_for = {f: q.id for q in chat_q for f in q.fields}
@@ -970,7 +974,7 @@ def extract(kind: str, backend: str = "gemini") -> int:
 
     for n, cid in enumerate(gen["order"], 1):
         key = by_id[cid]
-        if cid in out["cases"]:
+        if cid in out["cases"] or cid in pending:
             continue
         if not reached_chat(key["symptoms"]):
             out["cases"][cid] = {"reached_chat": False}
@@ -1107,6 +1111,8 @@ def main() -> int:
                     help="model B: the Gemini API, or the local gemma3:12b fallback (log a switch; "
                          "never mix the two within one set)")
     ap.add_argument("--fallback", action="store_true", help="smoke: also test the local B fallback")
+    ap.add_argument("--allow-pending", action="store_true",
+                    help="extract: read the accepted cases now, leave the ones waiting for research-pm")
     ap.add_argument("--file", choices=sorted(KEY_FILES), default="triage")
     ap.add_argument("--dry-run", action="store_true", help="print the prompts, call no model")
     ap.add_argument("--limit", type=int)
@@ -1125,7 +1131,7 @@ def main() -> int:
     if args.command == "generate":
         return generate(args.file, args.dry_run, args.limit)
     if args.command == "extract":
-        return extract(args.file, args.b_backend)
+        return extract(args.file, args.b_backend, args.allow_pending)
     if args.command == "writeback":
         return writeback(args.file)
     gen = out_dir(args.file) / f"generated_{args.file}.json"

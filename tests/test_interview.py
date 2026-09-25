@@ -414,6 +414,34 @@ class Chat(unittest.TestCase):
     def test_iced_coffee_is_not_a_hot_trigger(self):
         self.assertEqual(self.trig(["hot", "cold"], "Iced coffee sets it off."), ["cold"])
 
+    # weather and surroundings (#23): not a trigger unless tied to the pain
+
+    def test_weather_temperature_is_not_a_trigger(self):
+        for text, value, want in (
+                ("The weather has been hot, and cold drinks set it off.", ["hot", "cold"], ["cold"]),
+                ("It's so hot out today, but sweets are what hurt.", ["hot", "sweet"], ["sweet"]),
+                ("I work in a cold office. Sweet things set it off.", ["cold", "sweet"], ["sweet"]),
+                ("It's freezing outside and ice cream makes it ache.", ["cold"], ["cold"]),
+                ("We had a heatwave last week; biting hurts.", ["hot", "biting"], ["biting"])):
+            with self.subTest(text=text):
+                self.assertEqual(self.trig(value, text), want)
+        self.assertIsNone(self.trig(["cold"], "It has been cold outside lately."))
+
+    def test_temperature_tied_to_the_pain_still_counts(self):
+        for text, value in (("Cold air hurts my tooth.", ["cold"]),
+                            ("It hurts when I breathe in cold air outside.", ["cold"]),
+                            ("The cold weather makes it ache.", ["cold"]),
+                            ("It aches on hot days.", ["hot"]),
+                            ("Hot drinks, and it's worse in the heat.", ["hot"]),
+                            ("When the water is cold it hurts.", ["cold"]),
+                            ("When I breathe in through my mouth and it's freezing outside.",
+                             ["cold"]),
+                            ("Breathing in outside when it's cold.", ["cold"]),
+                            ("Walking to work on cold mornings with my mouth open.", ["cold"]),
+                            ("The wind on cold days.", ["cold"])):
+            with self.subTest(text=text):
+                self.assertEqual(self.trig(value, text), value)
+
     def test_category_words_still_work_as_before(self):
         for text, value in (("Cold and sweet things.", ["cold", "sweet"]),
                             ("Hot and cold both.", ["hot", "cold"]),

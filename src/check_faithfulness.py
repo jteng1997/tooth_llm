@@ -149,6 +149,10 @@ _ABSENCE = re.compile(
     r"|\b(?:photos?|images?|pictures?) (?:show|showed) nothing\b", re.I)
 # "A cavity can be there even when the photos show nothing" is a limitation.
 _LIMITATION = re.compile(r"\b(?:can|could|may|might) (?:still )?be there\b|\beven (?:when|if)\b", re.I)
+_CLAUSES = re.compile(r"[,;]\s*|\s[-–—]\s|\b(?:but|and|while|whereas|although|however)\b", re.I)
+_UNUSABLE = re.compile(r"\b(?:could ?n[o']t|can ?n?[o']t|cannot) be used\b|\bnot usable\b|\bunusable\b"
+                       r"|\b(?:did ?n[o']t|does ?n[o']t|could ?n[o']t) show\b|\bnot clear enough\b"
+                       r"|\bno teeth\b|\bretake\b", re.I)
 _USABLE_PHOTO = re.compile(r"\bphotos? (?:we|that) could (?:be )?use\b|\busable photo\b"
                            r"|\bphoto that could be used\b", re.I)
 
@@ -163,7 +167,11 @@ def unscoped_absence(text: str, usable: list) -> list:
     for sentence in _SENTENCES.split(text or ""):
         if not _ABSENCE.search(sentence) or _LIMITATION.search(sentence):
             continue
-        named = {arch for arch, rx in _ARCH_WORDS.items() if rx.search(sentence)}
+        # An arch named only to say its photo could not be used does not
+        # widen the scope: "nothing was found on the lower teeth, but the upper
+        # photo could not be used" is scoped (Test 2 v5 S0030, S0034).
+        clauses = [c for c in _CLAUSES.split(sentence) if c and not _UNUSABLE.search(c)]
+        named = {arch for arch, rx in _ARCH_WORDS.items() if any(rx.search(c) for c in clauses)}
         scoped = (bool(named) and named <= set(usable)) or (
             not named and bool(_USABLE_PHOTO.search(sentence)))
         if not scoped:
