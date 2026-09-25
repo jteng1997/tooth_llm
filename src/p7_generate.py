@@ -41,8 +41,18 @@ def out_dir(kind: str) -> Path:
 
 KEY_FILES = {"dev": REPO_ROOT / "labels" / "dev" / "triage_dev_keys.json",
              "triage": HELDOUT / "triage_heldout_keys.json", "e2e": HELDOUT / "e2e_keys.json"}
-SEEDS = {"dev": 20260924, "triage": 20260923, "e2e": 20260923}   # generator seed = base + attempt
-PARAPHRASE_SEED_STEP = 1000   # paraphrase p (1, 2): base + 1000 * p + attempt (spec §9.3)
+SEEDS = {"dev": 20260924, "triage": 20260923, "e2e": 20260923}
+PARAPHRASE_SEED_STEP = 1000   # paraphrase p (1, 2): + 1000 * p (spec §9.3)
+# Seed scheme 2 (2026-09-26): scheme 1 gave every case base + attempt, so
+# cases with identical prompts wrote identical text. Scheme 2 gives case i
+# (its index in the full run order) its own block: base + CASE_SEED_STRIDE *
+# (i + 1) + PARAPHRASE_SEED_STEP * p + attempt. The + 1 keeps every block
+# clear of scheme 1's seeds (base .. base + 2999), so a regeneration of an old
+# case can reuse neither its own seeds nor another case's.
+CASE_SEED_STRIDE = 10000
+SEED_SCHEME = ("2: base + 10000 * (index in run order + 1) + 1000 * paraphrase + attempt, attempts "
+               "counted across every round; cases without seed_scheme 2 used scheme 1: base + "
+               "1000 * paraphrase + attempt")
 REWRITES = HELDOUT / "p7_fact_rewrites.json"
 OLLAMA = "http://localhost:11434/api/chat"
 
@@ -59,6 +69,12 @@ TEMPERATURE = 0.8
 MAX_ATTEMPT = 4          # attempts 0..4, then the case goes to research-pm
 JACCARD_MAX = 0.8
 WORDS = {"patient_words": (15, 90), "opening": (15, 90), "answer": (3, 40)}
+# research-pm's post-hoc amendment to spec §2.7 (2026-09-26): in style terse,
+# a main text or opening may be as short as 5 words and a scripted answer 1
+# ("mild", "3 days"). Other styles keep the bounds above.
+TERSE_MIN_WORDS = 5
+TERSE_MIN_ANSWER_WORDS = 1
+VERBATIM_LABEL = re.compile(r"verbatim", re.I)
 
 RED_FLAGS = ("difficulty_swallowing_or_breathing", "chest_pain_or_breathless", "swelling",
              "fever", "systemically_unwell", "recent_trauma", "bleeding_uncontrolled",
@@ -84,8 +100,6 @@ Rules:
   from the pharmacy". Do not mention tablets, gels, mouthwash, antibiotics
   or antiseptics.
 - Never mention a checklist, a form, boxes, ticks, questions or the app.
-- If you are given a sentence marked VERBATIM, include it exactly as written,
-  character for character, as part of what the patient types.
 - Follow the style you are given.
 - Reply with the JSON object requested and nothing else."""
 
@@ -230,7 +244,12 @@ def build_prompt(key: dict, kind: str, rewrites: dict) -> dict:
         lines += ["Must get across:"] + [f"- {x}" for x in get_across]
     if not_say:
         lines += ["Must not say:"] + [f"- {x}" for x in not_say]
-    lines += [f"VERBATIM: {v}" for v in verbatim]
+    # The injection sentence never reaches the model: code appends it
+    # unchanged (append_verbatim), since llama3.1:8b paraphrased it when asked
+    # to copy it and sometimes wrote the label itself.
+    if verbatim:
+        lines.append("One more sentence the patient typed is added after your message, word for "
+                     "word; write only the rest of the message.")
     lines.append("")
     questions = chat_questions(key) if kind == "e2e" else []
     if kind == "triage":
@@ -240,8 +259,7 @@ def build_prompt(key: dict, kind: str, rewrites: dict) -> dict:
                   "required": ["patient_words"]}
     else:
         lines += ["First write the patient's opening message (15 to 90 words) describing why",
-                  "they are using the app. Put the facts here; include the VERBATIM sentence",
-                  "here if there is one."]
+                  "they are using the app. Put the facts here."]
         if questions:
             lines.append("Then write the patient's reply, 3 to 40 words, to each of these questions:")
             lines += [f"- {q}: {QUESTION_TOPICS[q]}" for q in questions]
@@ -255,7 +273,22 @@ def build_prompt(key: dict, kind: str, rewrites: dict) -> dict:
                                             "required": questions,
                                             "properties": {q: {"type": "string"} for q in questions}}}}
     return {"user": "\n".join(lines), "schema": schema, "verbatim": verbatim,
-            "reached": reached, "questions": questions}
+            "reached": reached, "questions": questions, "style": style}
+
+
+def append_verbatim(reply: dict, verbatim: list) -> dict:
+    """The final reply: the model's text, then each injection sentence
+    unchanged as its own sentence (a full stop is added to the model's text
+    if it has no closing punctuation). Triage: patient_words; e2e: opening."""
+    if not verbatim:
+        return reply
+    field = "patient_words" if "patient_words" in reply else "opening"
+    text = reply[field].rstrip()
+    for line in verbatim:
+        if text and text[-1] not in ".!?":
+            text += "."
+        text = f"{text} {line}" if text else line
+    return {**reply, field: text}
 
 
 def leaks(prompt: str, key: dict, criterion_ids: list) -> list:
@@ -312,6 +345,8 @@ class Checker:
         n = len(text.split())
         if not bounds[0] <= n <= bounds[1]:
             failures.append(f"length {n} outside {bounds[0]}-{bounds[1]}")
+        if VERBATIM_LABEL.search(text):      # a prompt label copied into the text
+            failures.append("VERBATIM label in the text")
         rest = text
         for line in verbatim:
             rest = rest.replace(line, " ")
@@ -345,18 +380,31 @@ def advisory(text: str) -> list:
     return notes
 
 
+def word_bounds(part: str, style: str = None) -> tuple:
+    """§2.7 bounds, with research-pm's terse floors (2026-09-26): 5 words for
+    a terse main text or opening, 1 for a terse scripted answer."""
+    low, high = WORDS[part]
+    if style == "terse":
+        low = TERSE_MIN_WORDS if part in ("patient_words", "opening") else TERSE_MIN_ANSWER_WORDS
+    return low, high
+
+
 def check_reply(reply: dict, prompt: dict, kind: str, checker: Checker) -> list:
+    """Every §5 check on the final reply (injection sentence included, so the
+    length bounds count it too)."""
+    style = prompt.get("style")
     if kind == "triage":
         text = reply["patient_words"]
-        failures = checker.check_text(text, prompt["verbatim"], WORDS["patient_words"])
+        failures = checker.check_text(text, prompt["verbatim"], word_bounds("patient_words", style))
         where = text
     else:
         failures = [f"opening: {f}" for f in
-                    checker.check_text(reply["opening"], prompt["verbatim"], WORDS["opening"])]
+                    checker.check_text(reply["opening"], prompt["verbatim"],
+                                       word_bounds("opening", style))]
         if set(reply["script"]) != set(prompt["questions"]):
             failures.append(f"script keys {sorted(reply['script'])} != {prompt['questions']}")
         for q, answer in reply["script"].items():
-            failures += [f"{q}: {f}" for f in checker.check_text(answer, [], WORDS["answer"])]
+            failures += [f"{q}: {f}" for f in checker.check_text(answer, [], word_bounds("answer", style))]
         where = reply["opening"]
     missing = [v for v in prompt["verbatim"] if v not in where]
     if missing:
@@ -666,16 +714,64 @@ def _load(kind: str):
     return keys, rewrites, protocol, checker
 
 
+def case_seed(kind: str, index: int, p: int = 0, used: int = 0) -> int:
+    """First seed of the next attempt run under seed scheme 2 (SEED_SCHEME):
+    case `index` in the full run order, paraphrase p (0 = the text), after
+    `used` attempts already made for that part."""
+    if not 0 <= used < PARAPHRASE_SEED_STEP - MAX_ATTEMPT:
+        raise ValueError(f"{used} attempts would run into the next part's seeds")
+    return SEEDS[kind] + CASE_SEED_STRIDE * (index + 1) + PARAPHRASE_SEED_STEP * p + used
+
+
+def seed_index(case: dict, cid: str, order: list) -> int:
+    """The case's scheme-2 index: the one it was first given, else its place
+    in the full run order. Stored, so a later change of order cannot move it."""
+    if "seed_index" not in case:
+        case["seed_index"] = order.index(cid)
+    case["seed_scheme"] = 2
+    return case["seed_index"]
+
+
+def harness_note() -> dict:
+    """Recorded in the output header once the 2026-09-26 harness writes to it."""
+    return {"since": "2026-09-26", "seed_scheme": SEED_SCHEME,
+            "system_sha256": hashlib.sha256(SYSTEM_MESSAGE.encode()).hexdigest(),
+            "injection": "the VERBATIM sentence is not in the prompt; code appends it unchanged "
+                         "after the model's text, and every check runs on the final text",
+            "terse_min_words": TERSE_MIN_WORDS}
+
+
+def key_file_check(gen: dict, kind: str, ack: str = None) -> str:
+    """None if the key file is the one this generation was made from (or the
+    last acknowledged change of it), else why not. A change is accepted only
+    with a reason (--key-change-ack), recorded in gen['key_changes'] with the
+    old and new sha256 and the date; the caller saves gen."""
+    current = _sha(KEY_FILES[kind])
+    changes = gen.get("key_changes", [])
+    expected = changes[-1]["new_sha256"] if changes else gen["key_sha256"]
+    if current == expected:
+        return None
+    if not ack:
+        return (f"{KEY_FILES[kind].name} changed since {'the last acknowledged change' if changes else 'generation'}"
+                f" (sha256 {expected[:12]} -> {current[:12]}); pass --key-change-ack \"<reason>\" "
+                "to accept it on the record")
+    gen.setdefault("key_changes", []).append({"date": datetime.date.today().isoformat(),
+                                              "old_sha256": expected, "new_sha256": current,
+                                              "reason": ack})
+    return None
+
+
 def _save(path: Path, data: dict) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
     tmp.replace(path)
 
 
-def generate(kind: str, dry_run: bool = False, limit: int = None) -> int:
+def generate(kind: str, dry_run: bool = False, limit: int = None, key_change_ack: str = None) -> int:
     keys, rewrites, protocol, checker = _load(kind)
     by_id = {k["id"]: k for k in keys}
-    order = run_order(keys, SEEDS[kind])[:limit] if limit else run_order(keys, SEEDS[kind])
+    full_order = run_order(keys, SEEDS[kind])
+    order = full_order[:limit] if limit else full_order
     stability = _stability().get(kind, set())
     prompts = {i: build_prompt(by_id[i], template(kind), rewrites) for i in order}
     leaked = {i: leaks(p["user"], by_id[i], checker.criterion_ids) for i, p in prompts.items()}
@@ -698,8 +794,11 @@ def generate(kind: str, dry_run: bool = False, limit: int = None) -> int:
         "system_sha256": hashlib.sha256(SYSTEM_MESSAGE.encode()).hexdigest(),
         "think_sent": sends_think(GENERATOR), "order": order,
         "stability_ids": sorted(stability), "cases": {}}
-    if out["key_sha256"] != _sha(KEY_FILES[kind]):
-        raise SystemExit("the key file changed since this generation started")
+    refusal = key_file_check(out, kind, key_change_ack)
+    if refusal:
+        print(f"REFUSED: {refusal}")
+        return 1
+    out.setdefault("harness_2026_09_26", harness_note())
     accepted_by_archetype = {}
     for i, case in out["cases"].items():
         if case["status"] == "accepted":
@@ -711,8 +810,10 @@ def generate(kind: str, dry_run: bool = False, limit: int = None) -> int:
             continue
         key, prompt = by_id[cid], prompts[cid]
         others = [(f"near-duplicate of {o}", t) for o, t in accepted_by_archetype.get(key["archetype"], [])]
-        case = generate_one(call, prompt, template(kind), checker, seed_base, others)
-        case.update(style=key["style"], reached_chat=prompt["reached"])
+        index = full_order.index(cid)
+        case = generate_one(call, prompt, template(kind), checker, case_seed(kind, index), others)
+        case.update(style=key["style"], reached_chat=prompt["reached"], seed_scheme=2,
+                    seed_index=index)
         if case["status"] == "accepted" and cid in stability:
             case["paraphrases"] = []
             for p in (1, 2):
@@ -720,7 +821,7 @@ def generate(kind: str, dry_run: bool = False, limit: int = None) -> int:
                     (f"near-copy of paraphrase {i}", q["text"])
                     for i, q in enumerate(case["paraphrases"], 1) if q["text"]]
                 para = generate_one(call, prompt, template(kind), checker,
-                                    seed_base + PARAPHRASE_SEED_STEP * p, versus)
+                                    case_seed(kind, index, p), versus)
                 case["paraphrases"].append(para)
             if any(q["status"] != "accepted" for q in case["paraphrases"]):
                 case["status"] = "needs_research_pm"
@@ -749,15 +850,18 @@ def seeds_used(case: dict, part: str) -> int:
 
 
 def regenerate_cases(gen: dict, extracted: dict, ids: list, by_id: dict, prompts: dict, checker,
-                     call, kind: str) -> dict:
+                     call, kind: str, order: list = None) -> dict:
     """Regenerate the texts research-pm's adjudication listed (never on a
     disagreement by itself). `ids` are case ids, or 'ID:p1' / 'ID:p2' for one
-    paraphrase. Each continues its own seed sequence (next seed after the
-    attempts already used), passes every §5 check again, and has its model B
-    entry cleared so extract re-reads only these. The old text and its B
-    responses are kept under 'superseded'. At most MAX_ADJUDICATION_ROUNDS."""
+    paraphrase. Each continues its own seed sequence under seed scheme 2 (the
+    case's own block, after the attempts already used in every scheme), passes
+    every §5 check again, and has its model B entry cleared so extract
+    re-reads only these. The old text and its B responses are kept under
+    'superseded'. At most MAX_ADJUDICATION_ROUNDS. `order`: the full run
+    order (default: the file's own)."""
     done, refused = [], []
-    base = SEEDS[kind]
+    order = order or gen.get("order") or []
+    gen.setdefault("harness_2026_09_26", harness_note())
     for item in ids:
         cid, _, part = item.partition(":")
         case = gen["cases"].get(cid)
@@ -770,6 +874,9 @@ def regenerate_cases(gen: dict, extracted: dict, ids: list, by_id: dict, prompts
         if rounds - len(case.get("void_rounds", [])) >= MAX_ADJUDICATION_ROUNDS:
             refused.append((item, f"already {rounds} adjudication rounds"))
             continue
+        if "seed_index" not in case and cid not in order:
+            refused.append((item, "not in the run order, so it has no seed block"))
+            continue
         key, prompt = by_id[cid], prompts[cid]
         others = [(f"near-duplicate of {o}", c["text"]) for o, c in gen["cases"].items()
                   if o != cid and c.get("status") == "accepted"
@@ -781,12 +888,12 @@ def regenerate_cases(gen: dict, extracted: dict, ids: list, by_id: dict, prompts
             versus = [("near-copy of its own text", case["text"])] + [
                 (f"near-copy of paraphrase {i}", q["text"])
                 for i, q in enumerate(case["paraphrases"], 1) if i != p and q["text"]]
-            seed = base + PARAPHRASE_SEED_STEP * p + seeds_used(case, part)
+            seed = case_seed(kind, seed_index(case, cid, order), p, seeds_used(case, part))
             new = generate_one(call, prompt, template(kind), checker, seed, versus)
             case["paraphrases"][p - 1] = new
         else:
             old = {k: case[k] for k in ("reply", "text", "history", "attempts", "status")}
-            seed = base + seeds_used(case, "")
+            seed = case_seed(kind, seed_index(case, cid, order), 0, seeds_used(case, ""))
             new = generate_one(call, prompt, template(kind), checker, seed, others)
             case.update({k: new[k] for k in ("reply", "text", "history", "attempts", "status",
                                               "regeneration_reasons", "advisory")})
@@ -800,7 +907,9 @@ def regenerate_cases(gen: dict, extracted: dict, ids: list, by_id: dict, prompts
     return {"done": done, "refused": refused}
 
 
-def regenerate(kind: str, ids_file: str) -> int:
+def regenerate(kind: str, ids_file: str, key_change_ack: str = None) -> int:
+    """Prompts are built from the key file as it is now, so an acknowledged
+    key fix reaches the regenerated text."""
     ids = json.loads(Path(ids_file).read_text(encoding="utf-8"))
     keys, rewrites, protocol, checker = _load(kind)
     by_id = {k["id"]: k for k in keys}
@@ -809,10 +918,18 @@ def regenerate(kind: str, ids_file: str) -> int:
     gen_path = out_dir(kind) / f"generated_{kind}.json"
     ext_path = out_dir(kind) / f"extracted_{kind}.json"
     gen = json.loads(gen_path.read_text(encoding="utf-8"))
+    refusal = key_file_check(gen, kind, key_change_ack)
+    if refusal:
+        print(f"REFUSED: {refusal}")
+        return 1
     extracted = json.loads(ext_path.read_text(encoding="utf-8")) if ext_path.exists() else {"cases": {}}
     think = gen["think_sent"]
+    full_order = run_order(keys, SEEDS[kind])
+    if gen.get("order") and gen["order"] != full_order[:len(gen["order"])]:
+        print("REFUSED: the file's run order is not the keys' run order; seed blocks would move")
+        return 1
     call = lambda messages, schema, seed: ollama(GENERATOR, messages, schema, TEMPERATURE, seed, think)  # noqa: E731
-    result = regenerate_cases(gen, extracted, ids, by_id, prompts, checker, call, kind)
+    result = regenerate_cases(gen, extracted, ids, by_id, prompts, checker, call, kind, full_order)
     _save(gen_path, gen)
     if ext_path.exists():
         _save(ext_path, extracted)
@@ -825,18 +942,28 @@ def regenerate(kind: str, ids_file: str) -> int:
 
 
 def generate_one(call, prompt: dict, tmpl: str, checker, seed_base: int, versus: list) -> dict:
-    """Attempts 0..MAX_ATTEMPT with seed seed_base + attempt; every §5 check,
-    plus token Jaccard > JACCARD_MAX against each (label, text) in versus."""
+    """Attempts 0..MAX_ATTEMPT with seed seed_base + attempt; the injection sentence appended by code (append_verbatim), then
+    every §5 check on the final text, plus token Jaccard > JACCARD_MAX against
+    each (label, text) in versus. The model's own reply is kept as
+    model_reply when code added to it."""
     messages = [{"role": "system", "content": SYSTEM_MESSAGE},
                 {"role": "user", "content": prompt["user"]}]
     attempts = []
     for attempt in range(MAX_ATTEMPT + 1):
         seed = seed_base + attempt
         raw = call(messages, prompt["schema"], seed)
+        model_reply = None
         try:
             reply = json.loads(raw)
             jsonschema.validate(reply, prompt["schema"])
+            if prompt["verbatim"]:
+                model_reply = reply
+                own = reply.get("patient_words", reply.get("opening", ""))
+                copied = [v for v in prompt["verbatim"] if v in own]
+                reply = append_verbatim(reply, prompt["verbatim"])
             failures = check_reply(reply, prompt, tmpl, checker)
+            if model_reply is not None and copied:
+                failures.append("injection sentence also written by the model")
         except (json.JSONDecodeError, jsonschema.ValidationError) as exc:
             reply, failures = None, [f"bad reply: {str(exc)[:120]}"]
         if reply is not None:
@@ -845,7 +972,8 @@ def generate_one(call, prompt: dict, tmpl: str, checker, seed_base: int, versus:
                 if j > JACCARD_MAX:
                     failures.append(f"{label} (Jaccard {j:.2f})")
         attempts.append({"attempt": attempt, "seed": seed, "reply": reply,
-                         "raw": raw if reply is None else None, "failures": failures})
+                         "raw": raw if reply is None else None, "failures": failures,
+                         **({"model_reply": model_reply} if model_reply is not None else {})})
         if not failures:
             break
     last = attempts[-1]
@@ -944,7 +1072,8 @@ def disagreement(field: str, key_value, b_value, schema: dict):
     return None if key_value == b_value else "different value"
 
 
-def extract(kind: str, backend: str = "gemini", allow_pending: bool = False) -> int:
+def extract(kind: str, backend: str = "gemini", allow_pending: bool = False,
+            key_change_ack: str = None) -> int:
     """allow_pending: read the accepted cases now and leave the ones waiting for
     research-pm; a later run adds them (same model and schema mode, by id)."""
     import interview
@@ -952,6 +1081,12 @@ def extract(kind: str, backend: str = "gemini", allow_pending: bool = False) -> 
     by_id = {k["id"]: k for k in keys}
     gen_path = out_dir(kind) / f"generated_{kind}.json"
     gen = json.loads(gen_path.read_text(encoding="utf-8"))
+    refusal = key_file_check(gen, kind, key_change_ack)
+    if refusal:
+        print(f"REFUSED: {refusal}")
+        return 1
+    if key_change_ack:
+        _save(gen_path, gen)
     pending = [i for i, c in gen["cases"].items() if c["status"] != "accepted"]
     if len(gen["cases"]) != len(keys) or (pending and not allow_pending):
         print(f"REFUSED: generation not finished ({len(gen['cases'])}/{len(keys)} cases, "
@@ -1040,11 +1175,19 @@ def score_b(key: dict, record: dict, replies: list, fields: list, asked_for: dic
             for f in fields}
 
 
-def rescore(kind: str) -> int:
-    """§6 recomputed from the stored B responses, with no model call."""
+def rescore(kind: str, key_change_ack: str = None) -> int:
+    """§6 recomputed from the stored B responses, with no model call, against
+    the key file as it is now (a change needs key_change_ack)."""
     keys, _, protocol, _ = _load(kind)
     by_id = {k["id"]: k for k in keys}
-    gen = json.loads((out_dir(kind) / f"generated_{kind}.json").read_text(encoding="utf-8"))
+    gen_path = out_dir(kind) / f"generated_{kind}.json"
+    gen = json.loads(gen_path.read_text(encoding="utf-8"))
+    refusal = key_file_check(gen, kind, key_change_ack)
+    if refusal:
+        print(f"REFUSED: {refusal}")
+        return 1
+    if key_change_ack:
+        _save(gen_path, gen)
     path = out_dir(kind) / f"extracted_{kind}.json"
     out = json.loads(path.read_text(encoding="utf-8"))
     chat_q = [q for q in protocol.questions if q.input == "chat"]
@@ -1099,6 +1242,97 @@ def report_extraction(out: dict) -> int:
     return 0
 
 
+# --- Recheck of accepted text (2026-09-26) ------------------------------------------------
+
+# research-pm's artifact scan (labels/heldout/p7/_rpm/rpm_artifact_scan.py),
+# repeated here so the recheck can say what each side catches.
+RPM_ARTIFACTS = re.compile(r"VERBATIM|MUST|Must get across|Facts|�|patient_words|\{|\}")
+
+
+def _reason(failure: str) -> str:
+    """'opening: length 12 outside 15-90' -> 'length'; for grouping only."""
+    label = re.sub(r"^(?:opening|Q\d+): ", "", failure)
+    for name in ("length", "level word", "criterion id", "field name", "protocol statement 5-gram",
+                 "script keys"):
+        if label.startswith(name):
+            return name
+    return label
+
+
+def recheck_accepted(gen: dict, prompts: dict, kind: str, checker) -> dict:
+    """check_reply, as it stands now, on every accepted text of a generated
+    file (main text and each paraphrase), without touching the file. Only
+    texts whose case status is 'accepted' are read."""
+    failing, rpm_hits, n, known = {}, {}, 0, {}
+    for cid, case in gen["cases"].items():
+        if case.get("status") != "accepted":
+            continue
+        parts = [("", case)] + [(f":p{i}", q) for i, q in enumerate(case.get("paraphrases", []), 1)]
+        for suffix, part in parts:
+            n += 1
+            item, reply = cid + suffix, part["reply"]
+            failures = check_reply(reply, prompts[cid], template(kind), checker)
+            if failures:
+                failing[item] = failures
+                # failed its checks when generated and was accepted by research-pm anyway
+                history = part.get("history") or [{}]
+                if history[-1].get("failures") and "research_pm_decision" in case:
+                    known[item] = history[-1]["failures"]
+            texts = [reply.get("patient_words", reply.get("opening", ""))] + list(
+                (reply.get("script") or {}).values())
+            hits = sorted({m.group() for t in texts for m in RPM_ARTIFACTS.finditer(t or "")})
+            if hits:
+                rpm_hits[item] = hits
+    by_reason = {}
+    for item, failures in failing.items():
+        for r in sorted({_reason(f) for f in failures}):
+            by_reason.setdefault(r, []).append(item)
+    verbatim_ours = set(by_reason.get("VERBATIM label in the text", []))
+    verbatim_rpm = {i for i, h in rpm_hits.items() if "VERBATIM" in h}
+    new = {item: [f for f in fs if f not in known.get(item, [])] for item, fs in failing.items()}
+    return {"texts_checked": n, "texts_failing": len(failing), "by_reason": by_reason,
+            "failures": failing,
+            "accepted_by_research_pm_despite": known,
+            "texts_failing_newly": sum(bool(fs) for fs in new.values()),
+            "rpm_scan_hits": rpm_hits,
+            "cross_check": {"verbatim_both": sorted(verbatim_ours & verbatim_rpm),
+                            "verbatim_only_ours": sorted(verbatim_ours - verbatim_rpm),
+                            "verbatim_only_rpm_scan": sorted(verbatim_rpm - verbatim_ours),
+                            "rpm_other_artifacts_not_in_check_reply": sorted(
+                                i for i, h in rpm_hits.items() if set(h) - {"VERBATIM"}
+                                and i not in failing)}}
+
+
+def recheck(kinds=("triage", "e2e")) -> int:
+    """Write out_dir/recheck_accepted.json for the held-out files. Reads the
+    key files only to rebuild each case's prompt (VERBATIM line, questions,
+    style); prints counts only, never a text."""
+    out = {"date": datetime.date.today().isoformat(),
+           "what": "check_reply (2026-09-26 checks: VERBATIM label, terse floor 5) re-run on every "
+                   "accepted text and paraphrase; the generated files are not modified",
+           "files": {}}
+    for kind in kinds:
+        keys, rewrites, protocol, checker = _load(kind)
+        by_id = {k["id"]: k for k in keys}
+        path = out_dir(kind) / f"generated_{kind}.json"
+        gen = json.loads(path.read_text(encoding="utf-8"))
+        prompts = {cid: build_prompt(by_id[cid], template(kind), rewrites) for cid in gen["cases"]}
+        result = recheck_accepted(gen, prompts, kind, checker)
+        result["generated_sha256"] = _sha(path)
+        result["key_sha256_used"] = _sha(KEY_FILES[kind])
+        result["key_sha256_at_generation"] = gen["key_sha256"]
+        result["key_changes_acknowledged"] = gen.get("key_changes", [])
+        out["files"][path.name] = result
+        print(f"{path.name}: {result['texts_failing']}/{result['texts_checked']} accepted texts fail "
+              f"now ({result['texts_failing_newly']} on a check they passed or did not have when "
+              f"accepted; {len(result['accepted_by_research_pm_despite'])} accepted by research-pm "
+              f"despite a failure); by reason {{{', '.join(f'{r}: {len(v)}' for r, v in result['by_reason'].items())}}}")
+    target = out_dir(kinds[0]) / "recheck_accepted.json"
+    _save(target, out)
+    print(f"wrote {target}")
+    return 0
+
+
 # --- Write back ------------------------------------------------------------------------
 
 def writeback(kind: str) -> int:
@@ -1130,7 +1364,7 @@ def writeback(kind: str) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("command", choices=["smoke", "smoke-b", "generate", "extract", "rescore",
-                                        "regenerate", "writeback", "report"])
+                                        "regenerate", "writeback", "report", "recheck"])
     ap.add_argument("--ids", help="regenerate: JSON list of case ids from research-pm's "
                                   "adjudication ('ID' or 'ID:p1' / 'ID:p2')")
     ap.add_argument("--b-backend", choices=sorted(B_MODELS), default="gemini",
@@ -1142,24 +1376,34 @@ def main() -> int:
     ap.add_argument("--file", choices=sorted(KEY_FILES), default="triage")
     ap.add_argument("--dry-run", action="store_true", help="print the prompts, call no model")
     ap.add_argument("--limit", type=int)
+    ap.add_argument("--key-change-ack", metavar="REASON",
+                    help="generate/regenerate/extract/rescore: accept that the key file changed "
+                         "since generation; the reason, date and old/new sha256 go in the "
+                         "generated file's header (key_changes)")
     args = ap.parse_args()
+    ack = args.key_change_ack
+    if ack is not None and not ack.strip():
+        print("REFUSED: --key-change-ack needs a reason")
+        return 1
     if args.command == "smoke":
         return smoke((GENERATOR, MODEL_B_FALLBACK) if args.fallback else (GENERATOR,))
     if args.command == "rescore":
-        return rescore(args.file)
+        return rescore(args.file, ack)
     if args.command == "regenerate":
         if not args.ids:
             print("REFUSED: regenerate needs --ids (research-pm's list); disagreements alone never regenerate")
             return 1
-        return regenerate(args.file, args.ids)
+        return regenerate(args.file, args.ids, ack)
     if args.command == "smoke-b":
         return smoke_b()
     if args.command == "generate":
-        return generate(args.file, args.dry_run, args.limit)
+        return generate(args.file, args.dry_run, args.limit, ack)
     if args.command == "extract":
-        return extract(args.file, args.b_backend, args.allow_pending)
+        return extract(args.file, args.b_backend, args.allow_pending, ack)
     if args.command == "writeback":
         return writeback(args.file)
+    if args.command == "recheck":      # both held-out files, whatever --file says
+        return recheck()
     gen = out_dir(args.file) / f"generated_{args.file}.json"
     ext = out_dir(args.file) / f"extracted_{args.file}.json"
     if gen.exists():

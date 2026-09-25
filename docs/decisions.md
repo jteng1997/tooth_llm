@@ -155,6 +155,68 @@ headline figures:
 In Test 5 each is also counted at the level it produces: cases whose triage
 level was raised, or lowered, because of the severity field.
 
+### 2026-09-26 — P7 held-out end-to-end set: adjudication round 1 (research-pm)
+Details are in `labels/heldout/p7/adjudication_e2e_summary.md` (gitignored).
+- 21 cases reach the chat (105 cells; 125 once the held and regenerated
+  cases are in). 2/105 disagree (CI 0.2–6.7): 1 ambiguous, 1 text wrong.
+- B error 0/105. Provisional residual 1/105.
+- 9 generation holds: 2 accepted under the terse bounds, 7 regenerated.
+- 12 openings with the "VERBATIM" label leak are regenerated.
+- The terse amendment (P7 spec §2.7) now also sets a 1-word minimum for a
+  terse scripted answer. This is post-hoc, before scoring.
+- No keys changed. No hand edits.
+
+### 2026-09-26 — P7 held-out triage set: adjudication round 1 (research-pm)
+Details are in `labels/heldout/p7/adjudication_triage_summary.md`
+(gitignored). No held-out text is quoted here.
+
+**Result.** 81 cases reach the chat (405 cells; 420 once the 3 held
+injection cases are extracted). 32/405 = 7.9% (CI 5.5–11.0) disagreed
+before adjudication.
+- Outcomes: text wrong 15, key wrong 1, ambiguous 5, B wrong 9 (8 of them
+  B's quote faults), check artifact 2.
+- B error 9/405 = 2.2% (CI 1.0–4.2).
+- Provisional residual 5/405 = 1.2%, if the 32 regenerations come back
+  clean. Without severity: 2/324.
+- No hand edits yet. The 2% bar is not decided until round 1 is back.
+
+**Key fix (the key contradicted its own fact).** In `u_extraction` keys the
+fact fixes the days since the extraction, but the builder could draw a
+duration one day longer. The draw list in the builder was changed without
+changing its length, and the keys were rebuilt.
+- The diff shows exactly two changes: H092 and H146, `duration_days`
+  4 → 3.
+- The protocol check passed and the levels are unchanged. No e2e key
+  changed.
+- The key file hash changed before any held-out Test 5 scoring.
+
+**Post-hoc amendment (after generation, before scoring):** the terse-style
+minimum is 5 words (P7 spec §2.7). 7 held terse texts were accepted by a
+fixed rule. None of them reaches the chat.
+
+**Harness faults found; proposed to the lead, qa-engineer's code:**
+1. The literal label "VERBATIM" leaks into 9 accepted triage texts and 12
+   e2e openings. Some of these are invented lines; no check catches them.
+2. llama3.1:8b never copies the "routine" injection line.
+3. Seeds collide across keys with identical prompts (seed = base +
+   attempt). This caused most of the 69 near-duplicate failures.
+Proposed fixes: a check rejecting "VERBATIM", inserting the VERBATIM
+sentence in code, and a per-case seed offset. All before regeneration.
+
+**Known limitations: two production `verify()` gaps, found on held-out
+text** (lead's decision, 2026-09-26: **not fixed before held-out
+scoring**, since a fix now would be tuning on held-out).
+1. A non-standard (non-native) way of saying "I don't know" is not
+   recognised as the "unknown" trigger answer, so that answer is dropped to
+   null.
+2. The rule that stops an illness word from counting as a temperature
+   trigger also blanks some ordinary mentions of a cold food or drink, so a
+   real "cold" trigger can be dropped.
+Both drop a value, and neither adds one. Test 5 e2e results are reported
+with these as known limitations. They are fixed after held-out scoring, or
+earlier only on independent (non-held-out) evidence, with a fresh test.
+The exact phrases stay in the gitignored summary.
+
 ### 2026-09-26 — P7 held-out: severity shown separately (pre-declared, research-pm)
 Declared before any held-out P7 text is generated: the held-out B-error rate
 and the residual text-attributable rate are reported **with all five chat

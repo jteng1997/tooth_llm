@@ -41,6 +41,14 @@ contradict them.
 6. **No medicine names or doses**, even where a real patient might write one.
    They would trip the guardrail checks downstream and confuse the measurement.
 7. **Length:** 15–90 words for `patient_words`; 3–40 for a scripted answer.
+   *Amended 2026-09-26, post-hoc: after the held-out triage generation, before
+   any held-out scoring.* For the `terse` style only, the minimum is **5
+   words**, for `patient_words` and for an e2e opening. Terse texts ran 7–14
+   words on every attempt, which is what the style asks for. For a terse
+   scripted e2e answer, the minimum is **1 word** (for example "3 days" or
+   "mild"). A held case is
+   then accepted by rule: the latest attempt that passes every other check
+   and is not a near-duplicate, read for facts and additions.
 
 ## 3. Styles
 
