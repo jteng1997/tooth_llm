@@ -501,6 +501,13 @@ class Regenerate(unittest.TestCase):
         r = p7.regenerate_cases(gen, ext, ["X001"], by_id, {"X001": self.PROMPT}, checker(), call, "triage")
         self.assertEqual((len(seeds), r["refused"]), (1, []))
 
+    def test_granted_extra_round_is_allowed(self):
+        gen, ext, by_id = self.setup(rounds=2)
+        gen["cases"]["X001"]["extra_rounds"] = [{"reason": "census", "by": "lead"}]
+        call, seeds = self.stub(self.OTHER)
+        r = p7.regenerate_cases(gen, ext, ["X001"], by_id, {"X001": self.PROMPT}, checker(), call, "triage")
+        self.assertEqual((len(seeds), r["refused"]), (1, []))
+
     def test_third_round_is_refused(self):
         gen, ext, by_id = self.setup(rounds=2)
         call, seeds = self.stub(self.OTHER)

@@ -190,6 +190,49 @@ words to the model.
 - The main cause: no-problem keys get no line telling the model to say
   there is no problem. A one-line prompt input is proposed.
 
+**Census round 1** (harness 1231847, with the no-problem line):
+- All 36 were regenerated. On re-reading, 21 are fixed and 15 still wrong.
+- Census now: **15/151 = 9.9% (CI 5.7–15.9)**; triage 6/116, e2e 9/35.
+- Still wrong: 7 are self_correcting texts with no correction (mostly
+  no-problem keys: the new line leaves nothing to correct), 4 contradict a
+  fact (one adds a red flag), and 4 miss one.
+- Proposed: fix the self_correcting line, then one more round for this
+  reason, then marked hand edits.
+- **Not yet ready for writeback.**
+
+**Before census round 2** (lead, 2026-09-26, pre-scoring; research-pm's
+proposal):
+- **Style-line change:** the self_correcting line now also says: if
+  nothing given can be corrected, correct a harmless everyday detail
+  instead; never correct towards a symptom or away from a given fact
+  (`p7-generation-prompt.md` §3.5). It applies to texts generated from
+  census round 2 on. Dry runs showed 0 leaks; suite 454/454.
+- **Extra-round grant:** the harness now lets the lead grant a case one
+  extra adjudication round, recorded per case (`extra_rounds`: reason, by,
+  date). The lead granted one to the 8 census cases already at the
+  2-round limit for earlier, different reasons. The reason recorded is
+  "census of not-reached texts, round 2"
+  (`labels/heldout/p7/_lead/grant_census_r2.py`).
+- This keeps the pre-declared rule of at most 2 rounds per reason; the
+  earlier rounds were for other faults. Anything still wrong after round 2
+  gets a marked, counted hand edit by research-pm.
+
+**Census final (after round 2):**
+- 7 of the 15 were fixed by regeneration, including the last red-flag case.
+- 8 were fixed by marked hand edits, all on texts of cases that do not
+  reach the chat:
+  - 7 insert a correction of a harmless everyday detail into
+    self_correcting texts that had none (one also inserts a plain "no
+    problems" statement);
+  - 1 is a deletion.
+  Every edited text passes the automatic checks.
+- Census errors: 36/151 pre-fix → 15/151 → **0/151 as written** (8/151 =
+  5.3% counting hand-edited texts as generator failures).
+- No scored P7 chat cell changed; the P7 residuals stand (triage 6/420,
+  e2e 1/125).
+- All 260 texts are accepted. **Ready for writeback of both key files**,
+  before any held-out scoring.
+
 ### 2026-09-26 — P7 held-out: final result and the 50-case read (research-pm)
 Details are in the gitignored summaries (`labels/heldout/p7/`). No held-out
 text is quoted here.

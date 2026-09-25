@@ -113,7 +113,11 @@ STYLE_LINES = {
                        'no, I mean ..."). Correct only a detail from your facts or your '
                        "must-get-across points; never bring in a side of the mouth, a time or a "
                        "trigger you were not given just to correct it. The corrected version must "
-                       "match what you were given.",
+                       "match what you were given. If nothing you were given can be corrected "
+                       "(for example, the patient has no problem), correct a harmless everyday "
+                       'detail instead, such as a day or who told them to check ("my friend — no, '
+                       'my sister"). Never correct towards a symptom, and never correct a given '
+                       "fact away from what you were given.",
     "verbose": "Long and chatty, with everyday life detail unrelated to the teeth. The extra "
                "detail must not add symptoms, times, sides or medicines.",
     "terse": "A few words, little or no punctuation. Every point still there.",
@@ -883,7 +887,10 @@ def regenerate_cases(gen: dict, extracted: dict, ids: list, by_id: dict, prompts
         rounds = case.get("adjudication_rounds", 0)
         # A round voided by the lead (e.g. it reused old seeds) does not count
         # towards the limit; the reason is recorded on the case.
-        if rounds - len(case.get("void_rounds", [])) >= MAX_ADJUDICATION_ROUNDS:
+        # extra_rounds: rounds the lead granted for a new reason (e.g. the
+        # census of not-reached texts), each with its reason recorded.
+        allowed = MAX_ADJUDICATION_ROUNDS + len(case.get("extra_rounds", []))
+        if rounds - len(case.get("void_rounds", [])) >= allowed:
             refused.append((item, f"already {rounds} adjudication rounds"))
             continue
         if "seed_index" not in case and cid not in order:
