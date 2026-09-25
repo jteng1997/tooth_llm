@@ -393,3 +393,45 @@ LLM run, by the same builders with the same seeds. Diffed against v0.1:
 - Not covered by any key: pus without pain, and a broken tooth with pain. The
   first is an open clinical question (Form C, C11). Keys for it are added
   only after the dentist answers, and on dev first.
+
+### 9.8 Pain-severity errors by direction (pre-scoring, 2026-09-26)
+
+Written before any held-out Test 5 scoring. Held-out P7 text generation was
+running at the time, but no system under test had seen a held-out case.
+
+**Background.** On 2026-09-26 the user defined the pain-severity levels
+(`docs/decisions.md`, 2026-09-26):
+- mild: the patient notices it, but it does not get in the way;
+- moderate: it bothers them, but they still sleep and eat normally;
+- severe: it stops them sleeping or eating, or they call it unbearable.
+
+These are in the extraction instruction. There is no code guard: one was
+tried and removed after two independent phrase sets. "Severe" satisfies U2
+(URGENT), so an extraction error in this one field can move a level.
+
+**What is added.** One extra block, **descriptive only**. It changes no
+metric, denominator or pass bar, and nothing in the §3 attribution or §5:
+- **False severe**: key mild or moderate, extracted severe. This raises
+  urgency.
+- **Missed severe**: key severe, extracted anything else, null included.
+  This lowers urgency and is the more serious direction.
+- Each is reported with case ids and an exact Clopper–Pearson 95% CI, over
+  two denominators:
+  - all eligible cells: in Test 3, headline cells whose key is not null;
+    in the end-to-end set, cases that reach the chat;
+  - the cells whose key has that value: mild or moderate for false severe,
+    severe for missed severe.
+- Extracted severe where the key is null is counted apart.
+- **End-to-end only:** among cases whose extracted `pain_severity` differs
+  from the key, how many end with a level more urgent (up) or less urgent
+  (down) than the protocol gives on the key's own symptoms. This is
+  reported for both `final` and `protocol_check`. RETAKE is not on this
+  scale and is counted apart.
+- **The triage-level set** feeds key symptoms, with no extraction, so none
+  of this applies there.
+
+**Test 3:** the held-out Test 3 sets B and C are spent. For Test 3, the
+block applies to dev runs and to any new blind set.
+
+Implemented by qa-engineer in `check_symptoms.py` and `check_e2e.py`
+(`check_triage.py` is unchanged).
