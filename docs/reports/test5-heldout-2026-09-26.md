@@ -125,20 +125,20 @@ The model is deterministic on the same words. All its instability comes from
 rewording. EMERGENCY cases never reach the model and are not described. One
 case has no paraphrases (§6).
 
-**Sensitivity, §9.5 (H001 exposure)** — recomputed offline from the stored
-first runs with `check_triage`'s own functions. This reproduces the all-200
-figures exactly.
+**Sensitivity, §9.5 (H001 exposure).** Source:
+`labels/heldout/results/test5_heldout_llm_qwen3_14b_sensitivity.log`, a
+re-report of the same saved runs without the 6 exposed cases (commit
+a8af8a5; no model call).
 
 | System | All 200 | Without the 6 exposed keys (194) |
 |---|---|---|
 | `final` | 0 under, κ 1.000 | 0/194 under (0.0–1.9%), κ 1.000 |
 | `llm_proposed` | 30/155 under, κ 0.781 | 30/149 under (14.0–27.5%), κ 0.771 (0.688–0.843) |
 | `rules` | 51/200 under, κ 0.595 | 51/194 under (20.2–33.1%), κ 0.578 (0.486–0.668) |
+| stability, `llm_proposed` | all identical 17/20 | 16/19 (paraphrases 15/18) |
 
 The 6 exposed keys were agreements for every system, and no conclusion
-changes. (The held-out run did not print this block. It is added here and
-should be produced by `check_triage.py --sensitivity-exclude` on the stored
-outputs for the record.)
+changes.
 
 ## 4. End-to-end set (n = 60)
 
@@ -167,20 +167,19 @@ outputs for the record.)
   mismatches were all between mild and moderate, and moved no level in
   either direction for `final` or `protocol_check`. Only 3 keys are severe,
   so the missed-severe direction is barely tested.
-- **"Missing question" (drop 3/60, prepend 20/60) is by design, not an
-  interview fault.** The interview skips a chat question once an earlier
-  answer has already settled its field (`interview.py`, "already settled by an
-  earlier answer"). Under prepend, the opening message often settles
-  severity, triggers or duration before they are asked.
-  - Prepend: 28 skipped questions over 20 cases; the settled value matched
-    the key in 24/28. The 4 that differed (2 severity mild↔moderate, 1
-    duration off by one day, 1 location with the wrong arch) moved no level.
-  - Drop: 3 skipped over 3 cases, 2/3 matched; the 1 miss was severity
-    mild → moderate.
-  - Cost of the skip: when the opening gets a field wrong, the direct
-    question that might have corrected it is never asked. The checker's
-    "missing question" count should separate *skipped because settled* from
-    *never asked*. Only the second is §3 bucket 1.
+- **Interview: never asked 0/60 in both conditions** (§3 bucket 1 is
+  empty). The interview skips a chat question once an earlier answer has
+  already settled its field, by design (`interview.py`). `check_e2e` reports
+  these separately as **skipped, already settled**:
+  - **drop: 3/60 cases.** 3 skips, and the settled value matched the key in
+    2/3. The other was severity mild → moderate.
+  - **prepend: 20/60 cases, 28 skips.** The opening message often settles
+    severity, triggers or duration before they are asked. The settled value
+    matched the key in 24/28. The 4 that differed moved no level: 2 severity
+    mild↔moderate, 1 duration off by one day, and 1 location with the wrong
+    arch.
+  - Cost of the skip: when an earlier answer gets a field wrong, the direct
+    question that might have corrected it is never asked.
 - **Prepend vs drop.** With the opening, the model's own level is closer to
   the key (7 vs 11 under-triaged), but extraction differs from the key
   slightly more often (7 vs 5 cells). Prepend is not the product (§9.6).
@@ -209,9 +208,10 @@ outputs for the record.)
 3. **Structured criteria are decided by code.** On triage-level cases,
    `final` is right by construction wherever a structured criterion holds, and
    under v0.2 all criteria are structured. The informative parts are
-   `llm_proposed`, the injection cases and the end-to-end set. *(The printed
-   caveat still mentions "the two narrative criteria". That wording predates
-   v0.2, which has none, and the printout should be updated.)*
+   `llm_proposed`, the injection cases and the end-to-end set. *(The
+   held-out logs print an older wording that mentions "the two narrative
+   criteria". Those logs predate the fix: commit a8af8a5 corrected the
+   printed caveat, and a test now checks it against the live protocol.)*
 4. **Patient text (P7).** Screened texts were used, not raw generator
    output.
    - Blind reader, chat fields: residual 6/420 (triage) and 1/125 (e2e).
@@ -234,8 +234,11 @@ outputs for the record.)
    EMERGENCY cases (e2e). The red-flag floor decides them before any model
    call, so nothing is known about the model's own judgement on red flags.
 7. **Stability:** 1 of the 20 cases (an injection case) has no paraphrases,
-   so it ran 3 times, not 5. The paraphrase share is out of 19. The cause is
-   for qa-engineer to confirm: no paraphrase entry was generated for it.
+   so it ran 3 times, not 5, and the paraphrase share is out of 19. The cause
+   is a harness gap, not a generation failure: its paraphrases were never
+   generated, and the regenerate step does not create paraphrases that are
+   missing. qa-engineer is
+   fixing this for future sets only; the held-out set stays as run.
 8. **Known `verify()` gaps** found on held-out text were deliberately not
    fixed before scoring (`decisions.md`, 2026-09-26). All of them can only
    drop a value, never add one. They may account for some of the e2e
@@ -249,11 +252,12 @@ outputs for the record.)
 
 ## 7. Open items for the lead
 
-- Put the §9.5 sensitivity block into the official output (qa-engineer:
-  `--sensitivity-exclude` on the stored results; no model call needed).
-- Fix the stale printed caveat 3 (qa-engineer's `check_triage.py`).
-- Split "missing question" into skipped-because-settled vs never asked in
-  `check_e2e.py`.
-- Confirm why the one stability case has no paraphrases.
 - Decide how the paper frames the LLM's role: under v0.2 its own level does
   not beat rules. Its value, if any, is in the explanation, not the level.
+
+Resolved in commit a8af8a5:
+- the official §9.5 sensitivity output;
+- the never-asked vs skipped-already-settled split in `check_e2e`;
+- the cause of the missing paraphrases;
+- the stale printed caveat 3, now checked against the live protocol by a
+  test.

@@ -892,6 +892,87 @@ class KeyChange(unittest.TestCase):
         self.assertEqual(saved_gen["cases"]["X001"]["text"], Regenerate.OTHER)
 
 
+class FillParaphrases(unittest.TestCase):
+    """A stability case whose text first failed got no paraphrases (they follow
+    an accepted text); an adjudication regeneration that gets the text accepted
+    fills them in (the H080 gap, fixed 2026-09-26 for future sets)."""
+    TEXTS = ["My lower left tooth has ached for four days now and cold drinks set it off, biting too, "
+             "and the painkillers I took did nothing at all.",
+             "Four days of a nagging ache at the bottom left, cold water makes it jump and chewing "
+             "hurts, pharmacy painkillers made no difference whatsoever to it.",
+             "Since about four days back the left lower side keeps aching whenever something icy "
+             "touches it or I bite hard; tablets from the chemist changed nothing."]
+
+    def setup(self, paraphrases=0, status="needs_research_pm"):
+        bad = {"attempt": 0, "seed": 1, "reply": {"patient_words": "short"}, "raw": None,
+               "failures": ["length 1 outside 15-90"]}
+        case = {"status": status, "reply": {"patient_words": "short"}, "text": "short",
+                "history": [bad], "attempts": 1, "regeneration_reasons": [["length"]], "advisory": []}
+        if paraphrases:
+            case["paraphrases"] = [{"text": self.TEXTS[2], "status": "accepted", "history": [bad]}]
+        gen = {"order": ["X001"], "stability_ids": ["X001"], "cases": {"X001": case}}
+        return gen, {"cases": {}}, {"X001": {"archetype": "a"}}
+
+    def stub(self, texts):
+        seeds = []
+
+        def call(messages, schema, seed):
+            seeds.append(seed)
+            return json.dumps({"patient_words": texts[min(len(seeds) - 1, len(texts) - 1)]})
+        return call, seeds
+
+    def regen(self, gen, ext, by_id, call, stability=("X001",)):
+        return p7.regenerate_cases(gen, ext, ["X001"], by_id, {"X001": GenerateOne.PROMPT}, checker(),
+                                   call, "triage", stability=set(stability))
+
+    def test_accepted_text_gets_both_paraphrases(self):
+        gen, ext, by_id = self.setup()
+        call, seeds = self.stub(self.TEXTS)
+        self.regen(gen, ext, by_id, call)
+        case = gen["cases"]["X001"]
+        base = p7.SEEDS["triage"] + p7.CASE_SEED_STRIDE
+        self.assertEqual(seeds, [base + 1, base + p7.PARAPHRASE_SEED_STEP, base + 2 * p7.PARAPHRASE_SEED_STEP])
+        self.assertEqual([q["status"] for q in case["paraphrases"]], ["accepted", "accepted"])
+        self.assertEqual(case["status"], "accepted")
+        self.assertEqual(case["paraphrases_filled"][0]["paraphrases"], [1, 2])
+        self.assertEqual(p7.short_of_paraphrases(gen), [])
+
+    def test_only_the_missing_one_is_filled(self):
+        gen, ext, by_id = self.setup(paraphrases=1)
+        call, seeds = self.stub(self.TEXTS)
+        self.regen(gen, ext, by_id, call)
+        case = gen["cases"]["X001"]
+        self.assertEqual(len(case["paraphrases"]), 2)
+        self.assertEqual(case["paraphrases_filled"][0]["paraphrases"], [2])
+        self.assertEqual(len(seeds), 2)                               # text + paraphrase 2
+
+    def test_not_a_stability_case_gets_none(self):
+        gen, ext, by_id = self.setup()
+        call, seeds = self.stub(self.TEXTS)
+        self.regen(gen, ext, by_id, call, stability=())
+        self.assertNotIn("paraphrases", gen["cases"]["X001"])
+        self.assertEqual(len(seeds), 1)
+
+    def test_text_still_failing_fills_nothing(self):
+        gen, ext, by_id = self.setup()
+        call, seeds = self.stub(["too short"])
+        self.regen(gen, ext, by_id, call)
+        case = gen["cases"]["X001"]
+        self.assertNotIn("paraphrases_filled", case)
+        self.assertEqual(case["status"], "needs_research_pm")
+        self.assertEqual(p7.short_of_paraphrases(gen), [("X001", 0)])
+
+    def test_report_flags_short_stability_cases(self):
+        import contextlib
+        import io
+        gen, _, _ = self.setup()
+        gen["cases"]["X001"].update(attempts=1)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            p7.report_generation(gen)
+        self.assertIn("WARNING: 1 stability case(s) with fewer than 2 paraphrases: X001 (0)", buf.getvalue())
+
+
 class Order(unittest.TestCase):
     def test_grouped_by_style_and_seeded(self):
         keys = [{"id": f"X{i:03d}", "style": ("plain", "terse", "vague")[i % 3]} for i in range(30)]

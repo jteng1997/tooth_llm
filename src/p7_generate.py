@@ -831,14 +831,7 @@ def generate(kind: str, dry_run: bool = False, limit: int = None, key_change_ack
         case.update(style=key["style"], reached_chat=prompt["reached"], seed_scheme=2,
                     seed_index=index)
         if case["status"] == "accepted" and cid in stability:
-            case["paraphrases"] = []
-            for p in (1, 2):
-                versus = [("near-copy of its own text", case["text"])] + [
-                    (f"near-copy of paraphrase {i}", q["text"])
-                    for i, q in enumerate(case["paraphrases"], 1) if q["text"]]
-                para = generate_one(call, prompt, template(kind), checker,
-                                    case_seed(kind, index, p), versus)
-                case["paraphrases"].append(para)
+            fill_paraphrases(case, call, prompt, kind, index, checker)
             if any(q["status"] != "accepted" for q in case["paraphrases"]):
                 case["status"] = "needs_research_pm"
         out["cases"][cid] = case
@@ -850,6 +843,22 @@ def generate(kind: str, dry_run: bool = False, limit: int = None, key_change_ack
               + (f"  paraphrases {[q['attempts'] for q in case['paraphrases']]}"
                  if case.get("paraphrases") else ""))
     return report_generation(out)
+
+
+def fill_paraphrases(case: dict, call, prompt: dict, kind: str, index: int, checker) -> list:
+    """Generate the stability paraphrases a case is missing (up to 2), each in
+    its own seed block, checked like any text and against the case's text and
+    the other paraphrase. Returns the paraphrase numbers generated."""
+    case.setdefault("paraphrases", [])
+    made = []
+    for p in range(len(case["paraphrases"]) + 1, 3):
+        versus = [("near-copy of its own text", case["text"])] + [
+            (f"near-copy of paraphrase {i}", q["text"])
+            for i, q in enumerate(case["paraphrases"], 1) if q["text"]]
+        case["paraphrases"].append(generate_one(call, prompt, template(kind), checker,
+                                                case_seed(kind, index, p), versus))
+        made.append(p)
+    return made
 
 
 MAX_ADJUDICATION_ROUNDS = 2
@@ -866,7 +875,7 @@ def seeds_used(case: dict, part: str) -> int:
 
 
 def regenerate_cases(gen: dict, extracted: dict, ids: list, by_id: dict, prompts: dict, checker,
-                     call, kind: str, order: list = None) -> dict:
+                     call, kind: str, order: list = None, stability=frozenset()) -> dict:
     """Regenerate the texts research-pm's adjudication listed (never on a
     disagreement by itself). `ids` are case ids, or 'ID:p1' / 'ID:p2' for one
     paraphrase. Each continues its own seed sequence under seed scheme 2 (the
@@ -920,6 +929,14 @@ def regenerate_cases(gen: dict, extracted: dict, ids: list, by_id: dict, prompts
                                                   "text": old, "b": old_b})
         case["adjudication_rounds"] = rounds + 1
         text_ok = not case["history"][-1]["failures"]
+        # A stability case whose text first failed never got its paraphrases
+        # (they follow an accepted text); fill them in once it is accepted.
+        if (not part and text_ok and cid in stability
+                and len(case.get("paraphrases") or []) < 2):
+            made = fill_paraphrases(case, call, prompt, kind, seed_index(case, cid, order), checker)
+            case.setdefault("paraphrases_filled", []).append(
+                {"round": rounds + 1, "paraphrases": made,
+                 "date": datetime.date.today().isoformat()})
         paras_ok = all(q["status"] == "accepted" for q in case.get("paraphrases", []))
         case["status"] = "accepted" if text_ok and paras_ok else "needs_research_pm"
         done.append((item, case["status"], seed))
@@ -948,7 +965,8 @@ def regenerate(kind: str, ids_file: str, key_change_ack: str = None) -> int:
         print("REFUSED: the file's run order is not the keys' run order; seed blocks would move")
         return 1
     call = lambda messages, schema, seed: ollama(GENERATOR, messages, schema, TEMPERATURE, seed, think)  # noqa: E731
-    result = regenerate_cases(gen, extracted, ids, by_id, prompts, checker, call, kind, full_order)
+    result = regenerate_cases(gen, extracted, ids, by_id, prompts, checker, call, kind, full_order,
+                              stability=set(gen.get("stability_ids") or []))
     _save(gen_path, gen)
     if ext_path.exists():
         _save(ext_path, extracted)
@@ -1016,7 +1034,18 @@ def report_generation(out: dict) -> int:
     print(f"\n{len(cases)} cases ({n_para} paraphrases): {dict(status)}; of {len(texts)} texts, "
           f"needed a regeneration {regen}, more than one {more}; failure labels {dict(reasons)}; "
           f"advisory notes on {sum(bool(c['advisory']) for c in texts)} texts")
+    short = short_of_paraphrases(out)
+    if short:
+        print(f"WARNING: {len(short)} stability case(s) with fewer than 2 paraphrases: "
+              + ", ".join(f"{cid} ({n})" for cid, n in short))
     return 0
+
+
+def short_of_paraphrases(out: dict) -> list:
+    """(case id, number of paraphrases) for generated stability cases with fewer than 2."""
+    return [(cid, len(out["cases"][cid].get("paraphrases") or []))
+            for cid in out.get("stability_ids") or []
+            if cid in out["cases"] and len(out["cases"][cid].get("paraphrases") or []) < 2]
 
 
 # --- Blind extraction by model B (spec §6) ---------------------------------------------
