@@ -131,7 +131,8 @@ class Cases(unittest.TestCase):
         # kept for any future one, so it is tested with a stub criterion.
         from types import SimpleNamespace
         stub = SimpleNamespace(criterion=lambda c: SimpleNamespace(kind="narrative" if c == "N9"
-                                                                   else "structured"))
+                                                                   else "structured"),
+                               questions=PROTOCOL.questions)
         key = make_key("SOON", ["N9"])
         result = {"questions_shown": list(key["expected_questions"]), "chat_asked": [],
                   "symptoms": dict(key["symptoms"])}
@@ -152,6 +153,43 @@ class Cases(unittest.TestCase):
         key["symptoms"]["fever"] = None
         with self.assertRaises(ValueError):
             run(key)
+
+
+@unittest.skipIf(ERR, f"protocol does not load: {ERR}")
+class SkippedVersusNeverAsked(unittest.TestCase):
+    """Spec §3 bucket 1 is a question never put. A chat question the interview
+    skipped because an earlier answer already settled its field is not that."""
+
+    def result(self, shown_minus, **symptoms):
+        return {"questions_shown": [q for q in URGENT_KEY["expected_questions"] if q not in shown_minus],
+                "symptoms": {**URGENT_KEY["symptoms"], **symptoms}, "chat_asked": []}
+
+    def test_split(self):
+        r = self.result({"Q11", "Q12"}, pain_severity="mild", pain_triggers=None)
+        never, settled = e2e.unasked(URGENT_KEY, r, PROTOCOL)
+        self.assertEqual((never, settled), (["Q12"], ["Q11"]))
+
+    def test_a_skip_alone_is_not_the_interview_bucket(self):
+        r = self.result({"Q11"}, pain_severity="mild", pain_relief_effect=None)
+        att = e2e.attribute(URGENT_KEY, r, PROTOCOL, "prepend")
+        self.assertEqual(att["evidence"]["missing_questions"], [])
+        self.assertEqual(att["evidence"]["skipped_already_settled"], ["Q11"])
+        self.assertEqual(att["proposed"], "extraction")        # the relief field differs
+        r = self.result({"Q12"}, pain_triggers=None)
+        self.assertEqual(e2e.attribute(URGENT_KEY, r, PROTOCOL, "prepend")["proposed"], "interview")
+
+    def test_counts(self):
+        keys = {}
+        results = []
+        for cid, shown_minus, sym in (("A", {"Q11"}, {"pain_severity": "mild"}),
+                                      ("B", {"Q11", "Q18"}, {"pain_severity": "mild", "duration_days": 4}),
+                                      ("C", {"Q12"}, {"pain_triggers": None}),
+                                      ("D", set(), {})):
+            keys[cid] = URGENT_KEY
+            results.append({"id": cid, **self.result(shown_minus, **sym)})
+        c = e2e.interview_counts(results, keys, PROTOCOL)
+        self.assertEqual((c["cases_with_missing_questions"], c["questions_never_asked"],
+                          c["cases_with_skipped_settled"], c["questions_skipped_settled"]), (1, 1, 2, 3))
 
 
 @unittest.skipIf(ERR, f"protocol does not load: {ERR}")

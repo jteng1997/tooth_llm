@@ -31,7 +31,7 @@ Scoring (spec §3). Levels are ordered EMERGENCY > URGENT > SOON > ROUTINE.
 Systems scored from one run:
   rules           rules.assess() urgency, the shadow baseline    (both modes)
   protocol_check  the level from the protocol's structured criteria: the code
-                  ceiling (spec 3a), blind to narrative criteria by construction
+                  ceiling (spec 3a); protocol v0.2 has no narrative criteria
   llm_proposed    triage llm_proposed, the model's own level before any code
                   override (llm mode; None when the floor skipped the model or
                   the output was invalid twice)
@@ -96,9 +96,9 @@ CAVEATS = (
     "The vignettes assume the photo findings are correct; the detector catches about 29% of "
     "carious photos at the current threshold, so end-to-end accuracy on real patients is not "
     "measured here.",
-    "Structured criteria are decided by code, so on triage-level cases the final level is right "
-    "by construction wherever a structured criterion holds; the informative parts are "
-    "llm_proposed, the two narrative criteria, the injection cases and the end-to-end set.",
+    "Every criterion in protocol v0.2 is structured and decided by code, so on triage-level cases "
+    "the final level is right by construction; the informative parts are llm_proposed, the "
+    "injection cases and the end-to-end set.",
 )
 
 def caveats(protocol_version) -> list:
@@ -1001,14 +1001,23 @@ def print_report(summary: dict) -> None:
           f"{'PASS' if ok else 'FAIL'}")
 
 
-def report_from(path: Path) -> int:
+def report_from(path: Path, exclude: set = frozenset()) -> int:
     """The report of a saved run, with the operations block recomputed from
     its stored runs, so figures added to the report later (e.g. spec 9.9)
-    appear for a run made before them. Scores are not recomputed."""
+    appear for a run made before them. Scores are not recomputed. With
+    `exclude`, the spec 9.5 sensitivity block is computed from the same
+    stored runs (no model call)."""
     summary = json.loads(Path(path).read_text(encoding="utf-8"))
     if summary.get("operations") and summary.get("cases"):
         summary["operations"] = _operations(summary["cases"])
-    print(f"re-report of {Path(path).name} (saved run; operations recomputed from its runs)")
+    if exclude:
+        ids = {pc["id"] for pc in summary.get("cases", [])}
+        if exclude - ids:
+            print(f"ERROR: {len(exclude - ids)} excluded ids are not in the saved run")
+            return 1
+        summary["sensitivity"] = sensitivity(summary, set(exclude))
+    print(f"re-report of {Path(path).name} (saved run; operations recomputed from its runs"
+          + (f"; sensitivity without {len(exclude)} cases" if exclude else "") + ")")
     print_report(summary)
     return 0
 
@@ -1040,7 +1049,11 @@ def main() -> int:
                          "written); the operations block is recomputed from its stored runs")
     args = ap.parse_args()
     if args.report_from:
-        return report_from(Path(args.report_from))
+        exclude = set()
+        if args.sensitivity_exclude:
+            raw = json.loads(Path(args.sensitivity_exclude).read_text(encoding="utf-8"))
+            exclude = set(raw["exposed_ids"] if isinstance(raw, dict) else raw)
+        return report_from(Path(args.report_from), exclude)
 
     path = Path(args.cases)
     try:

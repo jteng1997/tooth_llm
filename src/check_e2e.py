@@ -198,17 +198,34 @@ def _same(field, a, b) -> bool:
     return a == b
 
 
+def unasked(key: dict, result: dict, protocol) -> tuple:
+    """(never asked, skipped because already settled) among the questions the
+    key expects but the interview did not show. A chat question is skipped,
+    not missed, when every field it fills was already settled by an earlier
+    answer (e.g. the opening); only a never-asked question is spec §3
+    bucket 1."""
+    fields = {q.id: q.fields for q in protocol.questions}
+    never, settled = [], []
+    for q in key.get("expected_questions", []):
+        if q in result["questions_shown"]:
+            continue
+        done = q in fields and all(result["symptoms"].get(f) is not None for f in fields[q])
+        (settled if done else never).append(q)
+    return never, settled
+
+
 def attribute(key: dict, result: dict, protocol, opening: str) -> dict:
     """The proposed §3 bucket for a case whose final level misses the key,
     with the evidence for each bucket that applies."""
-    missing = [q for q in key.get("expected_questions", []) if q not in result["questions_shown"]]
+    missing, skipped = unasked(key, result, protocol)
     extra = [q for q in result["questions_shown"] if q not in key.get("expected_questions", [])]
     # P7 puts the facts in the opening, and each chat answer answers only its
     # own question, so with the opening dropped a narrative fact has no turn.
     narrative = [c for c in key["criteria_met"] if protocol.criterion(c).kind == "narrative"]
     no_turn = bool(narrative) and opening == "drop"
     diffs = field_diffs(key["symptoms"], result["symptoms"])
-    evidence = {"missing_questions": missing, "extra_questions": extra,
+    evidence = {"missing_questions": missing, "skipped_already_settled": skipped,
+                "extra_questions": extra,
                 "narrative_without_a_turn": narrative if no_turn else [],
                 "field_diffs": diffs}
     if missing or no_turn:
@@ -253,9 +270,7 @@ def evaluate(keys: list, texts: dict, protocol, model: str, extract_llm_for, tri
         "extraction": {"cases_reaching_chat": len(reached), "fields": chat_fields,
                        "cells": len(reached) * len(chat_fields),
                        "wrong_cells": sum(wrong.values()), "wrong_by_field": dict(wrong)},
-        "interview": {"cases_with_missing_questions": sum(
-                          any(q not in r["questions_shown"] for q in by_id[r["id"]].get("expected_questions", []))
-                          for r in results),
+        "interview": {**interview_counts(results, by_id, protocol),
                       "cases_with_extra_questions": sum(
                           any(q not in by_id[r["id"]].get("expected_questions", []) for q in r["questions_shown"])
                           for r in results),
@@ -266,6 +281,15 @@ def evaluate(keys: list, texts: dict, protocol, model: str, extract_llm_for, tri
         "cases": results,
     }
     return summary
+
+
+def interview_counts(results: list, by_id: dict, protocol) -> dict:
+    """Never asked (bucket 1) apart from skipped because already settled."""
+    split = [unasked(by_id[r["id"]], r, protocol) for r in results]
+    return {"cases_with_missing_questions": sum(bool(never) for never, _ in split),
+            "questions_never_asked": sum(len(never) for never, _ in split),
+            "cases_with_skipped_settled": sum(bool(settled) for _, settled in split),
+            "questions_skipped_settled": sum(len(settled) for _, settled in split)}
 
 
 def triage_calls(results: list) -> dict:
@@ -330,9 +354,12 @@ def print_report(summary: dict, mock: bool) -> None:
               f"{s['missed_emergency']:>7}/{s['n_key_emergency']:<3}{s['over']:>6}"
               f"{s['agree']:>4}/{s['n_scored']:<3}{s['kappa_linear']:>8.3f}  [{lo:.3f}, {hi:.3f}]")
     iv, ex = summary["interview"], summary["extraction"]
-    print(f"interview: cases with a missing question {iv['cases_with_missing_questions']}/"
-          f"{summary['n_cases']}, with an extra question {iv['cases_with_extra_questions']}, "
-          f"re-asks {iv['reasked']}, unscripted questions {iv['unscripted']}")
+    print(f"interview: cases with a question never asked {iv['cases_with_missing_questions']}/"
+          f"{summary['n_cases']} ({iv.get('questions_never_asked', '?')} questions); skipped, already "
+          f"settled by an earlier answer {iv.get('cases_with_skipped_settled', '?')}/{summary['n_cases']} "
+          f"({iv.get('questions_skipped_settled', '?')} skips); with an extra question "
+          f"{iv['cases_with_extra_questions']}, re-asks {iv['reasked']}, unscripted questions "
+          f"{iv['unscripted']}")
     print(f"extraction: {ex['wrong_cells']}/{ex['cells']} chat-field cells differ from the key "
           f"over {ex['cases_reaching_chat']} cases that reached the chat {ex['wrong_by_field']}")
     att = summary["attribution"]

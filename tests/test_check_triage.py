@@ -369,6 +369,58 @@ class CaveatVersion(unittest.TestCase):
         self.assertEqual(ct.caveats(None)[1:], list(ct.CAVEATS[1:]))    # the others unchanged
 
 
+class Caveats(unittest.TestCase):
+    def test_caveat_matches_the_live_protocol(self):
+        protocol, err = ct.load_protocol()
+        if err:
+            self.skipTest(f"protocol does not load: {err}")
+        narrative = [c for c in protocol.criteria if c.kind == "narrative"]
+        if narrative:
+            self.skipTest("protocol has narrative criteria again; caveat 3 needs rewording")
+        self.assertNotIn("narrative", ct.CAVEATS[2])
+        self.assertIn(f"v{protocol.version}", ct.CAVEATS[2])
+
+
+class ReportFromSaved(unittest.TestCase):
+    """--report-from with --sensitivity-exclude: spec §9.5 from stored runs."""
+
+    def saved(self, d):
+        summary = ct.evaluate(SANITY, "rules", verbose=False)
+        path = Path(d) / "saved.json"
+        path.write_text(json.dumps(summary, default=str), encoding="utf-8")
+        return path
+
+    def run_report(self, path, exclude):
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = ct.report_from(path, exclude)
+        return code, buf.getvalue()
+
+    def test_sensitivity_block_from_stored_runs(self):
+        with tempfile.TemporaryDirectory() as d:
+            code, out = self.run_report(self.saved(d), {"S001", "S010"})
+        self.assertEqual(code, 0)
+        self.assertIn("sensitivity analysis (spec 9.5): the same runs without 2 exposed cases", out)
+        block = out.split("sensitivity analysis")[1]
+        row = next(l for l in block.splitlines() if l.strip().startswith("rules"))
+        # 19 scored (S012's designed retake is excluded), minus S001 and S010;
+        # S001 was one of the 7 severe cases
+        self.assertEqual(row.split()[1:4], ["17", "10", "6"])
+
+    def test_unknown_id_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            code, out = self.run_report(self.saved(d), {"S001", "X999"})
+        self.assertEqual(code, 1)
+        self.assertNotIn("X999", out)                                # no ids in error paths
+
+    def test_without_exclusion_no_sensitivity_block(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, out = self.run_report(self.saved(d), set())
+        self.assertNotIn("sensitivity analysis", out)
+
+
 class Sensitivity(unittest.TestCase):
     """Spec §9.5: the same runs, recomputed without the exposed cases."""
 
