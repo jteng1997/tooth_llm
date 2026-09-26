@@ -26,10 +26,15 @@ will teach people to ignore the tool.
 
 Keep / Change: ................................................
 
-## C2. Lingering or night pain is urgent even when painkillers work
+## C2. Lingering or night pain: urgent only when pain relief is not working
 
-**Today:** pain that keeps aching for more than about half a minute, or wakes
-the patient, or starts on its own → URGENT (24 h).
+**Today (protocol v0.3 draft, the project owner's provisional decision of
+2026-09-26):** pain that keeps aching for more than about half a minute, or
+wakes the patient, or starts on its own is URGENT (24 h) only when pain relief
+has not helped or has not been tried. When pain relief works, it is "within 7
+days", following SDCEP. (Until 2026-09-26 it was URGENT whenever present.)
+Still open for you: should "not tried yet" also be 7 days, as SDCEP's pain
+pathway implies?
 
 **What SDCEP does:** pulpitis is non-urgent (7 days) unless pain relief has
 failed; failing pain relief is the discriminator.

@@ -1,0 +1,429 @@
+# Triage protocol: the criteria the triage step must cite, and the fixed
+# interview questions. Content owned by research-pm; loader/validator by
+# llm-dev (docs/plans/llm-triage-design.md §3.1).
+#
+# Evidence, discrepancies and open points: docs/plans/phase1-2-plan.md.
+# Decisions encoded: docs/decisions.md, 2026-09-22 "Phase 1–2 plan decisions".
+#
+# DRAFT-UNREVIEWED. No dentist has checked this. Every level, criterion and
+# sentence below is a screening rule, not a diagnosis, and needs a dentist's
+# sign-off before any result from it is reported as clinical.
+#
+# Sources (full references in the plan, §1):
+#   SDCEP-2026  SDCEP, Management of Acute Dental Problems, 2nd ed., March 2026
+#               https://www.acutedentalproblems.sdcep.org.uk/
+#   SDCEP-2013  SDCEP, Management of Acute Dental Problems, Quick Reference
+#               Guide, 1st ed., March 2013
+#   SDCEP-2007  SDCEP, Emergency Dental Care: Dental Clinical Guidance, Nov 2007 (§2.1)
+#   NHSE-2025   NHS England, Clinical guidance: unscheduled urgent and
+#               non-urgent dental care, v1.0, May 2025 (updated Oct 2025)
+#   AAE-2009    AAE Consensus Conference Recommended Diagnostic Terminology,
+#               J Endod 2009;35(12):1634
+#   USER-2026-09-22-n  item n of the user's "Phase 1–2 plan decisions"
+#
+# Predicate grammar (llm-dev): field == literal, field != literal,
+# field non-empty, field contains literal, AND, OR. Fields are symptoms 1.2
+# fields (1.1 + broken_filling_or_tooth, pus_or_discharge) or visual_summary fields (images_usable, flagged_teeth,
+# unexpected_missing_teeth).
+
+# v0.2 (2026-09-23, user decision "option 2"): S3 and U8 are now structured
+# criteria fed by two new checklist-A rows (Q20, Q21), because a patient with
+# no pain never reached the chat and so could never report them.
+# Q20/Q21 wording approved by the user 2026-09-23 as drafted; clinical
+# content (incl. U8 with or without pain) still needs a dentist (Form C, C11).
+# v0.3 DRAFT (2026-09-26, user decision): lingering or night/spontaneous pain
+# with effective pain relief follows SDCEP (non-urgent -> SOON). Supersedes
+# USER-2026-09-22-5. U5 and U6 now need pain relief not tried or not helped;
+# with relief that helps, only S1 (SOON) holds. Provisional until a dentist
+# confirms (Form C, C2). Draft by research-pm; llm-dev switches it live.
+protocol_version: "0.3"
+review_status: DRAFT-UNREVIEWED
+reviewed_by: ""
+reviewed_date: ""
+language: en
+
+# SDCEP-2026 "Timescales for treatment" mapped onto the project's levels:
+# Emergency (medical or dental) -> EMERGENCY; Urgent -> URGENT;
+# Non-urgent -> SOON; Self care -> ROUTINE. Symptom-free photo finding ->
+# SOON (USER-2026-09-22-6); symptom-free missing tooth -> ROUTINE (-7).
+levels:
+  EMERGENCY:
+    time_frame: "now"
+    headline: "This may be an emergency. Please go to a hospital as soon as possible."
+    source: "SDCEP-2026 Timescales for treatment (Emergency Care, medical and dental); USER-2026-09-22-9 (one screen, no route split)"
+  URGENT:
+    time_frame: "within 24 hours"
+    headline: "See a dentist within 24 hours."
+    source: "SDCEP-2026 Timescales for treatment (Urgent Care); NHSE-2025 §3.3; USER-2026-09-22-1"
+  SOON:
+    time_frame: "within 7 days"
+    headline: "See a dentist within 7 days."
+    source: "SDCEP-2026 Timescales for treatment (Non-urgent Care); NHSE-2025 §3.4; USER-2026-09-22-1"
+  ROUTINE:
+    time_frame: "next routine check-up"
+    headline: "No urgent dental visit is needed. Keep up your routine check-ups."
+    source: "SDCEP-2026 Self Care; USER-2026-09-22-8 (self-care merges into ROUTINE with prevention advice). The check-up window itself is a dentist's call."
+
+# Fixed English text shown by code, never written by the model. Wording
+# approved by the user 2026-09-22; clinical content still needs a dentist.
+# Shown with every result, alongside the headline. Moved here 2026-09-23 from
+# rules.py's LIMITATIONS so that every patient-facing string sits in one
+# reviewable file. DRAFT: the third line states the detector's miss rate in
+# plain words and needs the dentist's sign-off (Form A, Form C question C8).
+limitations:
+  - "These photos show the biting surfaces only. They cannot show the sides between your teeth."
+  - "They cannot show anything under the gum or inside a tooth."
+  - "A cavity can be there even when the photos show nothing."
+
+safety_net: >-
+  If you develop swelling, a fever, bleeding that will not stop, or trouble
+  breathing or swallowing, go to a hospital as soon as possible.
+fixed_text:
+  disclaimer: >-
+    This is an AI screening tool, not an examination by a dentist. It cannot
+    diagnose any condition. If you are worried, contact a dentist.
+  routine_advice: >-
+    Brush twice a day with fluoride toothpaste, cut down on sugary food and
+    drinks, and see a dentist for regular check-ups.
+  photo_finding_phrase: "Based on the image, there is an indication of tooth decay on:"
+  # Shown above every checklist. DRAFT wording: no default answer, no nudge
+  # towards Yes or No, and it tells the patient the free-text turn is coming
+  # so they do not try to squeeze detail into a Yes/No row.
+  checklist_intro: >-
+    Please answer every row - nothing is filled in for you. Answer what is
+    true right now; you can describe anything else in your own words
+    afterwards.
+  # Patient-facing option labels (code maps them to true / false / null).
+  option_labels:          # keys quoted: bare yes/no parse as booleans in YAML
+    "yes": "Yes"
+    "no": "No"
+    "not_sure": "Not sure"
+
+# The most urgent level among the criteria that hold is the protocol level.
+# floor: true -> also enforced by red_flag_floor() in code and stops the
+# interview (USER-2026-09-22-3, -4, -9).
+# route: EMERGENCY only; recorded for research, never shown (USER-2026-09-22-9).
+criteria:
+
+  # --- EMERGENCY: red-flag floor --------------------------------------
+  - id: E1
+    level: EMERGENCY
+    floor: true
+    route: medical
+    kind: structured
+    predicate: "difficulty_swallowing_or_breathing == true"
+    statement: "Difficulty breathing or swallowing"
+    source: "SDCEP-2026 Swelling pathway (difficulty breathing / swallowing -> Emergency Medical Care); SDCEP-2026 Acute apical abscess (airway compromise -> emergency department); NHSE-2025 §3.2"
+
+  - id: E2
+    level: EMERGENCY
+    floor: true
+    route: either
+    kind: structured
+    predicate: "swelling == true"
+    statement: "Swelling of the face, jaw or gums"
+    source: "USER-2026-09-22-4 (any swelling stays EMERGENCY). SDCEP-2026 Swelling pathway grades swelling: only rapidly increasing / airway / eye-closing / systemically unwell is Emergency; slowly increasing, hot or firm is Urgent; otherwise Non-urgent. Deliberate over-triage, to revisit with a dentist."
+
+  - id: E3
+    level: EMERGENCY
+    floor: true
+    route: medical
+    kind: structured
+    predicate: "fever == true"
+    statement: "Fever with a dental problem"
+    source: "USER-2026-09-22 floor. SDCEP-2026 Swelling pathway ('increasing temperature' as a sign of being systemically unwell -> Emergency Medical Care); SDCEP-2026 Management of spreading or systemic infection; SDCEP-2007 §2.1.1 ('raised temperature as a result of dental infection' is a dental emergency)."
+
+  - id: E4
+    level: EMERGENCY
+    floor: true
+    route: either
+    kind: structured
+    predicate: "recent_trauma == true"
+    statement: "A recent knock or injury to the mouth or teeth"
+    source: "USER-2026-09-22-4 (any trauma stays EMERGENCY). SDCEP-2026 Trauma pathway grades trauma: head injury, loss of consciousness, significant facial trauma, uncontrollable bleeding, airway -> Emergency Medical; bite changed, inhaled tooth, large lacerations -> Emergency Care (NHS24/111); knocked-out adult tooth -> Emergency Care: Dental; moved adult tooth or pulp exposed -> Urgent; fracture into dentine -> Non-urgent; enamel chip, small lacerations -> Self care. Deliberate over-triage, to revisit with a dentist."
+
+  - id: E5
+    level: EMERGENCY
+    floor: true
+    route: medical
+    kind: structured
+    predicate: "systemically_unwell == true"
+    statement: "Feeling very unwell, shivery or very tired along with the dental problem"
+    source: "USER-2026-09-22-3. SDCEP-2026 Swelling pathway (systemically unwell: rigors, dehydrated, lethargic -> Emergency Medical Care); SDCEP-2026 Management of spreading or systemic infection (sepsis signs)."
+
+  - id: E6
+    level: EMERGENCY
+    floor: true
+    route: medical
+    kind: structured
+    predicate: "chest_pain_or_breathless == true"
+    statement: "Chest pain or shortness of breath along with jaw or tooth pain"
+    source: "USER-2026-09-22-3. SDCEP-2026 Pain pathway, first step (atypical jaw pain with signs of myocardial infarction -> Emergency Medical Care)."
+
+  - id: E7
+    level: EMERGENCY
+    floor: true
+    route: dental
+    kind: structured
+    predicate: "bleeding_uncontrolled == true"
+    statement: "Bleeding in the mouth that does not stop with pressure"
+    source: "USER-2026-09-22-3. SDCEP-2026 Bleeding pathway (bleeding after dental treatment not stopped by pressure -> Emergency Care: Dental or NHS24/111; brisk and persistent bleeding -> Emergency Care); SDCEP-2007 §2.1.1; NHSE-2025 §3.2 (intra-oral bleeding the patient cannot control with local measures)."
+
+  - id: E8
+    level: EMERGENCY
+    floor: true
+    route: medical
+    kind: structured
+    predicate: "exceeded_pain_relief_dose == true"
+    statement: "More pain relief taken than the packet says is safe"
+    source: "USER-2026-09-22-3. SDCEP-2026 Pain pathway, first step (exceeded the recommended dose of pain relief -> Emergency Medical Care)."
+
+  # --- URGENT: within 24 hours ----------------------------------------
+  - id: U1
+    level: URGENT
+    kind: structured
+    predicate: "pain_present == true AND pain_relief_effect == not_helped"
+    statement: "Tooth pain that pain relief has not controlled"
+    source: "SDCEP-2026 Pain pathway ('Has analgesic controlled the pain?' No -> Urgent Care: Dental); SDCEP-2026 Pulpitis (urgent if analgesia ineffective); SDCEP-2007 §2.1.2; NHSE-2025 §3.3."
+
+  - id: U2
+    level: URGENT
+    kind: structured
+    predicate: "pain_present == true AND pain_severity == severe"
+    statement: "Severe pain that stops normal sleeping or eating"
+    source: "USER-2026-09-22-2 (unbearable pain is URGENT, not the emergency department). NHSE-2025 §3.3 lists severe pain not controlled by self-help as Urgent; severity alone, without relief tried, is the user's extension."
+
+  - id: U3
+    level: URGENT
+    kind: structured
+    predicate: "pain_on_biting == true OR pain_triggers contains biting"
+    statement: "Pain when biting on or pressing a tooth"
+    source: "SDCEP-2026 Symptomatic apical periodontitis (tender to pressing; seek urgent dental care); AAE-2009 Symptomatic apical periodontitis (painful response to biting)."
+
+  - id: U4
+    level: URGENT
+    kind: structured
+    predicate: "pain_present == true AND recent_extraction == true"
+    statement: "Pain after a tooth was taken out recently"
+    source: "SDCEP-2026 Pain pathway ('Has the patient recently had a tooth extracted?' Yes -> Urgent Care: Dental)."
+
+  - id: U5
+    level: URGENT
+    kind: structured
+    predicate: "pain_lingers_over_30s == true AND (pain_relief_effect == not_tried OR pain_relief_effect == not_helped)"
+    statement: "Pain that keeps aching after the hot, cold or sweet trigger has gone, and pain relief has not been tried or has not helped"
+    source: "USER-2026-09-26 (with effective pain relief, lingering pain follows SDCEP: Non-urgent; supersedes USER-2026-09-22-5). SDCEP-2026 Pulpitis (Non-urgent when pain relief is effective; urgent if analgesia is ineffective) and Pain pathway ('Has analgesic controlled the pain?'). dentist's call: 'not tried' stays URGENT here although SDCEP's pain pathway gives Non-urgent when analgesia has not yet been taken; the user's decision covered only effective relief. AAE-2009 'lingering thermal pain' gives no duration, so the 30 s is a project convention."
+
+  - id: U6
+    level: URGENT
+    kind: structured
+    predicate: "(pain_wakes_at_night == true OR pain_triggers contains spontaneous) AND (pain_relief_effect == not_tried OR pain_relief_effect == not_helped)"
+    statement: "Pain that starts on its own or wakes you at night, and pain relief has not been tried or has not helped"
+    source: "USER-2026-09-26 (with effective pain relief, night or spontaneous pain follows SDCEP: Non-urgent; supersedes USER-2026-09-22-5). SDCEP-2026 Pulpitis (pain may keep the patient awake at night; Non-urgent when pain relief is effective). dentist's call: 'not tried' stays URGENT, as for U5. AAE-2009 spontaneous pain is a descriptor of irreversible pulpitis."
+
+  - id: U7
+    level: URGENT
+    kind: structured
+    predicate: "flagged_teeth non-empty AND pain_present == true"
+    statement: "A possible cavity seen in the photo, together with tooth pain"
+    source: "dentist's call. Kept from rules.py R4 so the protocol is not less urgent than the rules baseline. SDCEP-2026 would give Non-urgent (7 days) when pain relief works."
+
+  - id: U8
+    level: URGENT
+    kind: structured
+    predicate: "pus_or_discharge == true"
+    statement: "Pus, a gum boil or a bad-tasting discharge from the gum or a tooth"
+    source: "SDCEP-2026 Acute apical abscess (without airway compromise: seek urgent dental care); AAE-2009 Acute apical abscess (pus formation). dentist's call: v0.2 applies it with or without pain; a painless draining sinus may be chronic apical abscess, which SDCEP may place lower. Deliberate over-triage until a dentist decides."
+
+  - id: U9
+    level: URGENT
+    kind: structured
+    predicate: "persistent_ulcer == true"
+    statement: "A mouth ulcer, sore or lump that has lasted more than 3 weeks"
+    source: "USER-2026-09-22 (ulcer question added). SDCEP-2026 Ulceration pathway (ulcer present more than 3 weeks -> dental assessment for possible urgent-suspicion-of-cancer referral -> Urgent Care: Dental); SDCEP-2013 Altered sensation or abnormal appearance pathway (red, white or pigmented lesion present more than 3 weeks -> Urgent Care: local rapid access pathway)."
+
+  # --- SOON: within 7 days --------------------------------------------
+  - id: S1
+    level: SOON
+    kind: structured
+    predicate: "pain_present == true OR pain_triggers non-empty"
+    statement: "Tooth pain or sensitivity"
+    source: "SDCEP-2026 Pain pathway (analgesic controlled the pain, or not yet taken -> Non-urgent Care: Dental); NHSE-2025 §3.4 (mild or moderate pain that responds to pain relief)."
+
+  - id: S2
+    level: SOON
+    kind: structured
+    predicate: "flagged_teeth non-empty"
+    statement: "A possible cavity seen in the photo"
+    source: "USER-2026-09-22-6 (photo-only finding with no symptoms: SOON). dentist's call: no guideline gives a time frame for a symptom-free finding."
+
+  - id: S3
+    level: SOON
+    kind: structured
+    predicate: "broken_filling_or_tooth == true"
+    statement: "A broken, chipped, loose or lost filling, crown or tooth"
+    source: "NHSE-2025 §3.4 (fractured, loose or displaced fillings; loose or displaced crowns); SDCEP-2026 Trauma pathway (fracture involving dentine -> Non-urgent); SDCEP-2007 §2.1.3."
+
+  # --- ROUTINE ------------------------------------------------------------
+  - id: R1
+    level: ROUTINE
+    kind: structured
+    predicate: "unexpected_missing_teeth non-empty"
+    statement: "A tooth appears to be missing in the photo"
+    source: "USER-2026-09-22-7 (missing tooth, no symptoms: ROUTINE). dentist's call."
+
+  # R0 removed 2026-09-23: "none of the above" is not a criterion. It held on
+  # every usable photo, so the model was sent back to retry for failing to cite
+  # it (llm-dev: 5 of 6 probe runs). protocol_level() returns ROUTINE when
+  # nothing holds, and the ROUTINE headline says the same thing to the patient.
+
+# Fixed, pre-written question text (USER-2026-09-22-11). The model does not
+# phrase questions. Python owns the order and the stopping rule
+# (QUESTION_PLAN); red-flag questions come first, and a "yes" to any of them
+# stops the interview at once (USER-2026-09-22-9). Each question fills one
+# field, so a bare "yes" or "no" always has a single meaning.
+# input: yesno_checklist -> one row of an all-at-once Yes/No form, no default,
+# every row must be answered (checklist A: Q1-Q9, Q19, Q20, Q21; B: Q13-Q16, shown
+# only with pain). Rows are strict Yes/No unless `options` says otherwise
+# (Q13 only: yes / no / not_sure, not_sure = null). Red-flag rows are always
+# strict Yes/No. input: chat -> asked in the chat, answer extracted with a
+# quote (Q10-Q12, Q17, Q18).
+# Nothing here names a drug or a dose.
+questions:
+  - id: Q1
+    fields: [difficulty_swallowing_or_breathing]
+    input: yesno_checklist
+    group: A
+    red_flag: true
+    text: "Are you having any difficulty breathing or swallowing?"
+  - id: Q2
+    fields: [chest_pain_or_breathless]
+    input: yesno_checklist
+    group: A
+    red_flag: true
+    text: "Do you have any chest pain, or do you feel short of breath?"
+  - id: Q3
+    fields: [swelling]
+    input: yesno_checklist
+    group: A
+    red_flag: true
+    text: "Is there any swelling in your face, jaw or gums?"
+  - id: Q4
+    fields: [fever]
+    input: yesno_checklist
+    group: A
+    red_flag: true
+    text: "Do you have a fever or a high temperature?"
+  - id: Q5
+    fields: [systemically_unwell]
+    input: yesno_checklist
+    group: A
+    red_flag: true
+    text: "Do you feel very unwell in yourself, for example shivery, faint or unusually tired?"
+  - id: Q6
+    fields: [recent_trauma]
+    input: yesno_checklist
+    group: A
+    red_flag: true
+    text: "Have you recently had a knock, fall or other injury to your mouth, teeth or face?"
+  - id: Q7
+    fields: [bleeding_uncontrolled]
+    input: yesno_checklist
+    group: A
+    red_flag: true
+    text: "Is there any bleeding in your mouth that does not stop when you press on it?"
+  - id: Q8
+    fields: [exceeded_pain_relief_dose]
+    input: yesno_checklist
+    group: A
+    red_flag: true
+    text: "In the last few days, have you taken more pain relief than the packet says is safe?"
+  - id: Q9
+    fields: [pain_present]
+    input: yesno_checklist
+    group: A
+    red_flag: false
+    text: "Do you have any pain or discomfort in your teeth or gums at the moment?"
+  - id: Q19
+    fields: [persistent_ulcer]
+    input: yesno_checklist
+    group: A
+    red_flag: false
+    text: "Do you have a mouth ulcer, sore or lump that has lasted more than 3 weeks?"
+  # Q20, Q21: wording approved by the user 2026-09-23.
+  - id: Q20
+    fields: [broken_filling_or_tooth]
+    input: yesno_checklist
+    group: A
+    red_flag: false
+    text: "Do you have a filling, crown or tooth that has broken, chipped, come loose or come out, and has not been fixed yet?"
+  - id: Q21
+    fields: [pus_or_discharge]
+    input: yesno_checklist
+    group: A
+    red_flag: false
+    text: "Have you noticed pus, a pimple-like bump on the gum, or a salty or bad-tasting fluid coming from around a tooth?"
+  - id: Q10
+    fields: [pain_relief_effect]
+    input: chat
+    red_flag: false
+    asked_if: "pain_present == true"
+    text: "Have you taken any pain relief for it? If so, did it help?"
+  - id: Q11
+    fields: [pain_severity]
+    input: chat
+    red_flag: false
+    asked_if: "pain_present == true"
+    text: "How bad is the pain? Is it mild, moderate, or so bad that it stops you sleeping or eating?"
+  - id: Q12
+    fields: [pain_triggers]
+    input: chat
+    red_flag: false
+    asked_if: "pain_present == true"
+    text: "What sets the pain off: cold, hot, sweet things, biting, or does it come on by itself?"
+  - id: Q13
+    fields: [pain_lingers_over_30s]
+    input: yesno_checklist
+    group: B
+    options: ["yes", "no", "not_sure"]   # this row only; not_sure records null (lead decision 2026-09-22)
+    red_flag: false
+    asked_if: "pain_present == true"
+    text: "After the pain is set off, does it keep aching for more than about half a minute?"
+  - id: Q14
+    fields: [pain_wakes_at_night]
+    input: yesno_checklist
+    group: B
+    red_flag: false
+    asked_if: "pain_present == true"
+    text: "Does the pain ever wake you up at night?"
+  - id: Q15
+    fields: [pain_on_biting]
+    input: yesno_checklist
+    group: B
+    red_flag: false
+    asked_if: "pain_present == true"
+    text: "Does it hurt when you bite down or press on the tooth?"
+  - id: Q16
+    fields: [recent_extraction]
+    input: yesno_checklist
+    group: B
+    red_flag: false
+    asked_if: "pain_present == true"
+    text: "Have you had a tooth taken out in the last two weeks?"
+  - id: Q17
+    fields: [location]
+    input: chat
+    red_flag: false
+    asked_if: "pain_present == true"
+    text: "Where is the pain: upper or lower, left or right side, or at the front?"
+  - id: Q18
+    fields: [duration_days]
+    input: chat
+    red_flag: false
+    asked_if: "pain_present == true"
+    text: "How long have you had this pain?"
+
+# Asked once, in place of the original question, when a chat answer is
+# unclear (design §4.2). Not used for checklist rows, which cannot be left
+# unanswered. The field stays null if the reply is still unclear.
+reask_template: "Sorry, I need a clearer answer to keep you safe. {question}"

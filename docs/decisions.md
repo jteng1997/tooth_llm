@@ -44,6 +44,64 @@ The 20 rule cases in `llm/eval/rule_cases.json` also need blind dentist labels.
 
 ## Decided
 
+### 2026-09-26 — Partial RETAKE: option 1, keep current behaviour (user)
+Decided by the user, relayed by the lead. No code change.
+- When one photo is unusable and the level would come **only from photo
+  findings**, the result stays **RETAKE**. The usable photo's findings are
+  not given a level of their own.
+- The bug #18 rule stays: when **symptoms** set a level other than RETAKE,
+  the explanation keeps the headline and the flagged teeth and asks for a
+  retake (`llm/interface.md`: symptoms that need care are never hidden
+  behind a bad photo).
+- Options 2 and 3 were rejected. The user was told that option 2 was
+  recommended, and chose option 1.
+- Closed as an open item. No file in `docs/` listed it as open.
+
+### 2026-09-26 — Paper framing: urgency is guaranteed by code; the LLM interviews and explains (user)
+Agreed by the user, relayed by the lead, from the held-out Test 5 result.
+- **Urgency is guaranteed by code:** the red-flag floor, the citation check
+  (which can only raise the level), and `protocol_check`.
+- **The LLM's roles are the interview** (extracting the chat fields with
+  verified quotes) **and the explanation**.
+- **Its own triage level matched the rules baseline and did not beat it**
+  (held-out `llm_proposed` 30/155 under-triage vs rules 26/155 on the same
+  cases, McNemar p = 0.689). Reported as such, not as an LLM triage result.
+- `docs/reports/test5-heldout-2026-09-26.md` §7: the open item is resolved.
+
+### 2026-09-26 — Lingering or night pain with effective relief follows SDCEP (user); protocol v0.3 drafted
+**Decision (user, 2026-09-26, relayed by the lead):** lingering or night pain
+with effective pain relief follows SDCEP, i.e. non-urgent (SOON, within 7
+days). This **supersedes item 5 of the 2026-09-22 decisions** ("stays URGENT
+for now"). Provisional until a dentist confirms (Form C, C2, updated).
+
+**Draft (research-pm):** `docs/plans/protocol-v0.3/` (YAML + README).
+- U5 (lingering) and U6 (night or spontaneous) now also need pain relief
+  "not tried" or "not helped". With relief that helps, only S1 holds
+  (SOON).
+- Night and spontaneous pain move with lingering pain, because SDCEP treats
+  them all as pulpitis symptoms with failing analgesia as the discriminator
+  (research-pm's reading of SDCEP 2nd ed. on 2026-09-22; the site could not
+  be re-read today).
+- The draft loads and validates under the current loader. The live file is
+  unchanged; llm-dev switches it.
+
+**Two points left to the user (not decided):**
+1. "Not tried" stays URGENT, because the decision covers only effective
+   relief. SDCEP would give non-urgent there too.
+2. Unanswered relief now gives SOON, since the grammar cannot test for null.
+
+**Evaluation consequences:**
+- Held-out Test 5 stays reported as v0.2 and is not re-keyed or re-scored.
+  Under v0.3, 12/200 triage keys (6 lingering + 6 night or spontaneous, not
+  only the 6 lingering) and 4/60 e2e keys would move URGENT → SOON.
+- v0.3 numbers come from dev only: 6/100 dev keys change (V021, V048, V072,
+  V077, V081, V087).
+- 1 sanity case (S007) changes; that file is qa-engineer's.
+- rules.py (the frozen baseline) keeps R3, so it is now more urgent than the
+  protocol on these cases.
+- Proposed: 6 extra dev keys (relief not tried, and relief unanswered) so
+  that U5/U6 are still tested on dev after the change.
+
 ### 2026-09-26 — Test 5 held-out scoring 4/4: end-to-end, opening prepend (secondary)
 2026-09-26 06:06. Keys `labels/heldout/e2e_keys.json` (60), sha256
 07c83f5a3adc6f65…6c. System: end-to-end interview + triage, qwen3:14b,

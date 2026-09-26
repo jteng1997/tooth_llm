@@ -252,8 +252,13 @@ changes.
 
 ## 7. Open items for the lead
 
-- Decide how the paper frames the LLM's role: under v0.2 its own level does
-  not beat rules. Its value, if any, is in the explanation, not the level.
+None open.
+
+Resolved 2026-09-26 (user decision, `docs/decisions.md`): **the paper's
+framing.** Urgency is guaranteed by code: the red-flag floor, the citation
+check that only raises, and `protocol_check`. The LLM's roles are the
+interview and the explanation. Its own triage level matched the rules
+baseline and did not beat it.
 
 Resolved in commit a8af8a5:
 - the official §9.5 sensitivity output;
