@@ -85,7 +85,7 @@ Report the numbers and sample sizes, not "tests pass".
 
 ## Where things stand
 
-**Resuming work? Start with `docs/plans/checkpoint-2026-09-24.md`** (branch
+**Resuming work? Start with `docs/plans/checkpoint-2026-09-26.md`** (branch
 `llm-triage-wave2`; held-out backup location, task states, resume order).
 System design: `docs/architecture.md`.
 
