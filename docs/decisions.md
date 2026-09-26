@@ -44,6 +44,42 @@ The 20 rule cases in `llm/eval/rule_cases.json` also need blind dentist labels.
 
 ## Decided
 
+### 2026-09-26 — Test 5 held-out scoring 4/4: end-to-end, opening prepend (secondary)
+2026-09-26 06:06. Keys `labels/heldout/e2e_keys.json` (60), sha256
+07c83f5a3adc6f65…6c. System: end-to-end interview + triage, qwen3:14b,
+`--opening prepend`. This is the labelled secondary condition (§9.6).
+Configuration cc8146620d16b601; protocol v0.2 (7de38ee9…), prompt b3b60d00…,
+commit 06d3792, clean. Run by the lead. Not a re-run. Output:
+`labels/heldout/results/test5_heldout_e2e_prepend_qwen3_14b.json`.
+
+### 2026-09-26 — Test 5 held-out scoring 3/4: end-to-end, opening drop (headline)
+2026-09-26 05:41. Keys `labels/heldout/e2e_keys.json` (60), sha256
+07c83f5a3adc6f65…6c. System: end-to-end interview + triage, qwen3:14b,
+`--opening drop`. This is the headline condition (§9.6). Configuration
+4e91288b2d70aa31; protocol v0.2, prompt b3b60d00…, commit 06d3792, clean. Run
+by the lead. Not a re-run. Output:
+`labels/heldout/results/test5_heldout_e2e_drop_qwen3_14b.json`.
+
+### 2026-09-26 — Test 5 held-out scoring 2/4: triage-level, LLM (qwen3:14b)
+2026-09-26 05:14. Keys `labels/heldout/triage_heldout_keys.json` (200),
+sha256 2a549b537ac17f34…83. System `llm`: qwen3:14b, max 2 attempts, prompt
+b3b60d000d80…, protocol v0.2 (7de38ee9…), including stability (20 cases).
+Configuration c4c54a4057052c60, commit 06d3792, clean. Run by the lead. Not
+a re-run. Output: `labels/heldout/results/test5_heldout_llm_qwen3_14b.json`.
+Results: `docs/reports/test5-heldout-2026-09-26.md`.
+
+### 2026-09-26 — Test 5 held-out scoring 1/4: triage-level, rules baseline
+2026-09-26 04:41. Keys `labels/heldout/triage_heldout_keys.json` (200),
+sha256 2a549b537ac17f34…83. System `rules` (shadow baseline; no model),
+rules.py sha256 b08badcf…. Configuration 43182a2db1550c64, protocol v0.2,
+commit 06d3792, clean. Run by the lead. Not a re-run. Output:
+`labels/heldout/results/test5_heldout_rules.json`.
+**Catch-up, found while filing:** the run log also holds a 2026-09-23 17:08
+no-model `rules` scoring by qa-engineer, configuration ef7986cac7496c31, on
+the v0.1 keys (triage sha256 dfe0229d…, e2e babe4290…) at commit 3b51b86
+with a dirty tree. It was never logged here. It was the v0.1 baseline re-run
+after check_triage.py was aligned, and v0.2 superseded it. Logged now.
+
 ### 2026-09-26 — LLM triage: a level below its own valid citations is raised, not discarded (dev finding; lead, llm-dev)
 **Finding (dev Test 5 rehearsal, `runs/evals/test5_dev_llm_qwen3_14b.json`,
 dev data only):**
