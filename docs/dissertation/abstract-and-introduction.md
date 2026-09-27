@@ -184,18 +184,57 @@ short patient interview, and returns in plain English:
 
 It is framed as a screening aid, not a diagnostic tool.
 
-The research questions are:
+Each research question below names the data set, the measure and the
+comparison used to answer it, so that it can be answered directly from the
+experiments in Chapters 4 and 5.
 
-1. **RQ1.** Can tooth segmentation and caries detection from occlusal
-   photographs provide reliable, tooth-level findings for a screening
-   pathway, and where do they fall short?
-2. **RQ2.** Can an LLM extract patient-reported symptoms from free-text
-   answers accurately, without guessing values the patient did not give?
-3. **RQ3.** Does an architecture in which the LLM proposes an urgency level,
-   while code verifies its citations against a guideline-derived protocol
-   and may only raise the level, avoid under-triage on held-out cases?
-4. **RQ4.** Can an LLM explain the result in plain language without
-   inventing, omitting or contradicting findings?
+**RQ1 — What can the photo show?**
+On a public set of labelled intraoral photographs, how many teeth does
+SegmentAnyTooth identify per occlusal photo? What proportion of carious
+photos does a per-tooth YOLOv8 caries detector flag at confidence
+thresholds of 0.50 and 0.25, and how many healthy photos does it flag
+wrongly?
+- *Data:* Mendeley carious/non-carious photos (n = 4,929, photo-level
+  labels).
+- *Measures:* teeth per photo (median); sensitivity and false-positive rate
+  at each threshold.
+
+**RQ2 — Can the model capture what the photo cannot?**
+When a locally run LLM extracts symptoms from patients' free-text answers,
+and each value must be backed by a verbatim quote checked in code:
+- what proportion of symptom fields does it extract correctly?
+- how often does it fill in a field the patient never answered?
+- *Data:* three blind sets of scripted dialogues (19, 20 and 24 dialogues;
+  5 fields each), not seen during development.
+- *Measures:* field-level accuracy with 95% CI; number of guessed values.
+
+**RQ3 — Who should decide urgency?** *(main question)*
+On held-out vignettes with guideline-derived answer keys, how often does
+each of the following assign a lower urgency level than the key
+(under-triage)?
+- the final, code-guarded result;
+- the LLM's own proposal;
+- a rules-only baseline.
+- *Data:* 200 held-out triage vignettes, written before the system was
+  tested, and scored once.
+- *Measures:* under-triage rate with 95% CI; weighted κ against the keys.
+- *Success criterion, fixed in advance:* 0 under-triage and κ ≥ 0.8 for the
+  final result.
+
+**RQ4 — Can the result be explained safely?**
+When the LLM explains the result in plain English, how often does the
+explanation do any of the following?
+- name a tooth that is not in the findings;
+- leave out a flagged tooth;
+- contradict or misstate the urgency level.
+- *Data:* 60 generated cases and 8 hand-written cases.
+- *Measures:* count of each error type, checked in code.
+
+**Scope.** These questions measure agreement with the SDCEP guideline as
+encoded in the project's protocol, and faithfulness to the system's own
+findings. They do not ask whether the system is clinically correct for real
+patients. Answering that would need dentist labels and real patient
+photographs, which are outside the scope of this dissertation (Chapter 6).
 
 ### 1.7 Contributions
 
