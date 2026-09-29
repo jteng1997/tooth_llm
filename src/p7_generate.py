@@ -288,8 +288,47 @@ def build_prompt(key: dict, kind: str, rewrites: dict) -> dict:
                                  "script": {"type": "object", "additionalProperties": False,
                                             "required": questions,
                                             "properties": {q: {"type": "string"} for q in questions}}}}
+    days = key["symptoms"].get("duration_days") if reached else None
+    triggers = key["symptoms"].get("pain_triggers") if reached else None
     return {"user": "\n".join(lines), "schema": schema, "verbatim": verbatim,
-            "reached": reached, "questions": questions, "style": style}
+            "reached": reached, "questions": questions, "style": style,
+            "duration": None if days is None else duration_phrase(days),
+            "triggers_known": bool(triggers) and "unknown" not in triggers}
+
+
+# research-pm, 2026-09-29 (V106): with a known trigger the text must not say the
+# patient does not know what sets the pain off (TRIGGER lines); model B then
+# adds 'unknown'.
+UNSURE_TRIGGER = re.compile(
+    r"\b(?:not sure|unsure|(?:don't|do not|dont) know|no idea|(?:can't|cant|cannot) (?:tell|say))\b"
+    r"[^.!?]{0,15}?\b(?:why|what (?:sets|causes|triggers|starts|brings|makes))", re.I)
+
+
+NUMBER_WORDS = {1: ("a", "an", "one", "1"), 2: ("two", "2"), 3: ("three", "3"), 4: ("four", "4"),
+                5: ("five", "5"), 10: ("ten", "10")}
+
+
+def duration_named(text: str, phrase: str) -> bool:
+    """Does the text state the quantity of the fixed duration phrase (§3.3)?
+    The same number, as a digit or a word, then the same unit: "three weeks"
+    or "3 weeks" for "three weeks", "10 days" for "about ten days", "one
+    month" for "about a month". A vague amount ("a couple of weeks", "a
+    while") does not count. research-pm, 2026-09-29: V104 wrote "a couple of
+    weeks" for "two weeks", which model B could not read as 14."""
+    low = " ".join(text.lower().split())
+    if phrase == "since yesterday":
+        return "yesterday" in low
+    words = phrase.split()
+    unit = words[-1].rstrip("s")                          # day, week, month
+    number = words[-2]
+    n = next((k for k, forms in NUMBER_WORDS.items() if number in forms), None)
+    if n is None:
+        raise ValueError(f"duration phrase {phrase!r} has no number")
+    amount = "|".join(re.escape(f) for f in NUMBER_WORDS[n])
+    pattern = rf"\b(?:{amount})\s+(?:whole\s+|full\s+)?{unit}s?\b"
+    if n == 1:
+        pattern += rf"|\bfor\s+{unit}\b"                  # non-native: "for month"
+    return re.search(pattern, low) is not None
 
 
 def append_verbatim(reply: dict, verbatim: list) -> dict:
@@ -425,6 +464,10 @@ def check_reply(reply: dict, prompt: dict, kind: str, checker: Checker) -> list:
     missing = [v for v in prompt["verbatim"] if v not in where]
     if missing:
         failures.append("VERBATIM line not included exactly")
+    if prompt.get("duration") and not duration_named(reply_text(reply), prompt["duration"]):
+        failures.append(f"duration: the fixed phrase {prompt['duration']!r} is not in the text")
+    if prompt.get("triggers_known") and UNSURE_TRIGGER.search(reply_text(reply)):
+        failures.append("triggers: says they don't know what sets the pain off, but the key names it")
     return failures
 
 
@@ -739,6 +782,19 @@ def case_seed(kind: str, index: int, p: int = 0, used: int = 0) -> int:
     return SEEDS[kind] + CASE_SEED_STRIDE * (index + 1) + PARAPHRASE_SEED_STEP * p + used
 
 
+def file_order(saved: list, keys: list, seed: int) -> list:
+    """The run order of an existing output file: its saved order, then any key
+    added since, in run_order() order. The saved part never moves, so a key
+    added later (dev v0.3, 2026-09-29) takes a new seed block at the end
+    instead of reshuffling every index. A saved id no longer in the keys is
+    refused."""
+    ids = {k["id"] for k in keys}
+    gone = [i for i in saved if i not in ids]
+    if gone:
+        raise ValueError(f"{len(gone)} ids in the file's run order are no longer keys: {gone}")
+    return list(saved) + [i for i in run_order(keys, seed) if i not in set(saved)]
+
+
 def seed_index(case: dict, cid: str, order: list) -> int:
     """The case's scheme-2 index: the one it was first given, else its place
     in the full run order. Stored, so a later change of order cannot move it."""
@@ -814,6 +870,19 @@ def generate(kind: str, dry_run: bool = False, limit: int = None, key_change_ack
     if refusal:
         print(f"REFUSED: {refusal}")
         return 1
+    if out["cases"]:
+        # resuming: the file's own order stays, keys added since go at the end
+        try:
+            full_order = file_order(out["order"], keys, seed_base)
+        except ValueError as exc:
+            print(f"REFUSED: {exc}")
+            return 1
+        order = [i for i in full_order if i in set(order)]      # this run's ids, file order
+        added = [i for i in order if i not in out["order"]]
+        if added:
+            print(f"{len(added)} keys added since this file was started go at the end of its run "
+                  f"order: {added}")
+            out["order"] = out["order"] + added
     out.setdefault("harness_2026_09_26", harness_note())
     accepted_by_archetype = {}
     for i, case in out["cases"].items():
@@ -826,7 +895,7 @@ def generate(kind: str, dry_run: bool = False, limit: int = None, key_change_ack
             continue
         key, prompt = by_id[cid], prompts[cid]
         others = [(f"near-duplicate of {o}", t) for o, t in accepted_by_archetype.get(key["archetype"], [])]
-        index = full_order.index(cid)
+        index = out["order"].index(cid)      # its place in the file's own order: never moves
         case = generate_one(call, prompt, template(kind), checker, case_seed(kind, index), others)
         case.update(style=key["style"], reached_chat=prompt["reached"], seed_scheme=2,
                     seed_index=index)
@@ -960,9 +1029,12 @@ def regenerate(kind: str, ids_file: str, key_change_ack: str = None) -> int:
         return 1
     extracted = json.loads(ext_path.read_text(encoding="utf-8")) if ext_path.exists() else {"cases": {}}
     think = gen["think_sent"]
-    full_order = run_order(keys, SEEDS[kind])
-    if gen.get("order") and gen["order"] != full_order[:len(gen["order"])]:
-        print("REFUSED: the file's run order is not the keys' run order; seed blocks would move")
+    # The file's own saved order is the seed-block authority; keys added since
+    # it was started sit after it (file_order), so no block moves.
+    try:
+        full_order = file_order(gen.get("order") or [], keys, SEEDS[kind])
+    except ValueError as exc:
+        print(f"REFUSED: {exc}")
         return 1
     call = lambda messages, schema, seed: ollama(GENERATOR, messages, schema, TEMPERATURE, seed, think)  # noqa: E731
     result = regenerate_cases(gen, extracted, ids, by_id, prompts, checker, call, kind, full_order,

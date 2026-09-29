@@ -145,6 +145,12 @@ HEDGE = re.compile(
     r"|(?:do ?n'?t|do not|can'?t|cannot|could ?n'?t|could not) (?:really |honestly )?"
     r"(?:know|remember|recall|say|tell|describe|point|put|pin)"
     r"|hard to (?:say|tell|describe|pin))\b")
+# Lead's ruling, 2026-09-26 (provisional; dentist confirms, Form C C12): "I
+# don't know what to take for it" says nothing was taken, so it is an answer
+# ('not_tried'), not a hedge. Only this phrase is lifted, only for that value;
+# any other hedge in the quote ("not sure if it made a difference") still nulls.
+NOT_TRIED_PHRASE = re.compile(
+    r"\b(?:do ?n'?t|do not|have ?n'?t|have not) (?:really )?known? what (?:to )?(?:take|use)\b")
 
 # Each pain_triggers item must be named in the patient's own message.
 TRIGGER_CUES = {
@@ -304,7 +310,10 @@ def verify(field: str, value, quote: str, sources: list, own_question=None,
                                            own_is_yes_no) else None
     said = " ".join(_plain(text) for _, text in sources)
     in_reply = own_question is None or any(qid == own_question for qid, _ in sources)
-    hedged = bool(HEDGE.search(_plain(quote)))
+    plain_quote = _plain(quote)
+    if field == "pain_relief_effect" and value == "not_tried":
+        plain_quote = NOT_TRIED_PHRASE.sub(" ", plain_quote)
+    hedged = bool(HEDGE.search(plain_quote))
 
     if field == "pain_triggers":
         kept = [item for item in value
@@ -337,6 +346,11 @@ EXTRACTION_INSTRUCTION = (
     "say' when asked what sets it off is itself an answer — ['unknown'], not null.\n"
     "- pain_relief_effect: 'helped' or 'not_helped' if they took something; "
     "'not_tried' if they say they have not taken anything.\n"
+    # Lead's ruling, 2026-09-26 (provisional; dentist confirms, Form C C12).
+    "  'I don't know what to take for it' or 'I haven't known what to use for it' "
+    "means nothing was taken: 'not_tried'. If they took something but are not sure "
+    "whether it made a difference, pain_relief_effect is null: never guess 'helped' "
+    "or 'not_helped'.\n"
     # Severity definitions: the user's, 2026-09-26. There is deliberately no
     # code check on 'severe' in verify(): two independent phrase sets
     # (llm/eval/severity_phrases*.json) showed pattern checks dropping real

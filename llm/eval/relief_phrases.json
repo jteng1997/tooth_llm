@@ -1,0 +1,12 @@
+[
+  {"id": "RP01", "expected": "not_tried", "context": "Q10", "style": "plain", "text": "I don't know what to take for it.", "tuned": true, "note": "lead's provisional ruling 2026-09-26 (Form C C12), dev V005/V031 wording; quoted in the extraction instruction"},
+  {"id": "RP02", "expected": null, "context": "Q10", "style": "plain", "text": "I took some painkillers but I'm not really sure if it made a difference.", "tuned": true, "note": "lead's provisional ruling 2026-09-26 (Form C C12), dev V017 wording: took something, effect unclear -> unanswered (U10)"},
+  {"id": "RP03", "expected": "not_tried", "context": "Q10", "style": "vague", "text": "No idea what I'm meant to take for a toothache, to be honest.", "tuned": false, "note": "same ruling as RP01, fresh wording (qa-engineer 2026-09-29)"},
+  {"id": "RP04", "expected": "not_tried", "context": "Q10", "style": "non_native", "text": "I not know which medicine is good for this, so nothing yet.", "tuned": false, "note": "same ruling as RP01, fresh wording (qa-engineer 2026-09-29)"},
+  {"id": "RP05", "expected": null, "context": "Q10", "style": "plain", "text": "I had a couple of tablets yesterday, hard to say if they did much.", "tuned": false, "note": "same ruling as RP02, fresh wording (qa-engineer 2026-09-29)"},
+  {"id": "RP06", "expected": null, "context": "Q10", "style": "terse", "text": "took something. not sure it helped", "tuned": false, "note": "same ruling as RP02, fresh wording (qa-engineer 2026-09-29)"},
+  {"id": "RP07", "expected": "helped", "context": "Q10", "style": "plain", "text": "Yes, I took paracetamol and it helped.", "tuned": false, "note": "control: explicit answer"},
+  {"id": "RP08", "expected": "not_helped", "context": "Q10", "style": "plain", "text": "I've had ibuprofen twice today but it did nothing.", "tuned": false, "note": "control: explicit answer"},
+  {"id": "RP09", "expected": "not_tried", "context": "Q10", "style": "plain", "text": "No, I haven't taken anything for it.", "tuned": false, "note": "control: explicit answer"},
+  {"id": "RP10", "expected": null, "context": "Q10", "style": "terse", "text": "I'm not sure.", "tuned": false, "note": "control: no answer (hard rule 7)"}
+]

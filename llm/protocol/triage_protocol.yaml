@@ -256,7 +256,7 @@ criteria:
     kind: structured
     predicate: "pain_present == true AND pain_relief_effect is null"
     statement: "Tooth pain, and it is not known whether pain relief has helped"
-    source: "USER-2026-09-26 (the user delegated 'the one closest to SDCEP'; ruled by the lead; provisional). SDCEP-2026 Pain pathway flowchart (re-read 2026-09-26): both Non-urgent exits need a known answer ('Has analgesic been taken?' No, or 'Has analgesic controlled the pain?' Yes); the pathway has no branch for an unknown answer, so URGENT here is the project's conservative reading, not SDCEP wording. Hard rule 7: an unanswered question is never reassuring. dentist's call (Form C, C12)."
+    source: "USER-2026-09-26 (the user delegated 'the one closest to SDCEP'; ruled by the lead; provisional). SDCEP-2026 Pain pathway flowchart (re-read 2026-09-26): both Non-urgent exits need a known answer ('Has analgesic been taken?' No, or 'Has analgesic controlled the pain?' Yes); the pathway has no branch for an unknown answer, so URGENT here is the project's conservative reading, not SDCEP wording. Project rule: an unanswered question is never treated as reassuring (user decision 2026-09-26; dentist's call pending, Form C, C12)."
 
   # --- SOON: within 7 days --------------------------------------------
   - id: S1

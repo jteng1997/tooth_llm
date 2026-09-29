@@ -529,6 +529,36 @@ class IsNullCriterion(unittest.TestCase):
         self.assertIn("'pain_relief_effect' is unanswered", stub.calls[1]["messages"][-1]["content"])
         self.assertEqual([r["criterion_id"] for r in a["reasons"]], ["U7"])
 
+    # qa 2026-09-29: check_proposal on its own, field by field
+    VISUAL = {"images_usable": True, "flagged_teeth": [], "unexpected_missing_teeth": []}
+
+    def check(self, evidence_fields, symptoms):
+        proposal = {"criteria_met": [{"criterion_id": "U7", "evidence": [
+                        {"source": "symptoms", "field": f, "quote": None} for f in evidence_fields]}],
+                    "level": "URGENT", "uncertain": False}
+        return triage.check_proposal(proposal, self.protocol, symptoms, self.VISUAL, [])
+
+    def test_a_null_the_criterion_does_not_test_with_is_null_is_refused(self):
+        # U7 tests pain_relief_effect with `is null`, not pain_severity
+        errors, _, implied = self.check(["pain_relief_effect", "pain_severity"],
+                                        {**self.PAIN_NO_RELIEF, "pain_severity": None})
+        self.assertEqual(errors, ["U7: symptom 'pain_severity' is unanswered, so it is not evidence"])
+        self.assertIsNone(implied)
+
+    def test_a_field_tested_with_equals_in_the_same_criterion_stays_no_evidence(self):
+        # U7 tests pain_present == true: a blank there is not evidence, and U7 does not hold
+        errors, _, _ = self.check(["pain_present", "pain_relief_effect"],
+                                  {"pain_present": None, "pain_relief_effect": None})
+        self.assertIn("U7: symptom 'pain_present' is unanswered, so it is not evidence", errors)
+        self.assertTrue(any("U7: its condition does not hold" in e for e in errors))
+
+    def test_a_missing_field_is_the_same_as_null(self):
+        errors, reasons, implied = self.check(["pain_present", "pain_relief_effect"],
+                                              {"pain_present": True})
+        self.assertEqual((errors, implied), ([], "URGENT"))
+        self.assertIn({"source": "symptoms", "field": "pain_relief_effect", "value": None},
+                      reasons[0]["evidence"])
+
     def test_missed_is_fed_back_then_raised_by_the_protocol_check(self):
         low = {"criteria_met": [cite("N1", "pain_present")], "level": "SOON", "uncertain": False}
         stub = Stub(low, low)

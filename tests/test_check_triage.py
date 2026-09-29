@@ -12,6 +12,7 @@ spec's own dry-run numbers (§3a).
 import copy
 import json
 import random
+import re
 import sys
 import tempfile
 import unittest
@@ -25,7 +26,7 @@ import check_triage as ct  # noqa: E402
 
 SANITY_RAW = json.loads((REPO_ROOT / "llm" / "eval" / "triage_sanity_cases.json").read_text(encoding="utf-8"))
 SANITY = ct.for_protocol(SANITY_RAW, "0.3")       # the primary keys
-SANITY_V02 = ct.for_protocol(SANITY_RAW, "0.2")   # the live protocol until the v0.3 switch
+SANITY_V02 = ct.for_protocol(SANITY_RAW, "0.2")   # the keys under the frozen v0.2 protocol
 DRAFT_V03 = REPO_ROOT / "docs" / "plans" / "protocol-v0.3" / "triage_protocol.yaml"
 HELDOUT = REPO_ROOT / "labels" / "heldout" / "triage_heldout_keys.json"
 
@@ -321,8 +322,16 @@ class SanityRun(unittest.TestCase):
                                       need_words=False)
         self.assertEqual(errors, [])
 
+    def test_v02_keys_agree_with_the_frozen_v02(self):
+        protocol, err = ct.load_protocol(ct.HELDOUT_PROTOCOL_FILE)
+        if err:
+            self.skipTest(f"v0.2 protocol does not load: {err}")
+        self.assertEqual(protocol.version, "0.2")
+        errors, _ = ct.validate_cases(SANITY_V02, protocol, need_words=False)
+        self.assertEqual(errors, [])
+
     def test_v03_keys_agree_with_the_v03_draft(self):
-        # Until the switch the live file is v0.2; the draft is what the v0.3 keys target.
+        # The research-pm draft the live file was switched to (same bytes on 2026-09-29).
         if not DRAFT_V03.exists():
             self.skipTest("no v0.3 draft (switched live, or moved)")
         import protocol as protocol_mod
@@ -451,19 +460,34 @@ class CaveatVersion(unittest.TestCase):
     def test_no_protocol_says_so(self):
         _, text = self.report(None)
         self.assertIn("protocol (version unknown: protocol not loaded)", text)
-        self.assertEqual(ct.caveats(None)[1:], list(ct.CAVEATS[1:]))    # the others unchanged
+        self.assertEqual(ct.caveats(None)[1], ct.CAVEATS[1])    # no version in it: unchanged
+        self.assertFalse(any("{version}" in c for c in ct.caveats(None)))
 
 
 class Caveats(unittest.TestCase):
-    def test_caveat_matches_the_live_protocol(self):
-        protocol, err = ct.load_protocol()
+    """Caveat 3 names the loaded protocol's version (it said v0.2 after v0.3
+    went live) and is only true while that protocol has no narrative criterion."""
+
+    def check(self, path):
+        protocol, err = ct.load_protocol(path)
         if err:
             self.skipTest(f"protocol does not load: {err}")
         narrative = [c for c in protocol.criteria if c.kind == "narrative"]
         if narrative:
             self.skipTest("protocol has narrative criteria again; caveat 3 needs rewording")
         self.assertNotIn("narrative", ct.CAVEATS[2])
-        self.assertIn(f"v{protocol.version}", ct.CAVEATS[2])
+        self.assertIn(f"protocol v{protocol.version} is structured", ct.caveats(protocol.version)[2])
+        return protocol
+
+    def test_caveat_matches_the_live_protocol(self):
+        self.check(ct.PROTOCOL_FILE)
+
+    def test_caveat_matches_the_pinned_heldout_protocol(self):
+        self.assertEqual(self.check(ct.HELDOUT_PROTOCOL_FILE).version, ct.HELDOUT_PROTOCOL_VERSION)
+
+    def test_no_version_is_hard_coded(self):
+        for c in ct.CAVEATS:
+            self.assertIsNone(re.search(r"\bv\d+\.\d+", c), c)
 
 
 class ReportFromSaved(unittest.TestCase):
@@ -703,16 +727,33 @@ class HeldoutDryRun(unittest.TestCase):
     200 held-out keys (rules.py and the protocol check only, no model).
     Protocol v0.2 (spec §9.7): rules.py is unchanged at 51/200; the protocol
     check now sees the broken-filling and pus rows, so its 8 v0.1 misses
-    (all S3/U8) are gone and it agrees on every key."""
+    (all S3/U8) are gone and it agrees on every key. The keys are frozen on
+    v0.2, so the dry run uses the pinned v0.2 file whatever the live one is."""
 
     @classmethod
     def setUpClass(cls):
-        protocol, err = ct.load_protocol()
+        spec = ct.load_cases(HELDOUT)
+        protocol, path, err = ct.load_protocol_for(spec["split"])
         if err:
             raise unittest.SkipTest(f"protocol does not load: {err}")
-        spec = ct.load_cases(HELDOUT)
+        cls.spec, cls.protocol, cls.path = spec, protocol, path
         cls.errors, _ = ct.validate_cases(spec, protocol, need_words=False)
         cls.summary = ct.evaluate(spec, "rules", protocol=protocol, verbose=False)
+
+    def test_pinned_to_v02(self):
+        self.assertEqual(self.spec["split"], "heldout")
+        self.assertEqual(self.path, ct.HELDOUT_PROTOCOL_FILE)
+        self.assertEqual((self.protocol.version, self.spec["protocol_version"]), ("0.2", "0.2"))
+        self.assertEqual(self.summary["protocol_version"], "0.2")
+
+    def test_the_pin_matters(self):
+        # The check can fail: the frozen v0.2 keys against the live protocol,
+        # once it is past v0.2, are refused (counts only: held-out ids stay out).
+        live, err = ct.load_protocol()
+        if err or live.version == ct.HELDOUT_PROTOCOL_VERSION:
+            self.skipTest("live protocol is v0.2 or does not load")
+        errors, _ = ct.validate_cases(self.spec, live, need_words=False)
+        self.assertGreater(len(errors), 0)
 
     def test_keys_agree_with_protocol(self):
         self.assertEqual(self.errors, [])
@@ -740,6 +781,50 @@ class HeldoutDryRun(unittest.TestCase):
     def test_mcnemar(self):
         c = self.summary["comparisons"]["protocol_check_vs_rules"]
         self.assertEqual((c["n_common"], c["only_first_under"], c["only_second_under"]), (200, 0, 51))
+
+
+class HeldoutPin(unittest.TestCase):
+    """Held-out is scored against the pinned v0.2 file, dev against the live
+    one; the held-out configuration still hashes the v0.2 protocol."""
+
+    def test_file_for_split(self):
+        self.assertEqual(ct.protocol_file_for("heldout"), ct.HELDOUT_PROTOCOL_FILE)
+        self.assertEqual(ct.protocol_file_for("dev"), ct.PROTOCOL_FILE)
+        self.assertNotEqual(ct.HELDOUT_PROTOCOL_FILE, ct.PROTOCOL_FILE)
+
+    def test_heldout_loads_v02_and_dev_the_live_file(self):
+        protocol, path, err = ct.load_protocol_for("heldout")
+        self.assertIsNone(err)
+        self.assertEqual((protocol.version, path), ("0.2", ct.HELDOUT_PROTOCOL_FILE))
+        self.assertTrue({"U5", "U6"} <= {c.id for c in protocol.criteria})
+        live, path, err = ct.load_protocol_for("dev")
+        if err:
+            self.skipTest(f"live protocol does not load: {err}")
+        self.assertEqual(path, ct.PROTOCOL_FILE)
+        self.assertEqual(live.version, ct.load_protocol()[0].version)
+
+    def test_a_pinned_file_of_another_version_is_refused(self):
+        original = ct.HELDOUT_PROTOCOL_FILE
+        ct.HELDOUT_PROTOCOL_FILE = ct.PROTOCOL_FILE    # the live file, not v0.2
+        try:
+            live, _ = ct.load_protocol()
+            if live is None or live.version == ct.HELDOUT_PROTOCOL_VERSION:
+                self.skipTest("live protocol is v0.2 or does not load")
+            protocol, _, err = ct.load_protocol_for("heldout")
+        finally:
+            ct.HELDOUT_PROTOCOL_FILE = original
+        self.assertIsNone(protocol)
+        self.assertIn("expected v0.2", err)
+
+    def test_heldout_configuration_hashes_the_v02_file(self):
+        # sha256 recorded by the 2026-09-26 v0.2 held-out runs (runs/evals/test5_runlog.jsonl)
+        protocol, path, _ = ct.load_protocol_for("heldout")
+        cfg = ct.configuration("rules", None, protocol, path)
+        self.assertEqual(cfg["protocol_sha256"],
+                         "7de38ee9db47bfbcec811a588095627846f2e8624d49b3e0f9d6685c75a073ab")
+        self.assertEqual(cfg["protocol_version"], "0.2")
+        self.assertNotEqual(cfg["fingerprint"],
+                            ct.configuration("rules", None, protocol, ct.PROTOCOL_FILE)["fingerprint"])
 
 
 class RunLog(unittest.TestCase):

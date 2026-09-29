@@ -1,4 +1,5 @@
-"""Build the 100 dev triage keys (research-pm, 2026-09-23; Test 5 spec §9.4).
+"""Build the dev triage keys (research-pm, 2026-09-23; Test 5 spec §9.4;
+rebuilt on protocol v0.3 2026-09-29, docs/plans/protocol-v0.3/README.md §4).
 
     .venv/Scripts/python labels/dev/build_dev_keys.py
 
@@ -8,6 +9,19 @@ by hand, the protocol's own predicates are evaluated on the key, and nothing
 is written if the two disagree. Facts are written fresh for dev; the build
 refuses to write if any fact equals a held-out fact. Patient words come later
 from P7 (qa-engineer).
+
+Three steps:
+1. The 100 v0.2 keys V001-V100 are regenerated from seed 20260924 and checked
+   against the v0.2 protocol they were built on (pinned copy in
+   docs/plans/protocol-v0.2/), exactly as on 2026-09-23.
+2. Each is re-keyed on the live protocol (v0.3). Only key_level and
+   criteria_met may change, plus pain_relief_effect on the two adjudicated
+   keys (V005, V031). The changes must equal the list in the v0.3 README §4,
+   or nothing is written. Everything else in the tracked file (including P7's
+   patient_words) is kept byte-identical.
+3. Six keys V101-V106 are added from a separate seed (20260929), so the
+   first 100 keep their random stream: relief not tried -> SOON (4) and
+   relief unanswered -> URGENT (2), each with lingering or night pain.
 """
 import json
 import random
@@ -22,10 +36,15 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 from explain import fdi_label  # noqa: E402
+import protocol as live_protocol  # noqa: E402
 
-PROTOCOL = yaml.safe_load((ROOT / "llm/protocol/triage_protocol.yaml").read_text(encoding="utf-8"))
+LIVE_YAML = yaml.safe_load((ROOT / "llm/protocol/triage_protocol.yaml").read_text(encoding="utf-8"))
+V02_YAML = yaml.safe_load((ROOT / "docs/plans/protocol-v0.2/triage_protocol.yaml").read_text(encoding="utf-8"))
+PROTOCOL = V02_YAML   # step 1 checks the archetypes against the protocol they were written for
+KEYS_FILE = HERE / "triage_dev_keys.json"
 HELDOUT = [ROOT / "labels/heldout/triage_heldout_keys.json", ROOT / "labels/heldout/e2e_keys.json"]
 SEED = 20260924
+SEED_V03 = 20260929
 RANK = {"EMERGENCY": 3, "URGENT": 2, "SOON": 1, "ROUTINE": 0}
 RED_FLAGS = ["difficulty_swallowing_or_breathing", "chest_pain_or_breathless", "swelling",
              "fever", "systemically_unwell", "recent_trauma", "bleeding_uncontrolled",
@@ -44,6 +63,9 @@ DAYS = [1, 2, 3, 4, 5, 7, 10, 14, 21, 30]
 
 def _atom(expr, ctx):
     expr = expr.strip()
+    m = re.fullmatch(r"(\w+) is null", expr)
+    if m:
+        return ctx.get(m.group(1)) is None
     m = re.fullmatch(r"(\w+) non-empty", expr)
     if m:
         return bool(ctx.get(m.group(1)))
@@ -65,17 +87,18 @@ def _pred(expr, ctx):
     return all(_atom(a, ctx) for a in expr.split(" AND "))
 
 
-def protocol_level(symptoms, vis, narrative):
+def protocol_level(symptoms, vis, narrative, protocol=None):
+    protocol = protocol or PROTOCOL
     ctx = dict(symptoms)
     ctx.update(images_usable=vis["images_usable"],
                flagged_teeth=[t["fdi"] for t in vis["flagged_teeth"]],
                unexpected_missing_teeth=[t["fdi"] for t in vis["unexpected_missing_teeth"]])
-    met = [c["id"] for c in PROTOCOL["criteria"]
+    met = [c["id"] for c in protocol["criteria"]
            if (c["kind"] == "structured" and _pred(c["predicate"], ctx))
            or (c["kind"] == "narrative" and c["id"] in narrative)]
     if not met:
         return "ROUTINE", []
-    levels = {c["id"]: c["level"] for c in PROTOCOL["criteria"]}
+    levels = {c["id"]: c["level"] for c in protocol["criteria"]}
     return max((levels[i] for i in met), key=RANK.get), met
 
 
@@ -355,6 +378,171 @@ def jaccard(a, b):
     return len(ta & tb) / len(ta | tb) if ta | tb else 0.0
 
 
+def check_facts(name, facts, heldout_facts):
+    for fact in facts:
+        close = max(heldout_facts, key=lambda h: jaccard(fact, h))
+        if jaccard(fact, close) >= NEAR_COPY:
+            raise SystemExit(f"{name}: {fact!r} is a near-copy of a held-out fact "
+                             f"(Jaccard {jaccard(fact, close):.2f})")
+
+
+def build_v02(heldout_facts):
+    """Step 1: the 100 keys of 2026-09-23, checked on protocol v0.2."""
+    keys = []
+    for name, level, count, boundary, make in A:
+        for _ in range(count):
+            symptoms, vis, narrative, facts, route = make()
+            got, met = protocol_level(symptoms, vis, narrative)
+            if got != level:
+                raise SystemExit(f"{name}: intended {level}, protocol gives {got} ({met})")
+            check_facts(name, facts, heldout_facts)
+            keys.append({"archetype": name, "key_level": level, "emergency_route": route,
+                         "criteria_met": met, "boundary": boundary, "style": pick(STYLES),
+                         "facts": facts, "symptoms": {"schema_version": "1.2", **symptoms},
+                         "visual_summary": vis})
+    rng.shuffle(keys)
+    for i, k in enumerate(keys, 1):
+        k["id"] = f"V{i:03d}"
+    return keys
+
+
+# --- Step 2: v0.3 re-key ---------------------------------------------------
+# User decisions 3 and 4 (2026-09-26): U5/U6 retired, so lingering and night
+# pain with relief that helped is SOON; relief unanswered is URGENT (U10).
+V03_ARCHETYPE_LEVEL = {"u_lingering": "SOON", "u_night_spontaneous": "SOON",
+                       "s_pain_missing_answers": "URGENT"}
+# The lead's provisional ruling (Form C, C12; decisions 2026-09-26): "I don't
+# know what to take for it" is relief not tried. V017 ("not really sure if it
+# made a difference") stays unanswered -> URGENT (U10).
+ADJUDICATED = {"V005": {"pain_relief_effect": "not_tried"},
+               "V031": {"pain_relief_effect": "not_tried"}}
+ADJUDICATED_LEVEL = {"V005": "SOON", "V031": "SOON"}
+# README §4, computed 2026-09-26 before the switch. The rebuild must match it.
+EXPECTED_LEVEL_CHANGES = {"V021": ("URGENT", "SOON"), "V048": ("URGENT", "SOON"),
+                          "V072": ("URGENT", "SOON"), "V077": ("URGENT", "SOON"),
+                          "V081": ("URGENT", "SOON"), "V087": ("URGENT", "SOON"),
+                          "V017": ("SOON", "URGENT")}
+EXPECTED_U10_ONLY = {"V004", "V014", "V019", "V022", "V028", "V030", "V035", "V037", "V040",
+                     "V047", "V052", "V053", "V054", "V055", "V069", "V075", "V076", "V084",
+                     "V095", "V096"}
+MAY_CHANGE = {"key_level", "criteria_met", "symptoms"}
+
+
+def product_check(key):
+    """The same key through src/protocol.py, the evaluator the product uses."""
+    proto = live_protocol.build(LIVE_YAML)
+    met = [c.id for c in proto.met(key["symptoms"], key["visual_summary"])]
+    return proto.protocol_level(key["symptoms"], key["visual_summary"]), met
+
+
+def rekey_v03(base, tracked):
+    """Re-key each tracked key on the live protocol. Returns (keys, changes)."""
+    by_id = {k["id"]: k for k in tracked}
+    if sorted(by_id) != [k["id"] for k in base]:
+        raise SystemExit("tracked file does not hold exactly V001-V100")
+    out, changes = [], []
+    for b in base:
+        t = by_id[b["id"]]
+        cid = b["id"]
+        v03 = json.loads(json.dumps(b))
+        v03["symptoms"].update(ADJUDICATED.get(cid, {}))
+        intended = ADJUDICATED_LEVEL.get(cid) or V03_ARCHETYPE_LEVEL.get(b["archetype"], b["key_level"])
+        got, met = protocol_level(v03["symptoms"], v03["visual_summary"], [], LIVE_YAML)
+        if got != intended:
+            raise SystemExit(f"{cid} ({b['archetype']}): intended {intended}, "
+                             f"protocol v{LIVE_YAML['protocol_version']} gives {got} ({met})")
+        if product_check(v03) != (got, met):
+            raise SystemExit(f"{cid}: src/protocol.py gives {product_check(v03)}, builder {got} {met}")
+        v03["key_level"], v03["criteria_met"] = got, met
+        # The tracked key must be the v0.2 generation (first rebuild) or this
+        # v0.3 re-key (a re-run); anything else was edited by hand.
+        gen = {f: t[f] for f in b if f != "id"}
+        if gen not in ({f: b[f] for f in b if f != "id"}, {f: v03[f] for f in v03 if f != "id"}):
+            raise SystemExit(f"{cid}: tracked key differs from the seed-{SEED} generation")
+        new = dict(t)   # keeps field order and P7's fields (patient_words, p7)
+        new.update(key_level=got, criteria_met=met, symptoms=v03["symptoms"])
+        diff = sorted(f for f in b if f != "id" and b[f] != v03[f])
+        if not set(diff) <= MAY_CHANGE:
+            raise SystemExit(f"{cid}: re-key changed {diff}")
+        if diff:
+            changes.append((cid, b, v03, diff))
+        out.append(new)
+    level = {c: (b["key_level"], v["key_level"]) for c, b, v, _ in changes
+             if b["key_level"] != v["key_level"]}
+    crit_only = {c for c, b, v, d in changes if d == ["criteria_met"]}
+    if level != EXPECTED_LEVEL_CHANGES:
+        raise SystemExit(f"level changes {level} differ from README §4 {EXPECTED_LEVEL_CHANGES}")
+    if crit_only != EXPECTED_U10_ONLY or any(
+            set(v["criteria_met"]) - set(b["criteria_met"]) != {"U10"}
+            for c, b, v, _ in changes if c in crit_only):
+        raise SystemExit(f"criteria-only changes {sorted(crit_only)} differ from README §4")
+    return out, changes
+
+
+# --- Step 3: six new keys, separate seed -----------------------------------
+rng3 = random.Random(SEED_V03)
+DRINK = {"cold": "cold drinks", "hot": "hot drinks"}
+B = []
+
+
+def s_not_tried_lingering():
+    trig = rng3.choice(["cold", "hot"])
+    s = pain("not_tried", rng3.choice(["mild", "moderate"]), [trig], lingers=True,
+             days=rng3.choice(DAYS))
+    return s, visual(), [], [f"after {DRINK[trig]} the ache stays for a minute or so before it "
+                             "fades; has not taken any painkillers for it"], None
+
+
+def s_not_tried_night():
+    s = pain("not_tried", rng3.choice(["mild", "moderate"]), ["spontaneous"], night=True,
+             days=rng3.choice(DAYS))
+    return s, visual(), [], ["a dull ache comes on by itself and has woken them in the night; "
+                             "has not tried any medicine for it"], None
+
+
+def u_unanswered_lingering():
+    trig = rng3.choice(["cold", "hot"])
+    s = pain(None, "mild", [trig], lingers=True, days=rng3.choice(DAYS))
+    return s, visual(), [], [f"{DRINK[trig]} leave a nagging ache in a back tooth that takes a "
+                             "while to settle"], None
+
+
+def u_unanswered_night():
+    s = pain(None, "moderate", ["spontaneous"], night=True, days=rng3.choice(DAYS))
+    return s, visual(), [], ["a tooth throbs for no reason and it woke them up last night"], None
+
+
+B += [("s_relief_not_tried_lingering", "SOON", 2, s_not_tried_lingering),
+      ("s_relief_not_tried_night", "SOON", 2, s_not_tried_night),
+      ("u_relief_unanswered_lingering", "URGENT", 1, u_unanswered_lingering),
+      ("u_relief_unanswered_night", "URGENT", 1, u_unanswered_night)]
+
+
+def build_new(heldout_facts, dev_facts):
+    keys = []
+    for name, level, count, make in B:
+        for _ in range(count):
+            symptoms, vis, narrative, facts, route = make()
+            got, met = protocol_level(symptoms, vis, narrative, LIVE_YAML)
+            if got != level:
+                raise SystemExit(f"{name}: intended {level}, protocol "
+                                 f"v{LIVE_YAML['protocol_version']} gives {got} ({met})")
+            check_facts(name, facts, heldout_facts)
+            if any(f in dev_facts for f in facts):
+                raise SystemExit(f"{name}: fact repeats an existing dev fact")
+            key = {"archetype": name, "key_level": level, "emergency_route": route,
+                   "criteria_met": met, "boundary": True, "style": rng3.choice(STYLES),
+                   "facts": facts, "symptoms": {"schema_version": "1.2", **symptoms},
+                   "visual_summary": vis}
+            if product_check(key) != (got, met):
+                raise SystemExit(f"{name}: src/protocol.py gives {product_check(key)}, builder {got} {met}")
+            keys.append(key)
+    rng3.shuffle(keys)
+    for i, k in enumerate(keys, 101):
+        k["id"] = f"V{i:03d}"
+    return keys
+
+
 def main():
     heldout_facts = set()
     for p in HELDOUT:
@@ -363,34 +551,47 @@ def main():
                 heldout_facts |= set(k["facts"])
     if not heldout_facts:
         raise SystemExit("held-out keys not found; cannot check that no fact is copied")
+    if LIVE_YAML["protocol_version"] != "0.3":
+        raise SystemExit(f"live protocol is v{LIVE_YAML['protocol_version']}; this build is for v0.3")
 
-    keys = []
-    for name, level, count, boundary, make in A:
-        for _ in range(count):
-            symptoms, vis, narrative, facts, route = make()
-            got, met = protocol_level(symptoms, vis, narrative)
-            if got != level:
-                raise SystemExit(f"{name}: intended {level}, protocol gives {got} ({met})")
-            for fact in facts:
-                close = max(heldout_facts, key=lambda h: jaccard(fact, h))
-                if jaccard(fact, close) >= NEAR_COPY:
-                    raise SystemExit(f"{name}: {fact!r} is a near-copy of a held-out fact "
-                                     f"(Jaccard {jaccard(fact, close):.2f})")
-            keys.append({"archetype": name, "key_level": level, "emergency_route": route,
-                         "criteria_met": met, "boundary": boundary, "style": pick(STYLES),
-                         "facts": facts, "symptoms": {"schema_version": "1.2", **symptoms},
-                         "visual_summary": vis})
-    rng.shuffle(keys)
-    for i, k in enumerate(keys, 1):
-        k["id"] = f"V{i:03d}"
-    meta = {"protocol_version": PROTOCOL["protocol_version"], "author": "research-pm",
-            "date": "2026-09-23", "split": "dev",
-            "status": "DEV: anyone may read and tune on it; never mixed with held-out",
-            "key_basis": "SDCEP as encoded in llm/protocol/triage_protocol.yaml "
-                         f"v{PROTOCOL['protocol_version']} (DRAFT-UNREVIEWED), incl. user decisions 2026-09-22",
-            "seed": SEED}
-    (HERE / "triage_dev_keys.json").write_text(
-        json.dumps({"_meta": meta, "keys": keys}, indent=1, ensure_ascii=False), encoding="utf-8")
+    base = build_v02(heldout_facts)
+    tracked = json.loads(KEYS_FILE.read_text(encoding="utf-8"))
+    old = [k for k in tracked["keys"] if int(k["id"][1:]) <= 100]
+    added = {k["id"]: k for k in tracked["keys"] if int(k["id"][1:]) > 100}
+    keys, changes = rekey_v03(base, old)
+    new = build_new(heldout_facts, {f for k in base for f in k["facts"]})
+    for k in new:   # a re-run keeps P7 text already written for V101-V106
+        prev = added.get(k["id"])
+        if prev:
+            if {f: prev[f] for f in k} != k:
+                raise SystemExit(f"{k['id']}: tracked key differs from the seed-{SEED_V03} generation")
+            k.update(prev)
+    keys += new
+
+    meta = dict(tracked["_meta"])
+    meta.update(protocol_version=LIVE_YAML["protocol_version"],
+                key_basis="SDCEP as encoded in llm/protocol/triage_protocol.yaml "
+                          f"v{LIVE_YAML['protocol_version']} (DRAFT-UNREVIEWED), incl. user "
+                          "decisions 2026-09-22 and 2026-09-26",
+                rebuilt=("2026-09-29 on protocol v0.3 (docs/plans/protocol-v0.3/README.md §4): "
+                         "V001-V100 keep their v0.2 facts, text and ids; only key_level and "
+                         "criteria_met change, plus pain_relief_effect null -> not_tried on "
+                         "V005 and V031 (lead's provisional ruling, Form C C12; their archetype "
+                         "name is kept). V101-V106 are new, seed 20260929."),
+                seed_v03_additions=SEED_V03)
+    KEYS_FILE.write_bytes(json.dumps({"_meta": meta, "keys": keys}, indent=1,
+                                     ensure_ascii=False).encode("utf-8"))
+
+    print(f"v0.3 re-key: {len(changes)}/100 keys change")
+    for cid, b, v, diff in changes:
+        extra = (f"; pain_relief_effect {b['symptoms']['pain_relief_effect']} -> "
+                 f"{v['symptoms']['pain_relief_effect']}") if "symptoms" in diff else ""
+        print(f"  {cid} {b['archetype']:<24} {b['key_level']:>9} -> {v['key_level']:<9} "
+              f"{b['criteria_met']} -> {v['criteria_met']}{extra}")
+    print("new keys:")
+    for k in new:
+        print(f"  {k['id']} {k['archetype']:<30} {k['key_level']:<7} {k['criteria_met']} "
+              f"relief={k['symptoms']['pain_relief_effect']} style={k['style']}")
     dev_facts = {f for k in keys for f in k["facts"]}
     worst = max(max(jaccard(f, h) for h in heldout_facts) for f in dev_facts)
     print(f"{len(dev_facts)} distinct dev facts vs {len(heldout_facts)} held-out facts: "

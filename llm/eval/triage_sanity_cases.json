@@ -2,7 +2,7 @@
  "schema_version": "1.0",
  "split": "sanity",
  "protocol_version": "0.3",
- "note": "Checker self-test, not a benchmark. Keys follow triage_protocol.yaml v0.3 (the draft in docs/plans/protocol-v0.3/ until llm-dev switches it live); a case whose key differs under v0.2 carries it in key_until[\"0.2\"], and check_triage.for_protocol() picks the key for the loaded protocol. Each rationale states what rules.py returns, worked out by hand. check_triage.py on rules.py must find exactly, under the Test 5 spec §3 RETAKE rule, 25 cases, 24 scored, 1 RETAKE excluded (S012, ROUTINE key), 7 severe and 6 missed EMERGENCY, and: with the v0.3 keys 12 under-triage, 4 over-triage (S007, S010, S021, S022), 8 agree; with the v0.2 keys 11 under-triage, 1 over-triage (S010), 12 agree. A checker that reports otherwise is broken.",
+ "note": "Checker self-test, not a benchmark. Keys follow triage_protocol.yaml v0.3 (live since 2026-09-29); a case whose key differs under v0.2 carries it in key_until[\"0.2\"], and check_triage.for_protocol() picks the key for the loaded protocol. Each rationale states what rules.py returns, worked out by hand. check_triage.py on rules.py must find exactly, under the Test 5 spec §3 RETAKE rule, 25 cases, 24 scored, 1 RETAKE excluded (S012, ROUTINE key), 7 severe and 6 missed EMERGENCY, and: with the v0.3 keys 12 under-triage, 4 over-triage (S007, S010, S021, S022), 8 agree; with the v0.2 keys 11 under-triage, 1 over-triage (S010), 12 agree. A checker that reports otherwise is broken.",
  "cases": [
   {
    "id": "S001",

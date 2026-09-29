@@ -11,7 +11,9 @@ checklist B, then the chat questions it decides to ask, each answered from
 the script; a re-asked question gets the same scripted answer again, and a
 question the script lacks gets "I'm not sure." (logged). Its symptoms, the
 transcript and the photo summary go to triage.assess(), and every system is
-scored against the key with check_triage's scoring.
+scored against the key with check_triage's scoring. Held-out keys are frozen
+on protocol v0.2 and run against that pinned file (check_triage
+HELDOUT_PROTOCOL_FILE), not the live protocol.
 
 The app has no free-text opening before checklist A. --opening drop (default)
 matches production: the opening is not seen. --opening prepend puts it in as
@@ -428,10 +430,23 @@ def main() -> int:
     path = Path(args.keys)
     data = json.loads(path.read_text(encoding="utf-8"))
     keys = data["keys"]
-    protocol, perr = ct.load_protocol()
+    try:
+        split = ct.key_file_split(data.get("_meta", {}), path)
+    except ValueError as exc:
+        print(f"ERROR: {exc}")
+        return 1
+    # held-out: the pinned v0.2 protocol its keys were built on (ct.HELDOUT_PROTOCOL_FILE)
+    protocol, protocol_file, perr = ct.load_protocol_for(split)
     if perr:
         print(f"ERROR: protocol not loaded ({perr})")
         return 1
+    if split == "heldout":
+        meta_version = str(data.get("_meta", {}).get("protocol_version", "?"))
+        if meta_version != ct.HELDOUT_PROTOCOL_VERSION:
+            print(f"ERROR: held-out keys say protocol v{meta_version}; held-out is frozen on "
+                  f"v{ct.HELDOUT_PROTOCOL_VERSION} and never re-keyed")
+            return 1
+        print(f"held-out: run against the pinned protocol v{protocol.version}, not the live file")
     texts = {}
     for k in keys:
         if args.placeholder_text:
@@ -453,12 +468,7 @@ def main() -> int:
         from interview import DEFAULT_MODEL
         model = args.model or DEFAULT_MODEL
         extract_for, triage_llm = (lambda k: None), None
-    try:
-        split = ct.key_file_split(data.get("_meta", {}), path)
-    except ValueError as exc:
-        print(f"ERROR: {exc}")
-        return 1
-    cfg = ct.configuration("llm", model, protocol) if not args.mock else None
+    cfg = ct.configuration("llm", model, protocol, protocol_file) if not args.mock else None
     prior = []
     if split == "heldout" and not args.mock:
         cfg = e2e_configuration(cfg, args.opening)

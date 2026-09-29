@@ -31,7 +31,9 @@ Scoring (spec §3). Levels are ordered EMERGENCY > URGENT > SOON > ROUTINE.
 Systems scored from one run:
   rules           rules.assess() urgency, the shadow baseline    (both modes)
   protocol_check  the level from the protocol's structured criteria: the code
-                  ceiling (spec 3a); protocol v0.2 has no narrative criteria
+                  ceiling (spec 3a); protocols v0.2 and v0.3 have no narrative
+                  criteria. Held-out files are scored against the pinned v0.2
+                  protocol (HELDOUT_PROTOCOL_FILE), dev files against the live one
   llm_proposed    triage llm_proposed, the model's own level before any code
                   override (llm mode; None when the floor skipped the model or
                   the output was invalid twice)
@@ -69,6 +71,11 @@ SCHEMA = REPO_ROOT / "llm" / "eval" / "triage_vignettes.schema.json"
 OUT_DIR = REPO_ROOT / "runs" / "evals"
 RUNLOG = OUT_DIR / "test5_runlog.jsonl"
 PROTOCOL_FILE = REPO_ROOT / "llm" / "protocol" / "triage_protocol.yaml"
+# Held-out keys are frozen v0.2 artefacts: they are scored against the v0.2
+# protocol they were built from (as labels/heldout/build_keys.py is), never
+# re-keyed on a later live protocol (docs/plans/protocol-v0.3/README.md §4).
+HELDOUT_PROTOCOL_FILE = REPO_ROOT / "docs" / "plans" / "protocol-v0.2" / "triage_protocol.yaml"
+HELDOUT_PROTOCOL_VERSION = "0.2"
 TRIAGE_PROMPT = REPO_ROOT / "llm" / "prompts" / "system_triage.md"
 RULES_FILE = REPO_ROOT / "llm" / "rules.py"
 
@@ -97,7 +104,7 @@ CAVEATS = (
     "The vignettes assume the photo findings are correct; the detector catches about 29% of "
     "carious photos at the current threshold, so end-to-end accuracy on real patients is not "
     "measured here.",
-    "Every criterion in protocol v0.2 is structured and decided by code, so on triage-level cases "
+    "Every criterion in protocol {version} is structured and decided by code, so on triage-level cases "
     "the final level is right by construction; the informative parts are llm_proposed, the "
     "injection cases and the end-to-end set.",
 )
@@ -571,13 +578,31 @@ def code_ceiling(systems: dict) -> dict:
 
 # --- Running systems -------------------------------------------------------------
 
-def load_protocol():
-    """The real protocol, or (None, error) if it does not load."""
+def load_protocol(path: Path = PROTOCOL_FILE):
+    """The protocol at `path` (default: the live one), or (None, error) if it
+    does not load."""
     try:
         import protocol as protocol_mod
-        return protocol_mod.load(allow_unreviewed=True), None
+        return protocol_mod.load(path, allow_unreviewed=True), None
     except Exception as exc:  # reported, never patched around here
         return None, f"{type(exc).__name__}: {str(exc).splitlines()[-1].strip()}"
+
+
+def protocol_file_for(split: str) -> Path:
+    """The protocol a case file is scored against: the pinned v0.2 file for
+    held-out, the live file for dev."""
+    return HELDOUT_PROTOCOL_FILE if split == "heldout" else PROTOCOL_FILE
+
+
+def load_protocol_for(split: str):
+    """load_protocol() for the split, as (protocol, file, error). Held-out also
+    fails if the pinned file is not the version its keys were built on."""
+    path = protocol_file_for(split)
+    protocol, err = load_protocol(path)
+    if protocol is not None and split == "heldout" and protocol.version != HELDOUT_PROTOCOL_VERSION:
+        protocol, err = None, (f"pinned held-out protocol is v{protocol.version}, "
+                               f"expected v{HELDOUT_PROTOCOL_VERSION}")
+    return protocol, path, err
 
 
 def run_rules(case: dict) -> dict:
@@ -800,13 +825,15 @@ def _sha256(path: Path) -> str:
         return None
 
 
-def configuration(system: str, model: str, protocol) -> dict:
+def configuration(system: str, model: str, protocol, protocol_file: Path = PROTOCOL_FILE) -> dict:
     """What makes a configuration (spec §1): model + prompt + protocol version
     + composition options. Code fixes are recorded (git commit) but do not
-    make a new configuration; re-running after one is a logged re-run."""
+    make a new configuration; re-running after one is a logged re-run.
+    `protocol_file` is the file `protocol` was loaded from (the pinned v0.2
+    file for held-out, byte-identical to the live file of the v0.2 runs)."""
     cfg = {"system": system, "scoring": SCORING_VERSION,
            "protocol_version": getattr(protocol, "version", None),
-           "protocol_sha256": _sha256(PROTOCOL_FILE),
+           "protocol_sha256": _sha256(protocol_file),
            "rules_sha256": _sha256(RULES_FILE)}
     if system == "llm":
         import triage
@@ -1093,13 +1120,20 @@ def main() -> int:
     if args.write_vignettes and heldout:
         print("REFUSED: held-out cases are never written out as a vignette file")
         return 1
-    protocol, perr = load_protocol()
+    protocol, protocol_file, perr = load_protocol_for(spec["split"])
     if perr:
         print(f"WARNING: protocol not loaded ({perr}); keys are not checked against it "
               "and protocol_check is skipped")
         if heldout:
             print("ERROR: held-out keys are never scored without the protocol check")
             return 1
+    if heldout:
+        if spec["protocol_version"] != HELDOUT_PROTOCOL_VERSION:
+            print(f"ERROR: held-out keys say protocol v{spec['protocol_version']}; held-out is "
+                  f"frozen on v{HELDOUT_PROTOCOL_VERSION} and never re-keyed")
+            return 1
+        print(f"held-out: scored against the pinned protocol v{protocol.version} "
+              f"({protocol_file.relative_to(REPO_ROOT).as_posix()}), not the live file")
     if any("key_until" in c for c in spec["cases"]):
         spec = for_protocol(spec, protocol.version if protocol else None)
         print(f"keys for protocol v{spec['protocol_version']} (key_until resolved)")
@@ -1149,7 +1183,7 @@ def main() -> int:
             return 1
 
     cases_sha = _sha256(path)
-    cfg = configuration(args.system, args.model, protocol)
+    cfg = configuration(args.system, args.model, protocol, protocol_file)
     prior = prior_runs(cfg["fingerprint"], cases_sha, args.runlog) if heldout else []
     if heldout:
         refusal = heldout_refusal(args.system, args.confirm_heldout, prior, args.rerun_reason)

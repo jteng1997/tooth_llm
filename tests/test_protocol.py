@@ -83,6 +83,45 @@ class IsNull(unittest.TestCase):
             self.assertIn("is null", str(ctx.exception))
         self.assertTrue(holds('location == "null"', {"location": "null"}))  # a quoted string
 
+    def test_other_spellings_of_null_are_refused(self):
+        # qa 2026-09-29: only lower-case `is null` is the atom; nothing else may
+        # parse into a test that silently never holds.
+        for bad in ("fever is NULL", "fever IS null", "fever is None", "fever is (null)",
+                    "fever is null is null", "pain_triggers contains null"):
+            with self.subTest(bad=bad), self.assertRaises(P.ProtocolError):
+                P.parse_predicate(bad)
+        # null in any case is the parser's error, whatever the field
+        for bad in ("pain_relief_effect == NULL", "fever != NULL", "location == Null",
+                    "duration_days == NULL"):
+            with self.subTest(bad=bad), self.assertRaises(P.ProtocolError) as ctx:
+                P.parse_predicate(bad)
+            self.assertIn("is null", str(ctx.exception))
+        # None is a word, refused by validation as a value of the field
+        raw = protocol_raw()
+        raw["criteria"][-1]["predicate"] = "fever == None"
+        self.assertEqual(P.validate(raw, SYMPTOM_SCHEMA, rules.RED_FLAG_FIELDS),
+                         ["criterion 'P2': 'None' is not a value of fever"])
+
+    def test_literal_type_is_checked_on_fields_without_an_enum(self):
+        # qa 2026-09-29: an integer field took any literal, so "== None" or
+        # '== "3"' was valid and could never hold. Checked on the live file,
+        # whose questions ask duration_days.
+        import json
+        import yaml
+        live = yaml.safe_load(P.PROTOCOL_PATH.read_text(encoding="utf-8"))
+        schema = json.loads(P.SYMPTOM_SCHEMA_PATH.read_text(encoding="utf-8"))
+        errs = lambda pred: P.validate({**live, "criteria": live["criteria"][:-1] + [
+            {**live["criteria"][-1], "predicate": pred}]}, schema, rules.RED_FLAG_FIELDS)
+        self.assertEqual(errs("duration_days == 3"), [])
+        for pred in ("duration_days == None", 'duration_days == "3"'):
+            with self.subTest(predicate=pred):
+                self.assertTrue(any("does not match the type of duration_days" in e
+                                    for e in errs(pred)), errs(pred))
+
+    def test_zero_and_empty_string_are_answers(self):
+        self.assertFalse(holds("duration_days is null", {"duration_days": 0}))
+        self.assertFalse(holds("location is null", {"location": ""}))
+
     def test_true_only_when_unanswered(self):
         p = "pain_relief_effect is null"
         self.assertTrue(holds(p, {"pain_relief_effect": None}))
@@ -135,6 +174,8 @@ class IsNull(unittest.TestCase):
                          "(a not answered OR visual_summary.images_usable not answered)")
         plain = "visual_summary.flagged_teeth non-empty"
         self.assertEqual(P.render_predicate(plain), plain)        # nothing else changes
+        quoted = 'location == "x is null"'                        # qa 2026-09-29: a literal
+        self.assertEqual(P.render_predicate(quoted), quoted)      # is not rewritten
         c = build_protocol(with_u7()).criterion("U7")
         self.assertEqual(c.holds_when(), "pain_present == true AND pain_relief_effect not answered")
         self.assertEqual(c.predicate, "pain_present == true AND pain_relief_effect is null")
@@ -156,6 +197,31 @@ class IsNull(unittest.TestCase):
         self.assertIn("'EM1': a floor criterion may not use 'is null'",
                       "\n".join(P.validate(raw, SYMPTOM_SCHEMA, rules.RED_FLAG_FIELDS)))
 
+    def test_every_floor_criterion_is_checked_even_nested(self):
+        # qa 2026-09-29: not only the first floor criterion, and not only at the top level
+        raw = protocol_raw()
+        floors = [c for c in raw["criteria"] if c.get("floor")]
+        self.assertGreater(len(floors), 1)
+        for c in floors:
+            with self.subTest(criterion=c["id"]):
+                changed = protocol_raw()
+                target = next(x for x in changed["criteria"] if x["id"] == c["id"])
+                target["predicate"] = (f"({target['predicate']}) AND "
+                                       "(pain_present == true OR pain_severity is null)")
+                self.assertIn(f"'{c['id']}': a floor criterion may not use 'is null'",
+                              "\n".join(P.validate(changed, SYMPTOM_SCHEMA, rules.RED_FLAG_FIELDS)))
+
+    def test_the_live_protocol_uses_it_only_for_u10(self):
+        # v0.3: U10 is the one `is null` criterion, on the relief answer; no floor uses it
+        live = P.load(allow_unreviewed=True)
+        if live.version != "0.3":
+            self.skipTest(f"live protocol is v{live.version}; this pins v0.3")
+        self.assertEqual({c.id: c.null_fields() for c in live.criteria if c.null_fields()},
+                         {"U10": ["pain_relief_effect"]})
+        self.assertEqual([c.id for c in live.criteria if c.floor and c.null_fields()], [])
+        self.assertEqual(live.criterion("U10").level, "URGENT")
+        self.assertFalse({"U5", "U6"} & {c.id for c in live.criteria})
+
     def test_protocol_level(self):
         protocol = build_protocol(with_u7())
         level = lambda s: protocol.protocol_level(s, {})
@@ -165,6 +231,85 @@ class IsNull(unittest.TestCase):
         self.assertEqual(level({"pain_present": False, "pain_relief_effect": None}), "ROUTINE")
         self.assertEqual(level({"pain_present": None, "pain_relief_effect": None}), "ROUTINE")
         self.assertEqual([c.id for c in protocol.met({"pain_present": True}, {})], ["N1", "U7"])
+
+
+class LiteralRegression(unittest.TestCase):
+    """qa report 2026-09-29, fixed by llm-dev: null in any case is a parse error;
+    a literal must fit its field (enum value, or schema type where there is no
+    enum); rendering leaves quoted literals alone. Cases verified by llm-dev-4
+    (lead, 2026-09-29), against the real symptom schema."""
+
+    NULL = ("duration_days == NULL", "duration_days == null", "duration_days == Null",
+            "location == Null", "fever != NULL", "unexpected_missing_teeth contains null")
+    WRONG_TYPE = ('duration_days == "3"', "duration_days == true", "duration_days == none",
+                  "flagged_teeth == 3",
+                  # llm-dev-4 2026-09-29: photo lists hold objects, not tooth numbers
+                  "flagged_teeth contains None", 'flagged_teeth contains "16"',
+                  "flagged_teeth contains 16")
+    NOT_A_LIST = ("swelling contains true", "location contains upper_left",
+                  "images_usable contains true")
+    NOT_A_VALUE = ("swelling == 1", 'swelling == "true"', "pain_relief_effect == 1",
+                   'pain_relief_effect == "NOT_HELPED"', "pain_triggers contains 5",
+                   "swelling_features contains None", "location == none")
+    VALID = ("duration_days == 3", "duration_days != 0", "swelling", "swelling == false",
+             "pain_relief_effect == not_helped", 'pain_relief_effect == "not_helped"',
+             "pain_relief_effect is null", "flagged_teeth non-empty", "pain_triggers contains cold",
+             "swelling_features contains none", 'trauma_features contains "none"',
+             "location == unknown", "unexpected_missing_teeth non-empty", "images_usable",
+             "images_usable == false")
+
+    @classmethod
+    def setUpClass(cls):
+        import json
+        schema = json.loads(P.SYMPTOM_SCHEMA_PATH.read_text(encoding="utf-8"))
+        cls.fields = {**P._symptom_fields(schema), **P.VISUAL_FIELDS}
+
+    def errors(self, pred):
+        errors = []
+        P._check_literals(P.parse_predicate(pred), self.fields, "t", errors)
+        return errors
+
+    def test_null_is_a_parse_error(self):
+        for pred in self.NULL:
+            with self.subTest(pred=pred), self.assertRaises(P.ProtocolError) as ctx:
+                P.parse_predicate(pred)
+            self.assertIn(f"compare with null using '{pred.split()[0]} is null'", str(ctx.exception))
+
+    def test_literal_of_the_wrong_type_is_refused(self):
+        for pred in self.WRONG_TYPE:
+            with self.subTest(pred=pred):
+                errors = self.errors(pred)
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn(f"does not match the type of {pred.split()[0]}", errors[0])
+
+    def test_literal_outside_the_enum_is_refused(self):
+        for pred in self.NOT_A_VALUE:
+            with self.subTest(pred=pred):
+                errors = self.errors(pred)
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn(f"is not a value of {pred.split()[0]}", errors[0])
+
+    def test_contains_needs_a_list_field(self):
+        for pred in self.NOT_A_LIST:
+            with self.subTest(pred=pred):
+                self.assertEqual(self.errors(pred), [f"t: {pred.split()[0]} is not a list; "
+                                                     "'contains' needs a list field"])
+
+    def test_valid_literals_pass(self):
+        # positive controls: "none" is a real enum value; a quoted value is the same value
+        for pred in self.VALID:
+            with self.subTest(pred=pred):
+                self.assertEqual(self.errors(pred), [])
+
+    def test_render_leaves_quoted_literals_alone(self):
+        for src, want in (("pain_relief_effect is null", "pain_relief_effect not answered"),
+                          ('notes == "x is null"', 'notes == "x is null"'),
+                          ('a is null AND b == "c is null" AND d is null',
+                           'a not answered AND b == "c is null" AND d not answered'),
+                          ('a == "say \\"b is null\\"" OR c is null',
+                           'a == "say \\"b is null\\"" OR c not answered')):
+            with self.subTest(src=src):
+                self.assertEqual(P.render_predicate(src), want)
 
 
 def with_u7() -> dict:

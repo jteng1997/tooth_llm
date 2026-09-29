@@ -1,7 +1,7 @@
 {
  "schema_version": "1.0",
  "split": "dev",
- "protocol_version": "0.2",
+ "protocol_version": "0.3",
  "note": "converted on load from triage_dev_keys.json",
  "cases": [
   {
@@ -166,6 +166,7 @@
     "criteria_met": [
      "E2",
      "U7",
+     "U10",
      "S1",
      "S2"
     ],
@@ -240,7 +241,7 @@
     "persistent_ulcer": false,
     "broken_filling_or_tooth": false,
     "pus_or_discharge": false,
-    "pain_relief_effect": null,
+    "pain_relief_effect": "not_tried",
     "pain_severity": "mild",
     "pain_triggers": [
      "sweet"
@@ -685,6 +686,7 @@
     "level": "EMERGENCY",
     "criteria_met": [
      "E2",
+     "U10",
      "S1"
     ],
     "emergency_route": "either",
@@ -834,8 +836,9 @@
   {
    "id": "V017",
    "key": {
-    "level": "SOON",
+    "level": "URGENT",
     "criteria_met": [
+     "U10",
      "S1"
     ],
     "emergency_route": null,
@@ -940,6 +943,7 @@
     "level": "EMERGENCY",
     "criteria_met": [
      "E1",
+     "U10",
      "S1"
     ],
     "emergency_route": "medical",
@@ -1046,9 +1050,8 @@
   {
    "id": "V021",
    "key": {
-    "level": "URGENT",
+    "level": "SOON",
     "criteria_met": [
-     "U5",
      "S1"
     ],
     "emergency_route": null,
@@ -1102,6 +1105,7 @@
     "level": "EMERGENCY",
     "criteria_met": [
      "E6",
+     "U10",
      "S1"
     ],
     "emergency_route": "medical",
@@ -1408,6 +1412,7 @@
     "criteria_met": [
      "E2",
      "E3",
+     "U10",
      "S1"
     ],
     "emergency_route": "either",
@@ -1507,6 +1512,7 @@
     "level": "EMERGENCY",
     "criteria_met": [
      "E3",
+     "U10",
      "S1"
     ],
     "emergency_route": "medical",
@@ -1578,7 +1584,7 @@
     "persistent_ulcer": false,
     "broken_filling_or_tooth": false,
     "pus_or_discharge": false,
-    "pain_relief_effect": null,
+    "pain_relief_effect": "not_tried",
     "pain_severity": "mild",
     "pain_triggers": [
      "sweet"
@@ -1763,6 +1769,7 @@
     "criteria_met": [
      "E2",
      "E3",
+     "U10",
      "S1"
     ],
     "emergency_route": "either",
@@ -1862,6 +1869,7 @@
     "level": "EMERGENCY",
     "criteria_met": [
      "E5",
+     "U10",
      "S1"
     ],
     "emergency_route": "medical",
@@ -2018,6 +2026,7 @@
     "level": "EMERGENCY",
     "criteria_met": [
      "E8",
+     "U10",
      "S1"
     ],
     "emergency_route": "medical",
@@ -2371,6 +2380,7 @@
     "level": "EMERGENCY",
     "criteria_met": [
      "E4",
+     "U10",
      "S1"
     ],
     "emergency_route": "dental",
@@ -2419,9 +2429,8 @@
   {
    "id": "V048",
    "key": {
-    "level": "URGENT",
+    "level": "SOON",
     "criteria_met": [
-     "U5",
      "S1"
     ],
     "emergency_route": null,
@@ -2630,6 +2639,7 @@
     "level": "EMERGENCY",
     "criteria_met": [
      "E1",
+     "U10",
      "S1"
     ],
     "emergency_route": "medical",
@@ -2681,6 +2691,7 @@
     "level": "EMERGENCY",
     "criteria_met": [
      "E5",
+     "U10",
      "S1"
     ],
     "emergency_route": "medical",
@@ -2732,6 +2743,7 @@
     "level": "EMERGENCY",
     "criteria_met": [
      "E3",
+     "U10",
      "S1"
     ],
     "emergency_route": "medical",
@@ -2783,6 +2795,7 @@
     "level": "EMERGENCY",
     "criteria_met": [
      "E5",
+     "U10",
      "S1"
     ],
     "emergency_route": "medical",
@@ -3490,6 +3503,7 @@
     "level": "EMERGENCY",
     "criteria_met": [
      "E8",
+     "U10",
      "S1"
     ],
     "emergency_route": "medical",
@@ -3643,9 +3657,8 @@
   {
    "id": "V072",
    "key": {
-    "level": "URGENT",
+    "level": "SOON",
     "criteria_met": [
-     "U5",
      "S1"
     ],
     "emergency_route": null,
@@ -3800,6 +3813,7 @@
     "level": "EMERGENCY",
     "criteria_met": [
      "E6",
+     "U10",
      "S1"
     ],
     "emergency_route": "medical",
@@ -3851,6 +3865,7 @@
     "level": "EMERGENCY",
     "criteria_met": [
      "E4",
+     "U10",
      "S1"
     ],
     "emergency_route": "dental",
@@ -3899,9 +3914,8 @@
   {
    "id": "V077",
    "key": {
-    "level": "URGENT",
+    "level": "SOON",
     "criteria_met": [
-     "U6",
      "S1"
     ],
     "emergency_route": null,
@@ -4114,9 +4128,8 @@
   {
    "id": "V081",
    "key": {
-    "level": "URGENT",
+    "level": "SOON",
     "criteria_met": [
-     "U6",
      "S1"
     ],
     "emergency_route": null,
@@ -4273,6 +4286,7 @@
     "level": "EMERGENCY",
     "criteria_met": [
      "E2",
+     "U10",
      "S1"
     ],
     "emergency_route": "either",
@@ -4426,9 +4440,8 @@
   {
    "id": "V087",
    "key": {
-    "level": "URGENT",
+    "level": "SOON",
     "criteria_met": [
-     "U6",
      "S1"
     ],
     "emergency_route": null,
@@ -4839,6 +4852,7 @@
     "level": "EMERGENCY",
     "criteria_met": [
      "E1",
+     "U10",
      "S1"
     ],
     "emergency_route": "medical",
@@ -4890,6 +4904,7 @@
     "level": "EMERGENCY",
     "criteria_met": [
      "E3",
+     "U10",
      "S1"
     ],
     "emergency_route": "medical",
@@ -5131,6 +5146,320 @@
     "got a few old fillings I got when I was a kid not sure if I should get them checked"
    ],
    "style": "terse",
+   "dentist_label": null
+  },
+  {
+   "id": "V101",
+   "key": {
+    "level": "SOON",
+    "criteria_met": [
+     "S1"
+    ],
+    "emergency_route": null,
+    "author": "research-pm",
+    "boundary": true,
+    "stratum": "s_relief_not_tried_night"
+   },
+   "symptoms": {
+    "schema_version": "1.2",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": true,
+    "persistent_ulcer": false,
+    "broken_filling_or_tooth": false,
+    "pus_or_discharge": false,
+    "pain_relief_effect": "not_tried",
+    "pain_severity": "moderate",
+    "pain_triggers": [
+     "spontaneous"
+    ],
+    "pain_lingers_over_30s": false,
+    "pain_wakes_at_night": true,
+    "pain_on_biting": false,
+    "recent_extraction": false,
+    "location": null,
+    "duration_days": 2,
+    "bleeding_gums": null,
+    "swelling_features": null,
+    "trauma_features": null
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [
+    "Hi, I've been having this dull ache in my teeth for the past couple of days now, and it's really weird because it just comes on by itself. Like, I'll be lying in bed or just sitting around doing nothing, and suddenly it's there. It's moderate, I guess - it bothers me but I can still sleep and eat normally. I've not tried any painkillers or anything, and I'm just not sure what to do. It's been happening for two days now and I'm getting a bit worried."
+   ],
+   "style": "verbose",
+   "dentist_label": null
+  },
+  {
+   "id": "V102",
+   "key": {
+    "level": "URGENT",
+    "criteria_met": [
+     "U10",
+     "S1"
+    ],
+    "emergency_route": null,
+    "author": "research-pm",
+    "boundary": true,
+    "stratum": "u_relief_unanswered_lingering"
+   },
+   "symptoms": {
+    "schema_version": "1.2",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": true,
+    "persistent_ulcer": false,
+    "broken_filling_or_tooth": false,
+    "pus_or_discharge": false,
+    "pain_relief_effect": null,
+    "pain_severity": "mild",
+    "pain_triggers": [
+     "hot"
+    ],
+    "pain_lingers_over_30s": true,
+    "pain_wakes_at_night": false,
+    "pain_on_biting": false,
+    "recent_extraction": false,
+    "location": null,
+    "duration_days": 14,
+    "bleeding_gums": null,
+    "swelling_features": null,
+    "trauma_features": null
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [
+    "I've had a nagging ache in my back tooth for two weeks now - no, I mean, it's been two weeks since it started, not how long it's been there. It's only when I drink something hot that it gets worse and takes a while to settle. It's really mild though, I can still eat and talk fine, but it's just annoying. Does that sound normal to you?"
+   ],
+   "style": "self_correcting",
+   "dentist_label": null
+  },
+  {
+   "id": "V103",
+   "key": {
+    "level": "SOON",
+    "criteria_met": [
+     "S1"
+    ],
+    "emergency_route": null,
+    "author": "research-pm",
+    "boundary": true,
+    "stratum": "s_relief_not_tried_night"
+   },
+   "symptoms": {
+    "schema_version": "1.2",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": true,
+    "persistent_ulcer": false,
+    "broken_filling_or_tooth": false,
+    "pus_or_discharge": false,
+    "pain_relief_effect": "not_tried",
+    "pain_severity": "mild",
+    "pain_triggers": [
+     "spontaneous"
+    ],
+    "pain_lingers_over_30s": false,
+    "pain_wakes_at_night": true,
+    "pain_on_biting": false,
+    "recent_extraction": false,
+    "location": null,
+    "duration_days": 5,
+    "bleeding_gums": null,
+    "swelling_features": null,
+    "trauma_features": null
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [
+    "Hi, I'm a bit worried about this dull ache I've been getting. It started on its own, while I was just relaxing on the couch. It's been there for 5 days now. It's really mild, I notice it but it doesn't stop me from doing anything. To be honest, I haven't tried taking any painkillers for it, I just sleep through the night when it's at its worst, like last night. I'm not really sure where it is, but it's been consistent, you know?"
+   ],
+   "style": "verbose",
+   "dentist_label": null
+  },
+  {
+   "id": "V104",
+   "key": {
+    "level": "SOON",
+    "criteria_met": [
+     "S1"
+    ],
+    "emergency_route": null,
+    "author": "research-pm",
+    "boundary": true,
+    "stratum": "s_relief_not_tried_lingering"
+   },
+   "symptoms": {
+    "schema_version": "1.2",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": true,
+    "persistent_ulcer": false,
+    "broken_filling_or_tooth": false,
+    "pus_or_discharge": false,
+    "pain_relief_effect": "not_tried",
+    "pain_severity": "moderate",
+    "pain_triggers": [
+     "hot"
+    ],
+    "pain_lingers_over_30s": true,
+    "pain_wakes_at_night": false,
+    "pain_on_biting": false,
+    "recent_extraction": false,
+    "location": null,
+    "duration_days": 14,
+    "bleeding_gums": null,
+    "swelling_features": null,
+    "trauma_features": null
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [
+    "I've had this ache in my mouth for a couple of weeks now. It's moderate, it bothers me but I can still eat and sleep normally. It gets worse when I have hot drinks, like tea or coffee. The pain lasts for a minute or so after I finish drinking, then it fades. I haven't taken any painkillers for it, I just want to know what it might be."
+   ],
+   "style": "vague",
+   "dentist_label": null
+  },
+  {
+   "id": "V105",
+   "key": {
+    "level": "SOON",
+    "criteria_met": [
+     "S1"
+    ],
+    "emergency_route": null,
+    "author": "research-pm",
+    "boundary": true,
+    "stratum": "s_relief_not_tried_lingering"
+   },
+   "symptoms": {
+    "schema_version": "1.2",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": true,
+    "persistent_ulcer": false,
+    "broken_filling_or_tooth": false,
+    "pus_or_discharge": false,
+    "pain_relief_effect": "not_tried",
+    "pain_severity": "mild",
+    "pain_triggers": [
+     "hot"
+    ],
+    "pain_lingers_over_30s": true,
+    "pain_wakes_at_night": false,
+    "pain_on_biting": false,
+    "recent_extraction": false,
+    "location": null,
+    "duration_days": 30,
+    "bleeding_gums": null,
+    "swelling_features": null,
+    "trauma_features": null
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [
+    "I have pain in my mouth, it start one month ago. It go away for a little bit but come back after I drink hot things. I try to ignore it but it's there. It's not very bad, just notice it. I don't take any painkillers, nothing for it."
+   ],
+   "style": "non_native",
+   "dentist_label": null
+  },
+  {
+   "id": "V106",
+   "key": {
+    "level": "URGENT",
+    "criteria_met": [
+     "U10",
+     "S1"
+    ],
+    "emergency_route": null,
+    "author": "research-pm",
+    "boundary": true,
+    "stratum": "u_relief_unanswered_night"
+   },
+   "symptoms": {
+    "schema_version": "1.2",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": true,
+    "persistent_ulcer": false,
+    "broken_filling_or_tooth": false,
+    "pus_or_discharge": false,
+    "pain_relief_effect": null,
+    "pain_severity": "moderate",
+    "pain_triggers": [
+     "spontaneous"
+    ],
+    "pain_lingers_over_30s": false,
+    "pain_wakes_at_night": true,
+    "pain_on_biting": false,
+    "recent_extraction": false,
+    "location": null,
+    "duration_days": 21,
+    "bleeding_gums": null,
+    "swelling_features": null,
+    "trauma_features": null
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [
+    "I've had this throbbing tooth pain for three weeks now. It woke me up last night and it's been bothering me ever since. I'm not sure why it started, but it just comes and goes for no reason. It's not a bad pain, it's just... moderate, I suppose. I still sleep and eat normally, but it's always there in the background. My sister told me to check it out, but I'm not sure what's going on."
+   ],
+   "style": "self_correcting",
    "dentist_label": null
   }
  ]

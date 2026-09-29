@@ -650,6 +650,187 @@ class CheckedTurn(unittest.TestCase):
         self.assertIn('"schema_version": "2.0"', s.messages[1]["content"])
 
 
+U10_REASON = {"criterion_id": "U10",
+              "statement": "Tooth pain, and it is not known whether pain relief has helped",
+              "evidence": [{"source": "symptoms", "field": "pain_present", "value": True},
+                           {"source": "symptoms", "field": "pain_relief_effect", "value": None}]}
+U1_REASON = {"criterion_id": "U1", "statement": "Tooth pain that pain relief has not controlled",
+             "evidence": [{"source": "symptoms", "field": "pain_relief_effect",
+                           "value": "not_helped"}]}
+U10_ASSESSMENT = {**ASSESSMENT, "urgency": "URGENT", "urgency_rank": 2,
+                  "headline": "See a dentist within 24 hours", "reasons": [U10_REASON]}
+U1_ASSESSMENT = {**U10_ASSESSMENT, "reasons": [U1_REASON]}
+U10_SYMPTOMS = {"pain_present": True, "pain_relief_effect": None}
+U1_SYMPTOMS = {"pain_present": True, "pain_relief_effect": "not_helped"}
+
+
+class ReliefUnanswered(unittest.TestCase):
+    """Hard rule 7 (protocol v0.3 U10): with the pain relief answer unanswered,
+    the text must not say whether relief was tried or helped."""
+
+    CLAIMS = ("The pain relief you took has not helped.",
+              "Your painkillers didn't help, so please see a dentist within 24 hours.",
+              "Because the pain relief did not work, this is urgent.",
+              "Pain relief is not helping with your toothache.",
+              "The medicine hasn't made any difference.",
+              "The pain relief helped, which is good.",
+              "Your tablets worked for a while.",
+              "Nothing you took has helped.",
+              "You have already tried pain relief from a pharmacy.",
+              "The pain relief did not help, so if the pain gets worse call 111.",
+              "Painkillers failed to control the pain.")
+    NOT_CLAIMS = (U10_REASON["statement"] + ".",
+                  "You did not tell us whether pain relief has helped.",
+                  "We do not know if you have tried pain relief or if it helped.",
+                  "If pain relief does not help, see a dentist sooner.",
+                  "Pain relief from a pharmacy, used as the packet says, may help until then.",
+                  "Pain relief may not ease the pain fully.",
+                  "You can use pain relief from a pharmacy, used as the packet says.",
+                  "Pain relief will not fix the cause of the pain.",
+                  "See a dentist within 24 hours.")
+
+    def test_claims_are_caught(self):
+        for text in self.CLAIMS:
+            with self.subTest(text=text):
+                self.assertTrue(explain.claims_relief_result(text))
+                # also inside a longer reply, after a clean sentence
+                self.assertTrue(explain.claims_relief_result(GOOD_TEXT + " " + text))
+
+    def test_hedges_advice_and_the_u10_statement_pass(self):
+        for text in self.NOT_CLAIMS:
+            with self.subTest(text=text):
+                self.assertFalse(explain.claims_relief_result(text))
+
+    def test_fallback_texts_pass(self):
+        for a, findings in ((U10_ASSESSMENT, GOOD), (ASSESSMENT, GOOD),
+                            (URGENT_RETAKE_16, BAD_UPPER), (PURE_RETAKE, BAD_UPPER)):
+            with self.subTest(urgency=a["urgency"]):
+                self.assertFalse(explain.claims_relief_result(fallback_text(a, findings)))
+
+    def test_when_the_answer_counts_as_unanswered(self):
+        self.assertTrue(explain.relief_unanswered(U10_ASSESSMENT))          # cited as null
+        self.assertFalse(explain.relief_unanswered(U1_ASSESSMENT, U1_SYMPTOMS))
+        self.assertFalse(explain.relief_unanswered(U1_ASSESSMENT))
+        self.assertTrue(explain.relief_unanswered({"reasons": []}, {"pain_relief_effect": None}))
+        self.assertTrue(explain.relief_unanswered({"reasons": []}, {}))     # missing = null
+        self.assertFalse(explain.relief_unanswered({"reasons": []}, None))  # no symptoms given
+
+
+class ReliefWidened(unittest.TestCase):
+    """llm-dev-4's widening of claims_relief_result (2026-09-29, explain.py
+    4465926a): regression cases they fixed against, so tuned, not a measure.
+    The measure is qa's held-back set (llm/eval/heldback/)."""
+
+    CLAIMS = ("You haven't taken any pain relief.",
+              "As you have not tried pain relief yet, try some.",
+              "You didn't take anything for the pain, so see a dentist.",
+              "You have not used any pain relief so far.",
+              "You've been using pain relief for three days.",
+              "The painkillers you took did nothing.",
+              "The painkillers have done nothing for you.",
+              "Pain relief has been ineffective.",
+              "Your pain medication has not been effective.",
+              "The tablets were useless.",
+              "Pain relief gave you no relief.",
+              "The pills gave you little relief.",
+              "Despite the pain relief, the pain is still there.",
+              "The pain has not gone away even with pain relief.",
+              "Even after the tablets, the ache has stayed.",
+              "The ibuprofen didn't help.",
+              "Paracetamol has not helped you.",
+              "Pain relief wore off quickly for you.")
+    NOT_CLAIMS = ("Has pain relief helped at all?",
+                  "Did the pain relief help?",
+                  "Could pain relief help me?",
+                  "When pain relief does not help, the problem may be getting worse.",
+                  "Unless pain relief helps, book sooner.",
+                  "Pain relief often does not work well for this kind of pain.",
+                  "Pain relief usually helps with mild pain.",
+                  "Pain relief does not always work for tooth pain.",
+                  "Even with pain relief, tooth pain can come back.",
+                  "If you have not tried pain relief, you can use pain relief from a pharmacy, "
+                  "used as the packet says.",
+                  "Tell the dentist if you have taken any pain relief.",
+                  "When you see the dentist, tell them about any pain relief you have used.",
+                  "Medicines cannot fix a cavity.",
+                  "Pain relief from a pharmacy, used as the packet says, is fine until then.")
+
+    def test_claims_are_caught(self):
+        for text in self.CLAIMS:
+            with self.subTest(text=text):
+                self.assertTrue(explain.claims_relief_result(text))
+
+    def test_questions_hedges_and_general_statements_pass(self):
+        for text in self.NOT_CLAIMS:
+            with self.subTest(text=text):
+                self.assertFalse(explain.claims_relief_result(text))
+
+    def test_knowledge_sheets_are_not_flagged(self):
+        # precision on the text the model paraphrases most: every sentence of llm/knowledge
+        import re
+        from pathlib import Path
+        knowledge = Path(explain.__file__).resolve().parent.parent / "llm" / "knowledge"
+        flagged = [s for path in sorted(knowledge.glob("*.md"))
+                   for s in re.split(r"(?<=[.!?])\s+|\n+", path.read_text(encoding="utf-8"))
+                   if s.strip() and explain.claims_relief_result(s)]
+        self.assertEqual(flagged, [])
+
+
+class ReliefUnansweredTurn(unittest.TestCase):
+    """The relief guard inside _checked_turn: one named rewrite, then the fallback."""
+
+    BAD = GOOD_TEXT.replace("See a dentist within 7 days.", "See a dentist within 24 hours.") \
+        + " The pain relief you took has not helped."
+    CLEAN = GOOD_TEXT.replace("See a dentist within 7 days.", "See a dentist within 24 hours.") \
+        + " You did not tell us whether pain relief has helped."
+
+    def setUp(self):
+        self.replies, self.calls, self.real_chat = [], 0, explain.chat
+
+        def fake_chat(messages, model=None, **kwargs):
+            self.calls += 1
+            return self.replies.pop(0)
+        explain.chat = fake_chat
+
+    def tearDown(self):
+        explain.chat = self.real_chat
+
+    def session(self, assessment=U10_ASSESSMENT, symptoms=U10_SYMPTOMS):
+        return Explanation(GOOD, dict(symptoms), knowledge=FakeKnowledge(),
+                           assessment=copy.deepcopy(assessment))
+
+    def test_claim_is_rewritten_once_naming_the_problem(self):
+        self.replies = [self.BAD, self.CLEAN]
+        s = self.session()
+        self.assertEqual(s.first_response(), self.CLEAN)
+        self.assertEqual(self.calls, 2)
+        self.assertEqual(len(s.guardrail_log), 1)
+        first = s.guardrail_log[0]["first"]
+        self.assertTrue(any("pain relief" in p for p in first), first)
+        self.assertEqual(s.guardrail_log[0]["after_retry"], [])
+
+    def test_repeated_claim_gives_the_fallback(self):
+        self.replies = [self.BAD, self.BAD]
+        s = self.session()
+        self.assertEqual(s.first_response(), fallback_text(U10_ASSESSMENT, GOOD))
+        self.assertEqual(self.calls, 2)
+
+    def test_answered_relief_disarms_the_guard(self):
+        # U1: the patient said relief did not help, so saying so is their answer
+        self.replies = [self.BAD]
+        s = self.session(U1_ASSESSMENT, U1_SYMPTOMS)
+        self.assertEqual(s.first_response(), self.BAD)
+        self.assertEqual((self.calls, s.guardrail_log), (1, []))
+
+    def test_follow_up_is_guarded_too(self):
+        self.replies = [self.CLEAN, "Your painkillers didn't help, so it is urgent.",
+                        "We do not know whether pain relief helped, so it is urgent."]
+        s = self.session()
+        s.first_response()
+        self.assertEqual(s.ask("why is it urgent?"),
+                         "We do not know whether pain relief helped, so it is urgent.")
+
+
 class FollowUpRedFlag(unittest.TestCase):
     """Design §1.6: a red flag reported after the result still reaches EMERGENCY."""
 

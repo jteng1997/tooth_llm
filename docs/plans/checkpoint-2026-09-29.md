@@ -1,5 +1,74 @@
 # Checkpoint — 2026-09-29, protocol v0.3 switched, not yet verified
 
+## Update 2026-09-29 (evening) — read this section first
+
+Committed as a second WIP commit on `llm-triage-wave2`. Suite: **552 run, OK**.
+Test 1: **20/20**. The GPU evaluations of v0.3 are only partly done (below).
+
+Done and verified by qa (resume steps 1–3):
+- The 8 failing tests are fixed. Held-out paths are explicitly pinned to
+  `docs/plans/protocol-v0.2/triage_protocol.yaml` (`load_protocol_for(split)`
+  in `check_triage.py`). The held-out fingerprints are unchanged.
+- `src/protocol.py`: unquoted null in any case is a parse error. Literals are
+  type-checked. `contains` needs a list field. `render_predicate` is
+  quote-aware.
+- `llm/interface.md` has the null-evidence line.
+- Dev keys rebuilt on v0.3: 106 = the existing 100 plus V101–V106. qa verified
+  them byte-identical on re-run, and the diff matches README §4. P7 text for
+  V101–V106 exists.
+- Form A is regenerated, with a retired-U5/U6 note.
+- U10 `source` text reworded. The statement is unchanged (user decision
+  2026-09-29).
+- `docs/decisions.md` has the 2026-09-29 entries, including the adjudication
+  of 8 Gemini cells.
+
+New guards (`src/explain.py`, `system_explain.md` rule 12):
+- Every null symptom counts as "not answered".
+- Relief-claim post-check: on the fresh held-back probe
+  (`llm/eval/heldback/` — **llm-dev must never read it**) it catches 9/20
+  claims with 0/20 false positives, and 0/568 FP on the knowledge base and
+  prompts. Recall is weak. Decide whether to widen it after Test 2 shows
+  whether real explanations make such claims.
+
+`src/interview.py` (sha256 157228ca…):
+- The EXTRACTION line for the not_tried ruling is in.
+- The HEDGE exception is in: the ruled phrase "don't know what to take/use"
+  is no longer nulled when the value is not_tried. Before this, the HEDGE
+  test at verify() nulled it and so forced U10 URGENT.
+- **Not yet added:** the lead-approved synonyms "no idea what to take/use" and
+  "not sure what to take/use" (a one-line alternation in `NOT_TRIED_PHRASE`).
+
+Phrase sets, qwen3:14b, on the config BEFORE the HEDGE exception (interview
+d57780c5, extraction prompt d3f40b3b, protocol 6f933104). Results are in
+`runs/evals/phrases_2026-09-29/`.
+- Severity A: 79/86. 6/50 severe phrases were read as moderate (SV05, SV16,
+  SV17, SV21, SV24, SV30). SP07 was read as severe.
+- Severity B: 27/36. 9/22 severe phrases were read as moderate.
+- Relief: 7/8 independent and 1/2 tuned. RP01 and RP03 are null: that is the
+  HEDGE bug, now fixed, so re-run.
+- **Open for the user:**
+  - Under-reading severe → moderate loses U2 URGENT (under-triage).
+  - Separately, HEDGE also nulls pain_severity ("I can't describe it, it's
+    unbearable"). A proposal is pending from llm-dev.
+
+Remaining, in order (qa runs every GPU job, one at a time; never held-out):
+1. Add the two synonyms. Then qa turns llm-dev's HEDGE cases
+   (`hedge/cases.py`, 25) into unit tests and re-runs `relief_phrases.json`.
+2. `p7_generate.py regenerate --file dev --ids ["V104","V106"]` (both are text
+   faults, adjudicated), then extract, writeback, `--write-vignettes` and
+   validate.
+3. Dev Test 3. Watch V005/V031 (not_tried), V017 (null), and V077 ("no idea
+   what caused it" on a spontaneous key).
+4. Dev Test 5 on v0.3.
+5. Test 2, last.
+6. Bring the user the severity evidence and a decision. Then commit the
+   verified state and update `CLAUDE.md`.
+
+Teammate names: a bare `llm-dev` or `qa-engineer` resolves to OLD instances
+from earlier days. Address the current ones by full name.
+
+---
+
 Written before a `/clear`. Read this first. For background (held-out backup,
 Test 5 results, user decisions 1–4), read `checkpoint-2026-09-26.md`, then
 the 2026-09-26 entries in `docs/decisions.md`, then

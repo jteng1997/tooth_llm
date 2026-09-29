@@ -731,6 +731,159 @@ class SeedScheme(unittest.TestCase):
         self.assertEqual(out["harness_2026_09_26"]["seed_scheme"], p7.SEED_SCHEME)
 
 
+class DurationPhrase(unittest.TestCase):
+    """research-pm 2026-09-29 (V104): a non-null duration's fixed phrase
+    (p7-generation-prompt §3.3) must be in the text."""
+
+    def test_named(self):
+        for text, phrase in (("I've had it for two weeks now.", "two weeks"),
+                             ("Two  Weeks of this.", "two weeks"),
+                             ("It started 3 days ago, so 3 days.", "3 days"),
+                             ("For three days it has hurt.", "3 days"),
+                             ("It began since yesterday evening.", "since yesterday"),
+                             ("About ten days now.", "about ten days"),
+                             # the dev texts B read correctly (census 2026-09-29)
+                             ("I have pain in my tooth for 10 days now", "about ten days"),
+                             ("It's been 3 weeks", "three weeks"),
+                             ("I think it start two week ago", "two weeks"),
+                             ("it start one month ago", "about a month"),
+                             ("for a month now", "about a month"),
+                             ("It has been like this for month", "about a month"),
+                             ("it's been there for two whole days now", "2 days")):
+            with self.subTest(text=text):
+                self.assertTrue(p7.duration_named(text, phrase))
+
+    def test_not_named(self):
+        for text, phrase in (("I've had this ache for a couple of weeks now.", "two weeks"),
+                             ("It's been a fortnight.", "two weeks"),
+                             ("For 13 days.", "3 days"),
+                             ("It has hurt for three days.", "two weeks"),
+                             ("A while now.", "a week"),
+                             ("Last month I had a filling; this started recently.", "a week"),
+                             ("I had a tooth out a week ago.", "about a month")):
+            with self.subTest(text=text):
+                self.assertFalse(p7.duration_named(text, phrase))
+
+    def test_check_reply_refuses_a_missing_phrase(self):
+        prompt = {"style": "plain", "verbatim": [], "duration": "two weeks"}
+        c = checker()
+        base = GenerateOne.GOOD
+        bad = p7.check_reply({"patient_words": base}, prompt, "triage", c)
+        self.assertIn("duration: the fixed phrase 'two weeks' is not in the text", bad)
+        good = p7.check_reply({"patient_words": base.rstrip(".") + ", for two weeks now."},
+                              prompt, "triage", c)
+        self.assertFalse(any(f.startswith("duration") for f in good))
+        none = p7.check_reply({"patient_words": base}, {**prompt, "duration": None}, "triage", c)
+        self.assertFalse(any(f.startswith("duration") for f in none))
+
+    def test_prompt_carries_the_phrase_only_when_the_chat_is_reached(self):
+        k = key()
+        self.assertEqual(p7.build_prompt(k, "triage", REWRITES)["duration"],
+                         p7.duration_phrase(k["symptoms"]["duration_days"])
+                         if p7.reached_chat(k["symptoms"]) and k["symptoms"].get("duration_days")
+                         else None)
+        no_chat = key(symptoms={**k["symptoms"], "pain_present": False})
+        self.assertIsNone(p7.build_prompt(no_chat, "triage", REWRITES)["duration"])
+
+
+class UnsureTrigger(unittest.TestCase):
+    """research-pm 2026-09-29 (V106): with a known trigger the text must not
+    say the patient doesn't know what sets the pain off."""
+
+    def test_pattern(self):
+        for text in ("I'm not sure why it started, but it comes and goes.",
+                     "I don't know what sets it off.", "No idea what causes it.",
+                     "I cant tell what triggers it"):
+            with self.subTest(text=text):
+                self.assertTrue(p7.UNSURE_TRIGGER.search(text))
+        for text in ("I'm not sure how long it has been.", "I don't know what to take for it.",
+                     "Not sure if it helped.", "Cold drinks set it off, why I don't know is the dentist's job."):
+            with self.subTest(text=text):
+                self.assertFalse(p7.UNSURE_TRIGGER.search(text))
+
+    def test_check_reply_only_when_the_key_names_the_trigger(self):
+        c = checker()
+        text = GenerateOne.GOOD.rstrip(".") + ". I'm not sure why it started."
+        prompt = {"style": "plain", "verbatim": [], "duration": None, "triggers_known": True}
+        self.assertIn("triggers: says they don't know what sets the pain off, but the key names it",
+                      p7.check_reply({"patient_words": text}, prompt, "triage", c))
+        unknown = {**prompt, "triggers_known": False}
+        self.assertFalse(any(f.startswith("triggers")
+                             for f in p7.check_reply({"patient_words": text}, unknown, "triage", c)))
+
+    def test_prompt_flag(self):
+        k = key()
+        self.assertTrue(p7.build_prompt(k, "triage", REWRITES)["triggers_known"])
+        unk = key(symptoms={**k["symptoms"], "pain_triggers": ["unknown"]})
+        self.assertFalse(p7.build_prompt(unk, "triage", REWRITES)["triggers_known"])
+
+
+class AddedKeys(unittest.TestCase):
+    """qa 2026-09-29: dev v0.3 added V101-V106 to a finished file. generate()
+    kept the file's 100-id order, so extract (which walks it) never read the
+    new cases, and their seed indices came from a reshuffled order."""
+
+    def test_file_order_keeps_the_saved_part(self):
+        keys = [key(id=f"X00{i}", style=s) for i, s in ((1, "plain"), (2, "terse"), (3, "plain"),
+                                                          (4, "vague"))]
+        saved = ["X003", "X001"]
+        order = p7.file_order(saved, keys, 7)
+        self.assertEqual(order[:2], saved)
+        self.assertEqual(order[2:], [i for i in p7.run_order(keys, 7) if i not in saved])
+        self.assertEqual(p7.file_order([], keys, 7), p7.run_order(keys, 7))
+        with self.assertRaises(ValueError):
+            p7.file_order(["X009"], keys, 7)                       # a key that is gone
+
+    def run_generate(self, d, keys, ack=None):
+        import contextlib
+        import io
+        seeds = []
+        texts = iter(f"My tooth hurts when I drink cold water, for 4 days now, case {i} "
+                     + " ".join(f"w{i}x{j}" for j in range(12)) for i in range(100))
+
+        def fake_ollama(model, messages, schema, temperature, seed, think=None):
+            seeds.append(seed)
+            return json.dumps({"patient_words": next(texts)})
+        saved = (p7._load, p7.out_dir, p7.ollama, p7._stability, dict(p7.KEY_FILES))
+        kf = Path(d) / "keys.json"
+        kf.write_text(json.dumps({"keys": keys}), encoding="utf-8")
+        p7._load = lambda kind: (keys, REWRITES, None, checker())
+        p7.out_dir = lambda kind: Path(d)
+        p7.ollama = fake_ollama
+        p7._stability = lambda: {}
+        p7.KEY_FILES["dev"] = kf
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                p7.generate("dev", key_change_ack=ack)
+            out = json.loads((Path(d) / "generated_dev.json").read_text(encoding="utf-8"))
+        finally:
+            p7._load, p7.out_dir, p7.ollama, p7._stability, _ = saved
+            p7.KEY_FILES.clear()
+            p7.KEY_FILES.update(saved[4])
+        return out, seeds
+
+    def test_added_keys_go_at_the_end_with_new_seed_blocks(self):
+        import tempfile
+        first = [key(id=f"X00{i}", archetype=f"a{i}", style=s)
+                 for i, s in ((1, "plain"), (2, "terse"), (3, "plain"))]
+        added = [key(id=f"X00{i}", archetype=f"a{i}", style=s) for i, s in ((4, "plain"), (5, "terse"))]
+        with tempfile.TemporaryDirectory() as d:
+            out1, _ = self.run_generate(d, first)
+            out2, seeds = self.run_generate(d, first + added, ack="test: keys added")
+        self.assertEqual(out2["order"][:3], out1["order"])           # the saved order never moves
+        self.assertEqual(sorted(out2["order"][3:]), ["X004", "X005"])  # extract walks these too
+        self.assertEqual(set(out2["order"]), set(out2["cases"]))
+        for cid in ("X004", "X005"):
+            self.assertGreaterEqual(out2["cases"][cid]["seed_index"], 3)
+        indices = [c["seed_index"] for c in out2["cases"].values()]
+        self.assertEqual(len(indices), len(set(indices)))               # no shared seed block
+        self.assertEqual(sorted(seeds), sorted(p7.case_seed("dev", out2["order"].index(c))
+                                               for c in ("X004", "X005")))
+        # the earlier cases were not touched
+        for cid in out1["cases"]:
+            self.assertEqual(out2["cases"][cid], out1["cases"][cid])
+
+
 class TerseFloor(unittest.TestCase):
     """(d) research-pm's §2.7 amendment: 5 words for terse main texts only."""
     SHORT = "bottom left tooth cold hurts painkillers useless"      # 7 words

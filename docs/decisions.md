@@ -44,6 +44,190 @@ The 20 rule cases in `llm/eval/rule_cases.json` also need blind dentist labels.
 
 ## Decided
 
+### 2026-09-29 — P7 dev, fresh model-B run on v0.3: adjudication (research-pm)
+The fresh whole-dev B run (gemini-3.5-flash-lite, B prompt 239c718f…,
+`src/interview.py` d57780c5…) gave **8/225 chat cells disagreeing** (3.6%,
+exact 95% CI 1.5–6.9%) before adjudication. Adjudicated read-only from
+`runs/p7/generated_dev.json`, `runs/p7/extracted_dev.json` and the key file.
+No key or text edited. (The notes go here, not in
+`runs/p7/adjudication_dev_summary.md`, which this session cannot write.)
+
+| Cell | Key | B (raw → verified) | Verdict | Evidence | Minimum fix |
+|---|---|---|---|---|---|
+| V106 triggers | [spontaneous] | [spontaneous, unknown] | **text wrong** | "I'm not sure why it started, but it just comes and goes for no reason." The spontaneous line (p7-generation-prompt §3.3) forbids saying they don't know what causes it; B's `unknown` is a correct reading | void and regenerate |
+| V104 duration | 14 | null → null | **text wrong** | "for a couple of weeks now". The fixed phrase for 14 is "two weeks" (§3.3), so that B's day count is checkable; "a couple of" does not pin 14 and B rightly did not guess. The `vague` style softens a fact but keeps the fixed phrase | void and regenerate. Proposed to qa: an automatic check that a non-null duration's fixed phrase appears |
+| V005 relief | not_tried | not_tried → null | **code (verification)** | B's quote "I don't know what to take for it…" matches the key and the lead's ruling. `src/interview.py:319` drops any relief value whose quote matches `HEDGE`, and `HEDGE` matches "don't know" | llm-dev-4's narrow HEDGE exception (below) |
+| V031 relief | not_tried | not_tried → null | **code (verification)** | same, quote "don't know what to take for it" | same |
+| V001 triggers | [cold] | [cold, spontaneous] → null | **B wrong** | B read "it keeps me awake and I have no appetite" as spontaneous; in this text it is the severity fact ("so strong it keeps them awake and puts them off their food"), and the key has no night waking. B also joined two non-adjacent sentences with "...", so verification found no quote and dropped the whole cell. The 09-26 run read [cold] | none |
+| V077 severity | moderate | moderate → null | **B wrong** | B's value is right, but its quote joins "The pain is pretty bad, but I've been managing." and "I still sleep and eat normally", with a sentence between them, so it is not in the text and verification dropped it. The text is clear (the anchored moderate wording) | none |
+| V032 relief | helped | null → null | **B wrong** | B returned null with no quote; the text says "pain goes away with painkillers took something from pharmacy". The 09-26 run read helped | none |
+| V087 triggers | [spontaneous] | [spontaneous] → null | **B wrong** | same as 09-26: right value, quote joins two non-adjacent sentences with "..." | none |
+
+**Rates, comparable with 09-26** (same split rules as
+`runs/p7/adjudication_dev_summary.md`):
+
+| | 09-26 (prompt dfaad381…) | 09-29 (prompt 239c718f…) |
+|---|---|---|
+| Old 100 texts, disagreement | 1/195 = 0.51% | 6/195 = 3.08% (1.1–6.6) |
+| Old 100, residual text-attributable | 0/195 (0–1.87) | **0/195 (0–1.87)** |
+| Old 100, B error | 1/195 = 0.51% (0.01–2.82) | **4/195 = 2.05% (0.56–5.17)** |
+| Old 100, code (verification) | — | 2/195 (V005, V031) |
+| All 106, B error | — | 4/225 = 1.78% (0.49–4.49) |
+| New 6 texts, text wrong | — | 2/30 cells (V104, V106), both to regenerate |
+
+- The 2% residual bar holds on the old 100 (0/195). The 5% B-error rule
+  holds (2.05%), but B error quadrupled under the new B prompt. 3 of its 4
+  cells are quotes spliced from non-adjacent sentences, which verification
+  rightly refuses. It is a B evidence fault, not a reading fault. B's
+  reading is wrong on V001 (added spontaneous) and V032 (missed helped).
+- The residual on all 106 is known only after V104 and V106 are
+  regenerated and re-read.
+- Hosted-model caveat (2026-09-23 entry): same model name, a different
+  prompt. The two columns are two configurations, not a repeat.
+
+**The HEDGE finding (code; the fix is llm-dev's).** Checked on 2026-09-29:
+`HEDGE` matches both V005/V031 quotes, and does not match "I haven't taken
+any painkillers for it". So the new `EXTRACTION_INSTRUCTION` line ("don't
+know what to take" → `not_tried`) cannot take effect, either in the product
+or in the P7 check. Under v0.3 this drop is no longer neutral: a null relief
+meets U10, so these patients get URGENT instead of SOON (over-triage).
+- llm-dev-4 is preparing a narrow HEDGE exception for the ruled phrasing
+  ("don't/do not know what to take/use" → `not_tried`).
+- It is being applied while qa-engineer's phrase run is in progress. That
+  run still measures the configuration *without* the exception:
+  `check_phrases.py` imported `interview.py` once at startup and recorded
+  `interview.py` d57780c5… and the extraction prompt d3f40b3b… then.
+- qa-engineer adds phrase cases for the exception.
+- **Exception applied (llm-dev-4; lead):** in `interview.py` `verify()`,
+  when `pain_relief_effect == not_tried`, the ruled phrase "don't / do not
+  / haven't known what to take/use" (`NOT_TRIED_PHRASE`) is removed before
+  the hedge test. The lead extended it to the same-meaning synonyms "no
+  idea what to take/use" and "not sure what to take/use". Every other hedge
+  still nulls, for example "took something, not sure if it helped". New
+  `interview.py` hash: to follow from llm-dev-4.
+  - Checked by research-pm on the file as it stood (sha256 157228ca…): the
+    ruled phrase is lifted, and "not sure if it helped" still nulls. The
+    two synonyms **still nulled at that point**, so the extension was not
+    yet in the file. Recheck against the final hash.
+
+**Open risk, not acted on: HEDGE also nulls `pain_severity`.**
+- The last line of `verify()` (`return None if hedged else value`) applies
+  to every field except triggers and location.
+- So "I can't describe it, it's unbearable" loses `severe` (checked:
+  `HEDGE` matches "can't describe"), and U2 (URGENT) is lost.
+- This can only lower urgency. It predates v0.3.
+- The decision waits for qa-engineer's severity phrase results and goes to
+  the user.
+
+**Observation, no action.** V077's text also says "no idea what caused it" on
+a spontaneous key, which is V106's fault. It was generated on 2026-09-25,
+before the spontaneous line forbade it. B read [spontaneous] both times, so
+it caused no disagreement and is not counted. It stays a threat for the
+extractor under test (qwen3:14b), which may read `unknown`.
+
+### 2026-09-29 — Dev keys rebuilt on protocol v0.3: 100 kept, 6 added; Form A regenerated (research-pm)
+Step 3 of `docs/plans/checkpoint-2026-09-29.md`. Held-out keys untouched
+(frozen v0.2).
+- **Builder:** `labels/dev/build_dev_keys.py`, three steps:
+  1. regenerates V001–V100 from seed 20260924 and checks each against the
+     pinned v0.2 protocol (`docs/plans/protocol-v0.2/`), as on 2026-09-23;
+  2. re-keys each on the live v0.3 file. Only `key_level` and
+     `criteria_met` may change, plus `pain_relief_effect` on V005/V031. The
+     build stops if the level changes differ from README §4, if the
+     tracked key differs from the seed generation, or if the builder and
+     `src/protocol.py` disagree on any key;
+  3. adds V101–V106 from a separate seed (20260929), so the first 100 keep
+     their random stream.
+  The builder's own predicate evaluator gained `field is null`.
+- **Result, V001–V100:** 71/100 byte-identical to the committed file.
+  - Level changes, 7, exactly as README §4 after the lead's ruling:
+    URGENT → SOON on V021, V048, V072 (U5 retired) and V077, V081, V087 (U6
+    retired); SOON → URGENT on V017 (U10).
+  - `criteria_met` gains U10 only, 20 EMERGENCY keys (red-flag stop leaves
+    relief null): V004, V014, V019, V022, V028, V030, V035, V037, V040, V047,
+    V052, V053, V054, V055, V069, V075, V076, V084, V095, V096.
+  - `pain_relief_effect` null → `not_tried` on V005 and V031 (lead's
+    provisional ruling, Form C C12). Level stays SOON, criteria [S1]. Their
+    text and archetype name (`s_pain_missing_answers`) are unchanged. The
+    stored P7 blind extraction (model B, 2026-09-26) had already read both
+    texts as `not_tried` before post-processing; it read V017 as
+    `not_helped`, which gives URGENT (U1) as well.
+- **V101–V106** (all boundary; no photo finding, not severe, no biting):
+  - relief not tried → SOON [S1]: V104, V105 lingering after hot/cold
+    drinks; V101, V103 spontaneous pain that wakes them at night;
+  - relief unanswered → URGENT [U10, S1]: V102 lingering, V106 night. Their
+    facts do not mention pain relief.
+  - Facts newly written: 50 distinct dev facts vs 33 held-out, highest token
+    Jaccard 0.35 (refuse at ≥ 0.5).
+- **Dev set now 106:** EMERGENCY 25, URGENT 22, SOON 34, ROUTINE 25; 51
+  boundary. `check_triage.py --validate-only` on the key file: 0 errors,
+  1 warning (6 keys without P7 text).
+- **P7 correction:** the text is generated by **llama3.1:8b** (local,
+  Ollama); gemini-3.5-flash-lite only does the blind extraction check. The
+  checkpoint and the brief's "P7 text via Gemini" are wrong on this point
+  (decisions 2026-09-23 and `src/p7_generate.py` are right).
+- **Still needed:** P7 text for V101–V106 (llama3.1:8b writes it locally,
+  gemini-3.5-flash-lite does the blind check; qa-engineer, one GPU job),
+  then qa-engineer rewrites `llm/eval/triage_vignettes_dev.json`. P7 will
+  refuse the changed key file until run with `--key-change-ack`.
+- **Form A** regenerated from the live v0.3 file (`make_form_a.py`): U5 and U6
+  rows gone, U10 row added. The generator now names USER-2026-09-26 in plain
+  words and cuts sources at 600 characters, not 420, so U10's Form C pointer
+  and E4's full source show.
+
+### 2026-09-29 — U10 source reworded; extraction line for "don't know what to take" (llm-dev; lead)
+- **U10 source text** in `llm/protocol/triage_protocol.yaml` (llm-dev-4, at
+  research-pm's request): "Hard rule 7: an unanswered question is never
+  reassuring" now reads "Project rule: an unanswered question is never
+  treated as reassuring (user decision 2026-09-26; dentist's call pending,
+  Form C, C12)", because a dentist reads it in Form A. Source only:
+  statement, predicate and level unchanged. Protocol sha256
+  **6f933104…2772f4fc** (working-copy bytes). Form A regenerated: only the
+  U10 row changed, shown in full; `make_form_a.py` now renders "dentist's
+  call pending" as "awaiting a dentist's decision".
+- **Extraction line** in `src/interview.py` `EXTRACTION_INSTRUCTION`
+  (llm-dev-4), implementing the lead's provisional ruling of 2026-09-26
+  (Form C, C12): "I don't know what to take for it" / "I haven't known what
+  to use for it" means nothing was taken → `not_tried`; took something but
+  unsure whether it made a difference → `pain_relief_effect` null, never a
+  guessed `helped` or `not_helped`.
+  - `src/interview.py` file sha256 **d57780c5…ee33** (working copy). The
+    instruction string alone hashes 32857819…2d6b43, and the end-to-end
+    extraction blob (`check_e2e.py`) d3f40b3b…04e246.
+  - A new extraction configuration: Test 3 and the phrase cases (qa-engineer)
+    have not been run on it.
+
+### 2026-09-29 — U10 statement wording kept (user)
+The U10 statement stays **"Tooth pain, and it is not known whether pain
+relief has helped"**.
+- Alternative considered and not adopted, proposed by llm-dev because the
+  current wording presumes relief was taken: "Tooth pain, and we do not know
+  whether pain relief was tried or whether it helped".
+- Wording is still DRAFT-UNREVIEWED; the dentist sees it in Form A (U10) and
+  Form C (C12).
+
+### 2026-09-29 — Explanation guardrail for unanswered symptoms (lead approval; hard rule 7, not a clinical change)
+- `llm/prompts/system_explain.md` rule 12 now covers **every** null symptom:
+  it was not answered, so never state or imply an answer, either way. If a
+  reason rests on a null value, say the patient did not tell us.
+- `src/explain.py` adds a pain-relief post-check: `relief_unanswered()`
+  (relief cited as null in a reason, or null in the symptoms) and
+  `claims_relief_result()` (a sentence says relief was or was not tried, or
+  did or did not help, without a hedge). When both hold, the explanation gets
+  one rewrite, then the fallback.
+- Explain prompt sha256 **ec9f50ea…2c3d6d** (was 8da2006d…61bd2e). Both are
+  of the working-copy bytes on this machine (CRLF, as the eval scripts read
+  them); the committed LF blob hashes differently (504e8fc0… new).
+- This is a new configuration. **Tests 2 and 3 have not been run on it**;
+  no faithfulness or symptom figure applies until they are.
+
+### 2026-09-29 — `llm/interface.md`: evidence value may be null (llm-dev; app-dev agreed)
+In `assessment.reasons[].evidence[]`, `value` may be null **only** for a
+field the criterion tests with `is null` (today U10,
+`pain_relief_effect is null`). Everywhere else a null value is still refused
+by `check_proposal`. Needed because U10's evidence is the absence of an
+answer.
+
 ### 2026-09-26 — Pain relief decides the pain level: "not tried" → SOON, unanswered → URGENT, U5/U6 retired (user, lead, research-pm); protocol v0.3 final
 The user gave these rulings to the team on 2026-09-26, just before the
 teammates' limits hit, and they are logged now that the work has resumed.

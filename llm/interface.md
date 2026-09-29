@@ -307,7 +307,7 @@ Schema **2.0**. The keys the UI already uses keep their names and meaning:
   ],
 
   "triage": {
-    "protocol_version": "0.1",
+    "protocol_version": "0.3",
     "protocol_review_status": "DRAFT-UNREVIEWED",
     "model": "qwen3:14b",
     "llm_proposed": "URGENT",
@@ -345,6 +345,8 @@ Schema **2.0**. The keys the UI already uses keep their names and meaning:
   stated level to them.
 - `reasons`: the validated criteria behind the final level. When the floor,
   the protocol check or the fallback decides, code writes them.
+  `reasons[].evidence[].value` may be null, only for a field the criterion
+  tests with `is null` (e.g. U10, `pain_relief_effect is null`).
 - `triage.llm_proposed`: the model's level, `null` if the model was not
   called (red-flag stop) or was invalid twice. Always the model's own level,
   even when code raised it.

@@ -46,10 +46,27 @@ PAIN = dict(pain_present=True, pain_lingers_over_30s=False, pain_wakes_at_night=
             pain_on_biting=False, recent_extraction=False, pain_severity="mild",
             pain_triggers=["cold"], location="lower_left", duration_days=4)
 URGENT_KEY = make_key("URGENT", ["U1", "S1"], **{**PAIN, "pain_relief_effect": "not_helped"})
+# Protocol v0.3 (docs/plans/protocol-v0.3/README.md §2): pain relief decides the
+# pain level. helped or not tried -> S1 SOON; not helped -> U1 URGENT;
+# unanswered -> U10 URGENT. Lingering or night pain no longer changes it.
+SOON_KEY = make_key("SOON", ["S1"], **{**PAIN, "pain_relief_effect": "helped"})
+SEVERE_KEY = make_key("URGENT", ["U2", "S1"],
+                      **{**PAIN, "pain_relief_effect": "helped", "pain_severity": "severe"})
+RELIEF_TABLE = (("helped", "SOON", ["S1"]), ("not_tried", "SOON", ["S1"]),
+                ("not_helped", "URGENT", ["U1", "S1"]), (None, "URGENT", ["U10", "S1"]))
 ROUTINE_KEY = make_key("ROUTINE", [])
 # Protocol v0.2: a broken filling is a checklist-A row (Q20), no longer narrative.
 BROKEN_FILLING_KEY = make_key("SOON", ["S3"], facts=["a filling fell out, no pain"],
                               broken_filling_or_tooth=True)
+
+
+def dropping(field, oracle):
+    """The oracle extractor, but `field` is never settled."""
+    def llm(messages, schema):
+        out = json.loads(oracle(messages, schema))
+        out[field] = {"value": None, "quote": None}
+        return json.dumps(out)
+    return llm
 
 
 def run(key, opening="drop", extract=None, text=None):
@@ -63,9 +80,35 @@ def run(key, opening="drop", extract=None, text=None):
 @unittest.skipIf(ERR, f"protocol does not load: {ERR}")
 class Cases(unittest.TestCase):
     def test_keys_are_protocol_consistent(self):
-        for k in (URGENT_KEY, ROUTINE_KEY, BROKEN_FILLING_KEY):
+        for k in (URGENT_KEY, SOON_KEY, SEVERE_KEY, ROUTINE_KEY, BROKEN_FILLING_KEY):
             case = ct._case_from_key(k, {"author": "t"})
             self.assertEqual(ct._check_key(case, PROTOCOL), [], k["key_level"])
+
+    def test_relief_answer_decides_the_pain_level(self):
+        # v0.3 table (protocol-v0.3/README.md §2), end to end through the
+        # interview; with and without lingering, night and spontaneous pain,
+        # which v0.3 no longer counts (U5/U6 retired).
+        extras = {"plain": {},
+                  "lingering_night": {"pain_lingers_over_30s": True, "pain_wakes_at_night": True,
+                                      "pain_triggers": ["cold", "spontaneous"]}}
+        for relief, level, criteria in RELIEF_TABLE:
+            for name, extra in extras.items():
+                with self.subTest(relief=relief, pain=name):
+                    key = make_key(level, criteria, **{**PAIN, **extra, "pain_relief_effect": relief})
+                    case = ct._case_from_key(key, {"author": "t"})
+                    self.assertEqual(ct._check_key(case, PROTOCOL), [])
+                    result, att = run(key)
+                    self.assertIsNone(att)
+                    self.assertEqual((result["final"], result["protocol_check"]), (level, level))
+                    self.assertEqual(result["symptoms"]["pain_relief_effect"], relief)
+
+    def test_dropped_relief_is_never_reassuring(self):
+        # v0.3 U10: relief not helped, extractor loses it -> still URGENT, no miss
+        result, att = run(URGENT_KEY, extract=dropping("pain_relief_effect",
+                                                       e2e.oracle_extractor(URGENT_KEY, PROTOCOL)))
+        self.assertIsNone(att)
+        self.assertIsNone(result["symptoms"]["pain_relief_effect"])
+        self.assertEqual((result["final"], result["protocol_check"]), ("URGENT", "URGENT"))
 
     def test_oracle_path_agrees(self):
         result, att = run(URGENT_KEY)
@@ -89,28 +132,26 @@ class Cases(unittest.TestCase):
         self.assertFalse(result["model_called"])
 
     def test_extraction_fault_is_attributed_to_extraction(self):
-        oracle = e2e.oracle_extractor(URGENT_KEY, PROTOCOL)
-
-        def drops_relief(messages, schema):
-            out = json.loads(oracle(messages, schema))
-            out["pain_relief_effect"] = {"value": None, "quote": None}
-            return json.dumps(out)
-        result, att = run(URGENT_KEY, extract=drops_relief)
+        # severe pain lost: U2 URGENT key, S1 SOON result (under)
+        result, att = run(SEVERE_KEY, extract=dropping("pain_severity",
+                                                       e2e.oracle_extractor(SEVERE_KEY, PROTOCOL)))
         self.assertEqual(result["final"], "SOON")
         self.assertEqual(att["proposed"], "extraction")
+        self.assertEqual([d["field"] for d in att["evidence"]["field_diffs"]], ["pain_severity"])
+        self.assertIn("Q11", result["reasked"])   # unsettled -> asked again once
+        # relief lost on a SOON key: v0.3 U10 makes it URGENT (over), still extraction's
+        result, att = run(SOON_KEY, extract=dropping("pain_relief_effect",
+                                                     e2e.oracle_extractor(SOON_KEY, PROTOCOL)))
+        self.assertEqual(result["final"], "URGENT")
+        self.assertEqual(att["proposed"], "extraction")
         self.assertEqual([d["field"] for d in att["evidence"]["field_diffs"]], ["pain_relief_effect"])
-        self.assertIn("Q10", result["reasked"])   # unsettled -> asked again once
+        self.assertIn("Q10", result["reasked"])
 
     def test_missing_question_is_attributed_to_the_interview_first(self):
-        key = copy.deepcopy(URGENT_KEY)
+        key = copy.deepcopy(SEVERE_KEY)
         key["expected_questions"].append("Q99")
-        oracle = e2e.oracle_extractor(key, PROTOCOL)
-
-        def drops_relief(messages, schema):
-            out = json.loads(oracle(messages, schema))
-            out["pain_relief_effect"] = {"value": None, "quote": None}
-            return json.dumps(out)
-        _, att = run(key, extract=drops_relief)
+        result, att = run(key, extract=dropping("pain_severity", e2e.oracle_extractor(key, PROTOCOL)))
+        self.assertEqual(result["final"], "SOON")
         self.assertEqual(att["proposed"], "interview")       # first failure in the chain wins
         self.assertEqual(att["evidence"]["missing_questions"], ["Q99"])
         self.assertTrue(att["evidence"]["field_diffs"])       # still reported as evidence
@@ -200,26 +241,21 @@ class Scoring(unittest.TestCase):
             k = copy.deepcopy(k)
             k["id"] = f"T{i:03d}"
             keys.append(k)
-        # a fourth case the stub triage model misses: URGENT key, pain relief
-        # not helped, with the extractor dropping that field
-        miss = copy.deepcopy(URGENT_KEY)
+        # a fourth case the stub triage model misses: URGENT key, severe pain
+        # (U2), with the extractor dropping the severity (v0.3: dropping the
+        # relief answer would no longer lower it, U10)
+        miss = copy.deepcopy(SEVERE_KEY)
         miss["id"] = "T004"
         keys.append(miss)
         texts = {k["id"]: e2e.placeholder_text(k) for k in keys}
 
         def extract_for(k):
             oracle = e2e.oracle_extractor(k, PROTOCOL)
-            if k["id"] != "T004":
-                return oracle
-
-            def drops_relief(messages, schema):
-                out = json.loads(oracle(messages, schema))
-                out["pain_relief_effect"] = {"value": None, "quote": None}
-                return json.dumps(out)
-            return drops_relief
+            return dropping("pain_severity", oracle) if k["id"] == "T004" else oracle
         s = e2e.evaluate(keys, texts, PROTOCOL, "mock", extract_for, e2e.mock_triage, "drop")
         self.assertEqual(s["systems"]["final"]["n_scored"], 4)
         self.assertEqual(s["systems"]["final"]["under_ids"], ["T004"])
+        self.assertEqual(s["systems"]["final"]["over_ids"], [])
         self.assertEqual(s["attribution"]["proposed"], {"extraction": 1})
         self.assertEqual(s["extraction"]["cells"], 10)          # two cases reached the chat
         self.assertEqual(s["extraction"]["wrong_cells"], 1)
@@ -357,13 +393,21 @@ class HeldoutMockRun(unittest.TestCase):
     """With a perfect extractor and a triage model that adds nothing, the
     end-to-end result must equal code's own level on the keys (60/60 under
     protocol v0.2, where no criterion is narrative), and the interview must
-    ask exactly what every key expects."""
+    ask exactly what every key expects. The keys are frozen on v0.2, so the
+    run uses the pinned v0.2 protocol, not the live one."""
 
     def test_mock_run(self):
-        keys = json.loads(e2e.E2E_KEYS.read_text(encoding="utf-8"))["keys"]
+        data = json.loads(e2e.E2E_KEYS.read_text(encoding="utf-8"))
+        keys = data["keys"]
+        split = ct.key_file_split(data.get("_meta", {}), e2e.E2E_KEYS)
+        protocol, path, err = ct.load_protocol_for(split)
+        self.assertIsNone(err)
+        self.assertEqual((split, path, protocol.version, str(data["_meta"]["protocol_version"])),
+                         ("heldout", ct.HELDOUT_PROTOCOL_FILE, "0.2", "0.2"))
         texts = {k["id"]: e2e.placeholder_text(k) for k in keys}
-        s = e2e.evaluate(keys, texts, PROTOCOL, "mock", lambda k: e2e.oracle_extractor(k, PROTOCOL),
+        s = e2e.evaluate(keys, texts, protocol, "mock", lambda k: e2e.oracle_extractor(k, protocol),
                          e2e.mock_triage, "drop")
+        self.assertEqual(s["protocol_version"], "0.2")
         final = s["systems"]["final"]
         self.assertEqual((final["n_scored"], final["agree"], final["under"]), (60, 60, 0))
         self.assertEqual(s["interview"]["cases_with_missing_questions"], 0)

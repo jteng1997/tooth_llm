@@ -53,8 +53,10 @@ DEFAULT_OPTION_LABELS = {"yes": "Yes", "no": "No", "not_sure": "Not sure"}
 FIXED_TEXT = ("disclaimer", "photo_finding_phrase")  # required keys of fixed_text
 
 # What code computes from findings for the triage step (interface.md §3.1).
-VISUAL_FIELDS = {"flagged_teeth": {"type": "array"},
-                 "unexpected_missing_teeth": {"type": "array"},
+# The teeth lists hold {"fdi", "name"} objects, so no literal can be `contains`ed
+# in them; test them with `non-empty`.
+VISUAL_FIELDS = {"flagged_teeth": {"type": "array", "items": {"type": "object"}},
+                 "unexpected_missing_teeth": {"type": "array", "items": {"type": "object"}},
                  "images_usable": {"type": "boolean"}}
 
 
@@ -164,7 +166,7 @@ class _Parser:
         if op in (("op", "=="), ("op", "!="), ("op", "contains")):
             self._take()
             token = self._take()
-            if token == ("word", "null"):
+            if token[0] == "word" and token[1].lower() == "null":
                 # `== null` could never hold (null satisfies no comparison)
                 raise ProtocolError(f"compare with null using '{name} is null' in {self.text!r}")
             return (op[1], name, _literal(token))
@@ -199,11 +201,16 @@ def _null_tested(node) -> set:
 _IS_NULL = re.compile(r"\b([A-Za-z_][\w.\-]*)\s+is\s+null\b")
 
 
+_QUOTED = re.compile(r'("(?:[^"\\]|\\.)*")')
+
+
 def render_predicate(text: str) -> str:
     """A predicate as the triage model reads it (`holds_when`): unchanged,
     except `x is null` reads "x not answered", which the model can match to
-    its symptoms_not_answered list; the bare word null would read as a value."""
-    return _IS_NULL.sub(r"\1 not answered", text)
+    its symptoms_not_answered list; the bare word null would read as a value.
+    Quoted literals are left as written."""
+    return "".join(part if _QUOTED.fullmatch(part) else _IS_NULL.sub(r"\1 not answered", part)
+                   for part in _QUOTED.split(text))
 
 
 def _lookup(context: dict, name: str):
@@ -369,6 +376,21 @@ def _allowed_values(spec: dict):
     return None
 
 
+_TYPE_CHECKS = {
+    "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
+    "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+    "string": lambda v: isinstance(v, str),
+    "boolean": lambda v: isinstance(v, bool),
+    "array": lambda v: False,  # a literal is never a list; use contains / non-empty
+    "object": lambda v: False,  # nor an object
+}
+
+
+def _types(spec: dict) -> list:
+    types = spec.get("type")
+    return [t for t in (types if isinstance(types, list) else [types]) if t and t != "null"]
+
+
 def _check_literals(node, fields: dict, where: str, errors: list) -> None:
     if node[0] in ("and", "or"):
         _check_literals(node[1], fields, where, errors)
@@ -379,9 +401,25 @@ def _check_literals(node, fields: dict, where: str, errors: list) -> None:
     if spec is None:
         errors.append(f"{where}: unknown field {name!r}")
         return
+    if op not in ("==", "!=", "contains"):
+        return
+    if op == "contains" and "array" not in _types(spec):
+        # evaluate() only matches `contains` on a list, so it could never hold.
+        errors.append(f"{where}: {name} is not a list; 'contains' needs a list field")
+        return
     allowed = _allowed_values(spec)
-    if op in ("==", "!=", "contains") and allowed is not None and literal not in allowed:
-        errors.append(f"{where}: {literal!r} is not a value of {name}")
+    if allowed is not None:
+        # By type as well as value: 1 == True in Python, so `swelling == 1`
+        # would otherwise pass as a yes/no value.
+        if not any(literal == a and type(literal) is type(a) for a in allowed):
+            errors.append(f"{where}: {literal!r} is not a value of {name}")
+        return
+    # No enum: the literal must still be of the field's type, or the
+    # comparison could never hold ("duration_days == \"3\"").
+    types = _types((spec.get("items") or {}) if op == "contains" else spec)
+    if types and not any(_TYPE_CHECKS.get(t, lambda v: True)(literal) for t in types):
+        errors.append(f"{where}: {literal!r} does not match the type of {name} "
+                      f"({'/'.join(types)})")
 
 
 def _options(q: dict) -> tuple:

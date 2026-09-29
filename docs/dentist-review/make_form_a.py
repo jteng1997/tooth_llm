@@ -15,18 +15,21 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 LEVELS = ["EMERGENCY", "URGENT", "SOON", "ROUTINE"]
 PENDING_WORDING = set()  # question ids whose wording the project owner has not approved yet
+RETIRED = {"U5": ("URGENT", "0.3"), "U6": ("URGENT", "0.3")}  # id: (level, version retired)
 
 SOURCE_NAMES = [
     (r"USER-2026-09-22-(\d+)", r"project owner, 22 Sep 2026 (decision \1)"),
     (r"USER-2026-09-22", "project owner, 22 Sep 2026"),
+    (r"USER-2026-09-26", "project owner, 26 Sep 2026"),
     (r"SDCEP-(\d{4})", r"SDCEP \1"),
     (r"NHSE-2025", "NHS England 2025"),
     (r"AAE-2009", "AAE 2009 terminology"),
+    (r"dentist's call pending", "awaiting a dentist's decision"),
     (r"dentist's call", "OUR CALL - no source sets this"),
 ]
 
 
-def source(text, width=420):
+def source(text, width=600):   # 600, not 420: v0.3's U10 source ends with its Form C pointer
     for pat, rep in SOURCE_NAMES:
         text = re.sub(pat, rep, text)
     return text if len(text) <= width else text[:width].rstrip() + "…"
@@ -71,6 +74,11 @@ def build(p, protocol_path):
                 how = "narrative" if c["kind"] == "narrative" else "checklist / photo"
                 out.append(f"| {c['id']} | {cell(c['statement'])} | {cell(source(c['source']))} | "
                            f"{'yes' if c.get('floor') else ''} | {how} | |")
+        retired = [i for i, (level, _) in RETIRED.items()
+                   if level == lv and i not in {c["id"] for c in p["criteria"]}]
+        for version in sorted({RETIRED[i][1] for i in retired}):
+            ids = ", ".join(i for i in retired if RETIRED[i][1] == version)
+            out += ["", f"Retired in v{version}: {ids} (ids not reused) - see Form C, C2."]
     out += ["", "## 3. Questions the patient is asked", "",
             "Checklist rows are a Yes/No form, all rows at once. Chat rows are answered in",
             "their own words. Nothing here names a drug or a dose.", "",

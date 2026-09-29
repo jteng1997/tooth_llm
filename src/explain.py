@@ -434,6 +434,67 @@ def discourages_care(text: str) -> bool:
     return False
 
 
+# Hard rule 7: an unanswered pain_relief_effect (U10 cites it as null) must not
+# come back as an answer. "The pain relief you took has not helped" is U1's
+# reason, not U10's. "If pain relief does not help...", "we do not know whether
+# it helped" and "pain relief may not ease it" are not claims about the patient.
+_RELIEF = (r"(?:pain ?relie\w*|pain ?killers?|pain medic\w*|medicines?|medication"
+           r"|tablets?|pills?|analgesics?|anything for (?:the |your |this )?(?:pain|toothache)|"
+           + "|".join(map(re.escape, _MEDICINES)) + ")")
+_RELIEF_RESULT = re.compile(
+    _RELIEF + r"[^.!?]{0,40}?\b(?:"
+    r"(?:didn't|did not|doesn't|does not|hasn't|has not|haven't|have not|isn't|is not|wasn't"
+    r"|was not|aren't|are not|not|never)\s+(?:been\s+|really\s+|much\s+)?"
+    r"(?:help\w*|work\w*|do(?:ne|ing)? (?:anything|much)|made? (?:a|any|much) difference"
+    r"|control\w*|eas\w*|reliev\w*|touch\w*|effective)"
+    r"|helped|worked|is (?:helping|working)|controlled|eased|relieved|failed"
+    r"|no (?:effect|difference|relief|use|good)|stopped working|wore off"
+    r"|d(?:id|oes|one) nothing|ineffective|useless|gave (?:you )?(?:no|little) (?:relief|help))\b"
+    r"|\b(?:nothing|none)\b[^.!?]{0,30}\b(?:helped|worked)\b"
+    # Tried, or not tried: either way an answer the patient did not give.
+    r"|\byou(?:'ve| have| had)? (?:already )?(?:took|taken|tried|used|been taking|been using)\b[^.!?]{0,30}"
+    + _RELIEF +
+    r"|\byou\s*(?:'ve\s+|have\s+|had\s+)?(?:not|never|haven't|hadn't|didn't|did not|have not)\s+"
+    r"(?:yet\s+|already\s+)?(?:tried|taken|take|try|used|use|had|been taking)\b[^.!?]{0,30}"
+    + _RELIEF,
+    re.I)
+# "Despite the pain relief, the pain is still there" asserts it was taken and
+# failed; "Even with pain relief, tooth pain can come back" is general.
+_DESPITE_RELIEF = re.compile(r"\b(?:despite|in spite of|even with|even after)\b[^.!?]{0,20}"
+                             + _RELIEF, re.I)
+_RELIEF_HEDGE = re.compile(r"\b(?:whether|if|when|whenever|unless|in case|not known|unknown"
+                           r"|(?:don't|do not) know|not sure"
+                           r"|(?:didn't|did not|not) (?:tell|say)|not answered)\b", re.I)
+# A modal or a frequency word makes it a general statement, not about this
+# patient: "pain relief may not ease it", "pain relief often does not work".
+_MODAL = re.compile(r"\b(?:may|might|could|can|will|would|should|often|usually|sometimes"
+                    r"|always|generally|rarely|typically|commonly|tends?)\b", re.I)
+
+
+def relief_unanswered(assessment: dict, symptoms: dict = None) -> bool:
+    """Is pain_relief_effect unanswered: cited as null in a reason, or null
+    in the symptoms?"""
+    cited = any(e.get("field") == "pain_relief_effect" and e.get("value") is None
+                for r in assessment.get("reasons") or [] for e in r.get("evidence") or [])
+    return cited or (symptoms is not None and symptoms.get("pain_relief_effect") is None)
+
+
+def claims_relief_result(text: str) -> bool:
+    """Does a sentence say whether the patient's pain relief was tried or
+    helped? Only a violation when relief_unanswered()."""
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
+        if sentence.rstrip().endswith("?"):
+            continue  # a question asserts nothing
+        for m in _RELIEF_RESULT.finditer(sentence):
+            if not (_RELIEF_HEDGE.search(sentence[:m.start()]) or _MODAL.search(m.group())):
+                return True
+        for m in _DESPITE_RELIEF.finditer(sentence):
+            if not (_RELIEF_HEDGE.search(sentence[:m.start()])
+                    or _MODAL.search(sentence[m.start():])):
+                return True
+    return False
+
+
 RETAKE_MISSING = "does not ask for a retake of the photo that could not be used"
 
 
@@ -643,6 +704,9 @@ class Explanation:
             if discourages_care(text):
                 found.append("tells the patient they can skip or delay seeing a dentist; never "
                              "do that")
+            if relief_unanswered(self.assessment, self.symptoms) and claims_relief_result(text):
+                found.append("says whether the patient tried pain relief or whether it helped; "
+                             "they did not tell us, so say only that")
             if denies_tooth_finding(text):
                 found.append("says a tooth is fine or has no problem; say instead that nothing "
                              "on it reached the level we report, and that this does not rule "
