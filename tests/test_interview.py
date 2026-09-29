@@ -527,6 +527,102 @@ class ProtocolV02(unittest.TestCase):
                 self.assertEqual((a["urgency"], a["decided_by"]), (level, "protocol_check"))
 
 
+F = "pain_relief_effect"
+
+
+class HedgeException(unittest.TestCase):
+    """The not_tried ruling (lead, 2026-09-26, Form C C12; synonyms 2026-09-29):
+    "I don't know what to take for it" means nothing was taken, so HEDGE
+    ("don't know") must not null it; every other hedge still nulls. Cases by
+    llm-dev-4 (10 of 27 fail on the pre-fix interview.py)."""
+
+    CASES = [
+        # kept: the ruled phrase and its synonyms, value not_tried
+        (F, "not_tried", "I don't know what to take for it", "not_tried"),
+        (F, "not_tried", "I dont know what to take", "not_tried"),
+        (F, "not_tried", "I do not know what to use for it", "not_tried"),
+        (F, "not_tried", "I haven't known what to use for it", "not_tried"),
+        (F, "not_tried", "Honestly I don’t know what to take for it, so nothing yet", "not_tried"),
+        (F, "not_tried", "I have not known what to take", "not_tried"),
+        (F, "not_tried", "I haven't taken anything", "not_tried"),
+        (F, "not_tried", "no idea what to take", "not_tried"),
+        (F, "not_tried", "not sure what to take", "not_tried"),
+        (F, "not_tried", "I have no idea what to use for it", "not_tried"),
+        (F, "not_tried", "Not really sure what to use", "not_tried"),
+        (F, "not_tried", "I didn't know what to take", "not_tried"),
+        (F, "not_tried", "I don't know what to take for it, maybe something from the pharmacy?",
+         "not_tried"),
+        (F, "not_tried", "don't know what to take for it", "not_tried"),
+        # nulled: other hedges stay hedges
+        (F, None, "I took something but I'm not sure if it made a difference", None),
+        (F, "helped", "I took something but I'm not sure if it made a difference", None),
+        (F, "not_helped", "I took something but I'm not sure if it made a difference", None),
+        (F, "not_helped", "I don't know what to take, and the one I took I can't say it did much", None),
+        (F, "helped", "I don't know what to take for it", None),        # wrong value stays hedged
+        (F, "not_helped", "I don't know what to take for it", None),
+        (F, "not_tried", "I don't know what to take for it, maybe I took one, not sure", None),
+        (F, "not_tried", "I don't know", None),
+        (F, "not_tried", "I can't remember if I took anything", None),
+        (F, "not_tried", "I don't know if I should take anything", None),
+        (F, "not_tried", "don't know what to take for it not sure how long it's been like this", None),
+        # other fields: the not_tried exception never applies to them. The
+        # severity row follows the user's decision of 2026-09-29: a ruled severe
+        # cue ("unbearable") keeps "severe" despite a hedge in the quote.
+        ("pain_severity", "severe", "I don't know what to take for it, it's unbearable", "severe"),
+        ("duration_days", 3, "I don't know what to take, it's been 3 days", None),
+    ]
+
+    def test_cases(self):
+        self.assertEqual(len(self.CASES), 27)
+        for field, value, msg, want in self.CASES:
+            with self.subTest(field=field, value=value, msg=msg):
+                self.assertEqual(interview.verify(field, value, msg, [("Q10", msg)],
+                                                  own_question="Q10"), want)
+
+
+S = "pain_severity"
+
+
+class SevereCueKeepsSevere(unittest.TestCase):
+    """User decision 2026-09-29 (a): a 'severe' whose quote carries an
+    un-negated ruled severe cue survives a hedge ("I can't describe it, it's
+    unbearable"); dropping it could only lower urgency. Cases by llm-dev-4."""
+
+    CASES = [
+        # kept: hedge + an un-negated ruled cue
+        (S, "severe", "I can't tell you how much it hurts, I can't sleep", "severe"),
+        (S, "severe", "I can't describe it, it's unbearable", "severe"),
+        (S, "severe", "Hard to say really, it keeps me up every night", "severe"),
+        (S, "severe", "I don't know what to take for it, it's unbearable", "severe"),
+        (S, "severe", "I can't put it into words, it's agony", "severe"),
+        (S, "severe", "dunno, worst pain I've ever had", "severe"),
+        (S, "severe", "not sure how to describe it but it woke me up twice", "severe"),
+        (S, "severe", "I can’t describe it, I couldn't eat all day", "severe"),
+        (S, "severe", "It's unbearable", "severe"),
+        # nulled: hedge and no cue, or the cue is negated
+        (S, "severe", "I don't know how bad it is", None),
+        (S, "severe", "I can't describe it", None),
+        (S, "severe", "not sure, it's not severe", None),
+        (S, "severe", "I can't say, it doesn't keep me up", None),
+        (S, "severe", "hard to say, it's no longer waking me", None),
+        (S, "severe", "I can't describe it, it never wakes me", None),
+        # other values keep the plain HEDGE null
+        (S, "moderate", "not sure, it's annoying", None),
+        (S, "moderate", "I can't describe it, it's unbearable", None),
+        (S, "mild", "dunno, it keeps me up", None),
+        # other fields: the exemption never applies
+        ("pain_relief_effect", "not_helped", "I can't say it did much, it's unbearable", None),
+        ("duration_days", 3, "can't remember, 3 days I think, it keeps me up", None),
+    ]
+
+    def test_cases(self):
+        self.assertEqual(len(self.CASES), 20)
+        for field, value, msg, want in self.CASES:
+            with self.subTest(field=field, value=value, msg=msg):
+                self.assertEqual(interview.verify(field, value, msg, [("Q11", msg)],
+                                                  own_question="Q11"), want)
+
+
 class Plan(unittest.TestCase):
     def test_plan_matches_the_real_protocol(self):
         interview.check_plan(PROTOCOL)

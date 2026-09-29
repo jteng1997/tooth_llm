@@ -5639,10 +5639,10 @@
     "unexpected_missing_teeth": []
    },
    "id": "V104",
-   "patient_words": "I've had this ache in my mouth for a couple of weeks now. It's moderate, it bothers me but I can still eat and sleep normally. It gets worse when I have hot drinks, like tea or coffee. The pain lasts for a minute or so after I finish drinking, then it fades. I haven't taken any painkillers for it, I just want to know what it might be.",
+   "patient_words": "I've had this sort of ache for about two weeks now. It's not terrible, I can still sleep and eat normally, but it's definitely there. It happens when I drink hot things and it stays for a minute or so after I finish. I haven't taken anything for the pain, I just deal with it.",
    "p7": {
     "model": "llama3.1:8b",
-    "attempts": 1
+    "attempts": 2
    }
   },
   {
@@ -5748,7 +5748,7 @@
     "unexpected_missing_teeth": []
    },
    "id": "V106",
-   "patient_words": "I've had this throbbing tooth pain for three weeks now. It woke me up last night and it's been bothering me ever since. I'm not sure why it started, but it just comes and goes for no reason. It's not a bad pain, it's just... moderate, I suppose. I still sleep and eat normally, but it's always there in the background. My sister told me to check it out, but I'm not sure what's going on.",
+   "patient_words": "I woke up last night with a throbbing tooth. It just started, no reason I can think of. No, I mean, I was just lying in bed, not doing anything. It's been going on for three weeks. It's moderate pain, I can still eat and sleep normally. It's not constant, but it comes back every few days, I guess.",
    "p7": {
     "model": "llama3.1:8b",
     "attempts": 1

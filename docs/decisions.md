@@ -23,6 +23,27 @@ checklist row. A dentist should decide whether trismus, visual disturbance and
 voice change belong in checklist A. Until then the protocol cannot detect
 them, and the evaluation cannot measure them.
 
+### Severity phrasings the rulings do not settle (for the user)
+Found while writing the held-back set `llm/eval/heldback/severity_phrases_c.json`
+(research-pm, 2026-09-29). The definition (severe = stops them sleeping or
+eating, or they call it unbearable) and SP01–SP09 do not decide these. They
+are kept in the set as `unclear` (`"severe": null`) and are not scored until
+the user rules:
+
+| Id | Phrase | Why unclear |
+|---|---|---|
+| HU01 | "I can't tell you how much it hurts." | intensifier idiom alone; no sleep or eating stated |
+| HU02 | "It's torture." | like agony (SP01), but not ruled |
+| HU03 | "If I had to score it, ten out of ten." | numeric scale not ruled |
+| HU04 | "I'm getting maybe four hours of sleep instead of eight." | sleep reduced, not stopped |
+| HU05 | "It takes me an hour longer than usual to fall asleep." | delayed sleep onset. Set a keyed a similar phrase (SV21) severe without a ruling |
+| HU06 | "The only way I can sleep is by taking painkillers before bed." | sleep kept only with pain relief |
+| HU07 | "I'm eating a bit less than usual." | slightly reduced eating. Set a keyed "much less" (SV10) severe |
+| HU08 | "It's so painful it brings tears to my eyes." | tears not ruled; no sleep or eating stated |
+
+A ruling moves a phrase into the scored set. It is not added to the
+extraction instruction, which would tune on held-back text.
+
 ### Caries threshold in `llm/rules.py`
 `CARIES_CONF_THRESHOLD = 0.50`. The file's own comment says to tune for
 sensitivity. Measured on 4,929 labelled Mendeley photos (photo-level labels):
@@ -43,6 +64,87 @@ step only runs with the development override until a dentist signs them off.
 The 20 rule cases in `llm/eval/rule_cases.json` also need blind dentist labels.
 
 ## Decided
+
+### 2026-09-29 — Severity extraction: HEDGE exception and instruction clarification (user)
+**Decision (user, relayed by the lead).** Both are approved. They apply the
+existing 2026-09-26 definition; neither changes it.
+
+**(a) Severity HEDGE exception** (llm-dev-4, `interview.py` `verify()`).
+- A quoted `severe` is not nulled by `HEDGE` when the same quote also
+  carries a ruled severe cue.
+- It can only prevent a drop, never add a value.
+- Example: "I can't describe how bad it is, it wakes me every hour".
+
+**(b) `EXTRACTION_INSTRUCTION` clarification**, applying the definition:
+- One of sleep or eating is enough.
+- A contrast about the other one, or about the daytime, does not make it
+  moderate ("eating's fine, but it wakes me every night" is severe).
+- After a self-correction, the corrected answer counts.
+- The SP07 line is reworded as "not eating on the painful side but chewing
+  on the other side (they still eat)".
+- No "skipping meals" line is added.
+
+**Evidence:**
+- In the phrase sets (`severity_phrases.json` + `_b.json`), 15/72 severe
+  phrases were read as moderate.
+- 0 of those 15 were drops via HEDGE. So (a) guards a risk not yet seen in
+  a measured miss, and (b) targets the measured one.
+- Both sets have been read by llm-dev, so they are not a fair test of the
+  change.
+
+**Acceptance (pre-declared, before the run):** on the held-back set
+`llm/eval/heldback/severity_phrases_c.json`, scored on the settled items
+only (36 severe, 28 not severe; HU01–HU08 excluded):
+- severe → moderate (or any not-severe result) on **< 21%** of the 36 severe
+  items (at most 7/36);
+- **0** false severes on the 28 not-severe items.
+Otherwise both changes are reverted.
+- qa-engineer runs it. Tuned and independent items are reported apart.
+- Hashes (`interview.py`, extraction prompt) to follow from llm-dev-4.
+
+Still `DRAFT-UNREVIEWED`: the definition and SP rulings need a dentist (Form
+C).
+
+**2026-09-30: set c result; acceptance FAILED; the user keeps the new
+configuration.**
+- Both configurations were scored on the 64 settled items of set c
+  (qwen3:14b; exact 95% CIs). Raw results: `runs/evals/severity_c_2026-09-29/`
+  and `runs/evals/severity_c_2026-09-29_old/`.
+
+  | | Old (interview 5c6427b4) | New (interview 23f41c60) |
+  |---|---|---|
+  | Severe → not severe (n = 36) | 6/36 = 16.7% (6.4–32.8): HS02, HS04, HS10, HS14, HS15, HS32 | **2/36 = 5.6% (0.7–18.7)**: HS14, HS27 |
+  | False severe (n = 28) | 0/28 (0–12.3) | **4/28 = 14.3% (4.0–32.7)**: HN06, HN15, HN16, HN22 |
+  | Total wrong | 6/64 | 6/64 |
+  | HEDGE items (HS19, HS20, HS22, HS23, HS35) | 5/5 kept | 5/5 kept |
+
+- The first criterion is met (2/36 ≤ 7/36). The second, **0 false severes,
+  failed** (4/28). The pre-declared rule said revert.
+- The new false severes:
+  - HN06: past disruption only, an SP09 case ("the first night it kept me
+    up, but I've slept through every night since");
+  - HN15 and HN16: self-corrections *to* not severe (the corrected answer is
+    not applied in that direction);
+  - HN22: "It's pretty painful", strong words alone.
+- The HEDGE exception made no measured difference here: both
+  configurations kept all 5 HEDGE items.
+- **User decision (2026-09-30): keep the new configuration anyway.**
+  - Why: this is a screening aid, and a missed severe case (under-triage) is
+    the more dangerous error. Total errors are equal (6 vs 6), and the new
+    configuration moves them from under-triage to over-triage.
+  - This overrides the pre-declared acceptance rule. It is reported as
+    that, not as a pass.
+- **Known limitation:** over-triage on 4/28 (14%) not-severe phrasings on
+  set c. In those cases a moderate pain becomes URGENT through U2.
+- **Follow-up, not this round:**
+  - make self-correction apply in both directions;
+  - enforce "strong words alone = moderate".
+  - It must be measured on a **new held-back set d**: set c's failing items
+    have now been seen, so set c no longer tests a change aimed at them.
+- Unclear items (not scored): the new configuration read 6 of HU01–HU08 as
+  severe, HU07 as moderate, and HU01 as null. The old configuration differs
+  only on HU05 (moderate). They stay open for the user's ruling (Open
+  section).
 
 ### 2026-09-29 — P7 dev, fresh model-B run on v0.3: adjudication (research-pm)
 The fresh whole-dev B run (gemini-3.5-flash-lite, B prompt 239c718f…,

@@ -1,8 +1,16 @@
-# Held-back guard probes
+# Held-back probes (extraction and guards)
 
 llm-dev must not read, quote or tune against these; only qa runs them and
-reports category-level misses.
+reports category-level misses. Each set is run on a configuration change it
+tests, once, with the configuration hashes recorded.
 
+- `severity_phrases_c.json`: pain_severity extraction (U2), same shape as
+  `llm/eval/severity_phrases_b.json`. Written by research-pm 2026-09-29
+  before any run; expected values from the user's rulings only (definition
+  and SP01-SP09, 2026-09-26). 36 severe (7 `tuned`: they use a ruled word
+  that the extraction instruction quotes), 28 not severe (8 `tuned`), and
+  8 `unclear` (`"severe": null`), which the rulings do not settle. Score
+  only the 64 settled ones; report the unclear ones apart, for the user.
 - `relief_guard_heldback.json`: `explain.claims_relief_result` (hard rule 7,
   U10). Written 2026-09-29 before its first run; 20 claims (6 "not tried"
   forms) and 20 advice, hedge and question sentences. First result, on

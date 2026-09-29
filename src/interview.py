@@ -149,8 +149,25 @@ HEDGE = re.compile(
 # don't know what to take for it" says nothing was taken, so it is an answer
 # ('not_tried'), not a hedge. Only this phrase is lifted, only for that value;
 # any other hedge in the quote ("not sure if it made a difference") still nulls.
+# "No idea / not sure what to take" added as the same meaning (lead, 2026-09-29).
 NOT_TRIED_PHRASE = re.compile(
-    r"\b(?:do ?n'?t|do not|have ?n'?t|have not) (?:really )?known? what (?:to )?(?:take|use)\b")
+    r"\b(?:(?:do ?n'?t|do not|have ?n'?t|have not) (?:really )?known?|no idea|not (?:really )?sure)"
+    r" what (?:to )?(?:take|use)\b")
+# User, 2026-09-29: "I can't tell you how much it hurts, I can't sleep" is not a
+# hedge. A 'severe' whose quote also carries one of the ruled severe cues is kept
+# despite HEDGE, since dropping it can only lower urgency. A negated cue ("not
+# severe", "doesn't keep me up") does not count.
+SEVERE_CUES = re.compile(
+    r"\b(?:unbearable|agony|agoni[sz]ing|excruciating|worst (?:pain|toothache)"
+    r"|(?:can'?t|cannot) take it|killing me|severe"
+    r"|(?:can'?t|cannot|could ?n'?t|could not) (?:get to )?(?:sleep|eat)"
+    r"|(?:keeps?|kept|keeping) me (?:up|awake)|wakes? me|woke me|waking me)\b")
+_NEGATED_CUE = re.compile(r"(?:\bnot|n't|\bnever|\bno longer)\s+(?:\w+\s+)?$")
+
+
+def _severe_cue(text: str) -> bool:
+    return any(not _NEGATED_CUE.search(text[:m.start()]) for m in SEVERE_CUES.finditer(text))
+
 
 # Each pain_triggers item must be named in the patient's own message.
 TRIGGER_CUES = {
@@ -314,6 +331,8 @@ def verify(field: str, value, quote: str, sources: list, own_question=None,
     if field == "pain_relief_effect" and value == "not_tried":
         plain_quote = NOT_TRIED_PHRASE.sub(" ", plain_quote)
     hedged = bool(HEDGE.search(plain_quote))
+    if field == "pain_severity" and value == "severe" and _severe_cue(plain_quote):
+        hedged = False
 
     if field == "pain_triggers":
         kept = [item for item in value
@@ -360,13 +379,24 @@ EXTRACTION_INSTRUCTION = (
     "normally; 'severe' — it stops them sleeping or eating, or they call it "
     "unbearable. Strong words alone ('really bad', 'throbbing badly') are "
     "'moderate' while they still sleep and eat.\n"
+    # Applying the user's definition (severe = sleep OR eating), lead 2026-09-29:
+    # 15/72 severe phrasings were read 'moderate' when the other one, or the
+    # daytime, was said to be fine, or after a self-correction.
+    "  One of the two is enough. Pain that wakes them, keeps them up, or stops them "
+    "getting to sleep is 'severe' even if they eat normally; pain that stops them "
+    "eating properly is 'severe' even if they sleep. Saying the other one is fine, "
+    "or that the daytime is fine, does not make it 'moderate': 'food is no problem, "
+    "but I lie awake with it' is 'severe'.\n"
+    "  If they correct themselves, use the corrected answer: 'it's mild — well, "
+    "no, I haven't slept for two nights' is 'severe'.\n"
     # Phrase rulings: the user's, 2026-09-26 (SP01-SP09).
     "  These count as 'severe' on their own: agony, excruciating, the worst pain "
     "they have ever had, they can't take it anymore, it is killing them, or they "
     "call it 'severe'.\n"
-    "  These are NOT 'severe' on their own: chewing on the other side, only being "
-    "unable to sleep in one position, or pain that used to disturb their sleep or "
-    "eating but no longer does.\n"
+    "  These are NOT 'severe' on their own: not eating on the painful side but "
+    "chewing on the other side (they still eat), only being unable to sleep in one "
+    "position, or pain that used to disturb their sleep or eating but no longer "
+    "does.\n"
     "- location needs arch and side together: 'bottom left' is lower_left, "
     "'on the left' alone is not enough. 'front' is the front teeth, top or bottom: "
     "whenever they say front, use 'front' and never add a side they did not say; "
