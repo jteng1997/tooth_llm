@@ -27,7 +27,7 @@ Two limits worth knowing before you read anything else:
 |---|---|---|
 | `form-a-protocol.md` | Are the levels, time frames, criteria, questions and patient-facing wording clinically acceptable? | ~60–90 min |
 | `form-b-vignettes.md` | Label short patient descriptions with how soon they should be seen, blind to what our system said | ~1 min each; 220 cases ≈ 4 h, and a 60-case subset is useful on its own |
-| `form-c-open-questions.md` | Eleven decisions no guideline settles, which the project made provisionally | ~30 min |
+| `form-c-open-questions.md` | Twelve decisions no guideline settles, which the project made provisionally | ~30 min |
 | `form-d-knowledge.md` | 6 plain-language fact sheets (32 sections) that the explanations are built from: correct, and safely worded? | ~2 h |
 
 Forms A and C are the blocking ones: until they are signed, every result the

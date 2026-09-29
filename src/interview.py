@@ -346,6 +346,13 @@ EXTRACTION_INSTRUCTION = (
     "normally; 'severe' — it stops them sleeping or eating, or they call it "
     "unbearable. Strong words alone ('really bad', 'throbbing badly') are "
     "'moderate' while they still sleep and eat.\n"
+    # Phrase rulings: the user's, 2026-09-26 (SP01-SP09).
+    "  These count as 'severe' on their own: agony, excruciating, the worst pain "
+    "they have ever had, they can't take it anymore, it is killing them, or they "
+    "call it 'severe'.\n"
+    "  These are NOT 'severe' on their own: chewing on the other side, only being "
+    "unable to sleep in one position, or pain that used to disturb their sleep or "
+    "eating but no longer does.\n"
     "- location needs arch and side together: 'bottom left' is lower_left, "
     "'on the left' alone is not enough. 'front' is the front teeth, top or bottom: "
     "whenever they say front, use 'front' and never add a side they did not say; "

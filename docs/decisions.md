@@ -44,6 +44,102 @@ The 20 rule cases in `llm/eval/rule_cases.json` also need blind dentist labels.
 
 ## Decided
 
+### 2026-09-26 — Pain relief decides the pain level: "not tried" → SOON, unanswered → URGENT, U5/U6 retired (user, lead, research-pm); protocol v0.3 final
+The user gave these rulings to the team on 2026-09-26, just before the
+teammates' limits hit, and they are logged now that the work has resumed.
+Provisional until a dentist confirms (Form C, C2 and C12).
+
+**(a) Relief not tried → SOON (user), per SDCEP.**
+- Pain relief is now the only discriminator for pain:
+  - helped → SOON (S1);
+  - not tried → SOON (S1);
+  - not helped → URGENT (U1).
+- This answers point 1 of the v0.3 draft ("not tried stays URGENT").
+
+**U5/U6 retired (research-pm, delegated by the user).**
+- Once "not tried" is removed, U5 and U6 read `... AND pain_relief_effect ==
+  not_helped`.
+- Q10 is asked only when `pain_present == true`, so every such case already
+  meets U1 (pain + relief not helped → URGENT). They could never change a
+  level.
+- Checked on the dev keys: 0/100 dev keys and 0/20 sanity cases have a relief
+  answer without pain.
+- They were retired rather than kept as redundant citations, for two
+  reasons:
+  - SDCEP's pain pathway has no node for lingering, night or spontaneous
+    pain;
+  - a criterion naming those symptoms invites the triage model to cite them
+    as an URGENT reason, which is the v0.2 behaviour the user reversed.
+- Q13 and Q14 are still asked, for the explanation and the dentist review.
+- The ids U5 and U6 are not reused.
+
+**(b) Pain with relief unanswered or unclear → URGENT (user delegated "the
+one closest to SDCEP"; the lead ruled).**
+- New criterion **U10**, `pain_present == true AND pain_relief_effect is
+  null`: "Tooth pain, and it is not known whether pain relief has helped".
+- **Null syntax, fixed by the lead:** `field is null` is the only test that
+  holds on an unanswered field, and it is not allowed on floor criteria.
+  llm-dev is adding it to `src/protocol.py`.
+- **SDCEP check, 2026-09-26.** The pain pathway flowchart was re-read from
+  the image on the SDCEP site; the page text carries no pathway.
+  - "Has analgesic been taken?" No → Non-urgent.
+  - "Has analgesic controlled the pain?" Yes → Non-urgent; No → Urgent.
+  - There is no branch for an unknown answer. Both Non-urgent exits need a
+    known answer, so SDCEP gives no warrant for SOON when the answer is
+    unknown.
+  - URGENT is therefore the project's conservative reading, backed by hard
+    rule 7 (a blank is never reassuring). It is **not SDCEP wording**, and
+    the source line says so.
+  - The pulpitis page still returned 404, so the U5/U6 reading also rests on
+    the 2026-09-22 notes. The flowchart is consistent with them.
+- This answers point 2 of the v0.3 draft ("unanswered relief now gives
+  SOON"), which reversed it.
+
+**Severity phrasings (user), for the extraction instruction:**
+- **Severe:** SP01–SP06 (agony, excruciating, worst pain ever, can't take it
+  anymore, killing me, "severe" on its own).
+- **Not severe:** SP07–SP09 (chewing on the other side; sleep position only;
+  past disruption only).
+- They go into `EXTRACTION_INSTRUCTION` with no code guard (llm-dev).
+  qa-engineer moves `severity_phrases_pending.json` into the ruled set.
+
+**Evidence and consequences** (`docs/plans/protocol-v0.3/README.md` §4):
+- **Dev: 9/100 keys change level.**
+  - URGENT → SOON (6): V021, V048 and V072 (U5 retired); V077, V081 and V087
+    (U6 retired).
+  - SOON → URGENT (3): V005, V017 and V031 (U10).
+  - A further 20 keys, all EMERGENCY, gain U10 in `criteria_met` only.
+- **Sanity:** S007 URGENT → SOON.
+- **Cost of (b):** the 3 keys that rise are mild sweet sensitivity with relief
+  unanswered. V005 and V031 say "I don't know what to take for it", which
+  could be read as "not tried" (SOON).
+- **Lead ruling, 2026-09-26 (provisional; the dentist confirms via Form C,
+  C12):** "I don't know what to take for it" means relief **not tried** →
+  SOON. The patient is saying they have taken nothing; that is an answer,
+  not a blank.
+  - V005 and V031 are re-keyed `pain_relief_effect: not_tried` and stay
+    SOON. Their texts are unchanged.
+  - V017 ("not really sure if it made a difference") stays unknown, so U10
+    applies → URGENT.
+  - After the ruling, the dev level changes are **7/100**: 6 down and 1 up
+    (V017).
+  - **Extraction rule, open for llm-dev and qa-engineer:** the extractor
+    should map this phrasing ("don't know what to take", "haven't taken
+    anything") to `not_tried`, not to null. That needs an instruction line
+    and a phrase-set check. Neither exists yet.
+- **Held-out** is not rescored and stays v0.2. Under the final v0.3, the level
+  would differ on:
+  - 18/200 triage keys (12 down, 6 up);
+  - 6/60 end-to-end keys (4 down, 2 up).
+  These counts replace the earlier "12/200, 4/60", which predate (b). This is
+  a limitation, not a result.
+- **rules.py** (frozen baseline, R3) is now:
+  - more urgent than the protocol on lingering or night pain with relief
+    that helped or was not tried;
+  - less urgent on unanswered relief.
+- The v0.3 YAML is final. It parses and builds under the current
+  `src/protocol.py` (2026-09-26).
+
 ### 2026-09-26 — Partial RETAKE: option 1, keep current behaviour (user)
 Decided by the user, relayed by the lead. No code change.
 - When one photo is unusable and the level would come **only from photo
@@ -85,7 +181,9 @@ for now"). Provisional until a dentist confirms (Form C, C2, updated).
 - The draft loads and validates under the current loader. The live file is
   unchanged; llm-dev switches it.
 
-**Two points left to the user (not decided):**
+**Two points left to the user** (both answered the same day by decision 4,
+"Pain relief decides the pain level", above; U5/U6 were retired then, and
+the counts below were superseded):
 1. "Not tried" stays URGENT, because the decision covers only effective
    relief. SDCEP would give non-urgent there too.
 2. Unanswered relief now gives SOON, since the grammar cannot test for null.

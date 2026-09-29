@@ -76,5 +76,14 @@
   {"id": "SN30", "severe": false, "context": "Q11", "style": "plain", "text": "It's not so bad that it stops me sleeping."},
   {"id": "SN31", "severe": false, "context": "Q11", "style": "plain", "text": "The middle one."},
   {"id": "SN32", "severe": false, "context": "Q11", "style": "terse", "text": "moderate still eating sleeping"},
-  {"id": "SN33", "severe": false, "context": "Q11", "style": "plain", "text": "Pretty bad, but I sleep and eat okay."}
+  {"id": "SN33", "severe": false, "context": "Q11", "style": "plain", "text": "Pretty bad, but I sleep and eat okay."},
+  {"id": "SP01", "severe": true, "context": "opening", "style": "plain", "text": "It's agony.", "note": "user ruling 2026-09-26: 'agony' counts as unbearable"},
+  {"id": "SP02", "severe": true, "context": "opening", "style": "plain", "text": "The pain is excruciating.", "note": "user ruling 2026-09-26: 'excruciating' counts as unbearable"},
+  {"id": "SP03", "severe": true, "context": "opening", "style": "plain", "text": "Worst pain I've ever had.", "note": "user ruling 2026-09-26: 'worst pain ever' counts as unbearable"},
+  {"id": "SP04", "severe": true, "context": "opening", "style": "plain", "text": "I can't take it anymore.", "note": "user ruling 2026-09-26: 'can't take it' counts as unbearable"},
+  {"id": "SP05", "severe": true, "context": "opening", "style": "plain", "text": "The pain is killing me.", "note": "user ruling 2026-09-26: figure of speech counts as severe"},
+  {"id": "SP06", "severe": true, "context": "opening", "style": "plain", "text": "The pain is severe.", "note": "user ruling 2026-09-26: 'severe' alone in the opening message counts"},
+  {"id": "SP07", "severe": false, "context": "opening", "style": "plain", "text": "I can't eat on that side, so I chew on the other side.", "note": "user ruling 2026-09-26: still eats on the other side, not severe"},
+  {"id": "SP08", "severe": false, "context": "opening", "style": "plain", "text": "I can't sleep on my left side because of it.", "note": "user ruling 2026-09-26: sleeping position only, not severe"},
+  {"id": "SP09", "severe": false, "context": "opening", "style": "plain", "text": "It used to keep me awake, but now I sleep fine.", "note": "user ruling 2026-09-26: past disruption only, not severe"}
 ]

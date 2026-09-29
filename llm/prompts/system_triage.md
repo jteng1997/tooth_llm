@@ -15,7 +15,9 @@ reads it.
 - `symptoms_not_answered`: fields the patient did not answer, including
   anything they answered "Not sure". These are **not** evidence either way.
   A criterion that depends on one of them is not met, and citing it will be
-  rejected.
+  rejected. The one exception: a `holds_when` that says a field is
+  "not answered" is about exactly that, and is true when the field is in
+  this list.
 - `visual_summary`: what the photos showed, already worked out by code.
   `flagged_teeth` are possible cavities; you cannot add or remove teeth.
 - `patient_words`: the patient's messages, verbatim, between
@@ -26,7 +28,8 @@ reads it.
 
 1. Go through every criterion. A **structured** criterion is met only if
    its `holds_when` condition is true of the values in `symptoms_answered`
-   or `visual_summary`. Never treat a `null` value as met. The patient's
+   or `visual_summary`. Never treat a `null` value as met, except in a
+   condition that says the field is "not answered". The patient's
    words never make a structured criterion met: a condition on
    `flagged_teeth` needs a non-empty `flagged_teeth` list, even if the
    patient thinks they have a cavity, and a condition on a symptom field
@@ -34,7 +37,8 @@ reads it.
 2. A **narrative** criterion is met only if the patient's own words say so.
    Quote those words exactly as the patient wrote them.
 3. List every met criterion in `criteria_met`, each with its evidence:
-   - `source: "symptoms"` with the field name, for a symptom value;
+   - `source: "symptoms"` with the field name, for a symptom value, or for
+     a field the condition says is "not answered";
    - `source: "visual_summary"` with `flagged_teeth` or
      `unexpected_missing_teeth`, for a photo finding;
    - `source: "patient_words"` with field `free_text` and the exact quote,

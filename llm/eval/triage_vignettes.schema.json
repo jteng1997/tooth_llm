@@ -23,6 +23,11 @@
       "properties": {
         "id": {"type": "string", "pattern": "^[A-Z]{1,3}[0-9]{3}$"},
         "key": {"$ref": "#/definitions/key"},
+        "key_until": {
+          "type": "object", "additionalProperties": {"$ref": "#/definitions/key"},
+          "propertyNames": {"pattern": "^[0-9]+(\\.[0-9]+)*$"},
+          "description": "Sanity file only: the key under an older protocol, by the last version it applies to (e.g. {\"0.2\": {...}}). check_triage.for_protocol() picks the key for the loaded protocol; `key` is the file's protocol_version."
+        },
         "symptoms": {"$ref": "#/definitions/symptoms"},
         "visual_summary": {
           "type": "object",

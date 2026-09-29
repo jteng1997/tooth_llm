@@ -59,6 +59,124 @@ class Grammar(unittest.TestCase):
                 P.parse_predicate(bad)
 
 
+class IsNull(unittest.TestCase):
+    """`field is null` (lead, 2026-09-26): true only when the field is unanswered."""
+
+    def test_parses_to_its_own_atom(self):
+        self.assertEqual(P.parse_predicate("pain_relief_effect is null"),
+                         ("is null", "pain_relief_effect", None))
+        self.assertEqual(P.parse_predicate("pain_present AND pain_relief_effect is null"),
+                         ("and", ("==", "pain_present", True),
+                          ("is null", "pain_relief_effect", None)))
+
+    def test_malformed_is_raises(self):
+        for bad in ("pain_relief_effect is", "pain_relief_effect is true",
+                    "pain_relief_effect is not null", "is null", "fever is null null"):
+            with self.subTest(bad=bad), self.assertRaises(P.ProtocolError):
+                P.parse_predicate(bad)
+
+    def test_equals_null_is_refused(self):
+        # `== null` could never hold, since null satisfies no comparison.
+        for bad in ("pain_relief_effect == null", "fever != null"):
+            with self.subTest(bad=bad), self.assertRaises(P.ProtocolError) as ctx:
+                P.parse_predicate(bad)
+            self.assertIn("is null", str(ctx.exception))
+        self.assertTrue(holds('location == "null"', {"location": "null"}))  # a quoted string
+
+    def test_true_only_when_unanswered(self):
+        p = "pain_relief_effect is null"
+        self.assertTrue(holds(p, {"pain_relief_effect": None}))
+        self.assertTrue(holds(p, {}))                          # missing = unanswered
+        for value in ("helped", "not_helped", "not_tried"):
+            with self.subTest(value=value):
+                self.assertFalse(holds(p, {"pain_relief_effect": value}))
+
+    def test_false_and_empty_are_answers_not_null(self):
+        self.assertFalse(holds("fever is null", {"fever": False}))
+        self.assertFalse(holds("pain_triggers is null", {"pain_triggers": []}))
+
+    def test_visual_summary_fields(self):
+        self.assertTrue(holds("visual_summary.images_usable is null", visual={"images_usable": None}))
+        self.assertFalse(holds("images_usable is null", visual={"images_usable": True}))
+
+    def test_composes_with_and_or_parentheses(self):
+        p = "pain_present AND (pain_relief_effect is null OR pain_relief_effect == not_helped)"
+        self.assertTrue(holds(p, {"pain_present": True, "pain_relief_effect": None}))
+        self.assertTrue(holds(p, {"pain_present": True, "pain_relief_effect": "not_helped"}))
+        self.assertFalse(holds(p, {"pain_present": True, "pain_relief_effect": "helped"}))
+        self.assertFalse(holds(p, {"pain_present": False, "pain_relief_effect": None}))
+        # the null test does not leak: pain_present unanswered is still not evidence
+        self.assertFalse(holds(p, {"pain_present": None, "pain_relief_effect": None}))
+        self.assertFalse(holds(p, {}))
+        # AND still binds tighter than OR
+        self.assertTrue(holds("fever OR pain_present AND pain_severity is null", {"fever": True}))
+        self.assertFalse(holds("(fever OR pain_present) AND pain_severity is null",
+                               {"fever": True, "pain_severity": "mild"}))
+
+    def test_other_atoms_keep_null_as_no_evidence(self):
+        # Beside an `is null` atom, null still satisfies no other comparison.
+        for p in ("pain_relief_effect is null AND pain_relief_effect != helped",
+                  "pain_relief_effect is null AND pain_triggers non-empty",
+                  "pain_relief_effect is null AND fever == false"):
+            with self.subTest(predicate=p):
+                self.assertFalse(holds(p, {"pain_relief_effect": None, "pain_triggers": None,
+                                           "fever": None}))
+
+    def test_criterion_fields_and_null_fields(self):
+        c = build_protocol(with_u7()).criterion("U7")
+        self.assertEqual(c.fields(), ["pain_present", "pain_relief_effect"])
+        self.assertEqual(c.null_fields(), ["pain_relief_effect"])
+        self.assertEqual(build_protocol().criterion("U1").null_fields(), [])
+
+    def test_rendering_for_the_model(self):
+        self.assertEqual(P.render_predicate("pain_present == true AND pain_relief_effect is null"),
+                         "pain_present == true AND pain_relief_effect not answered")
+        self.assertEqual(P.render_predicate("(a is null OR visual_summary.images_usable  is  null)"),
+                         "(a not answered OR visual_summary.images_usable not answered)")
+        plain = "visual_summary.flagged_teeth non-empty"
+        self.assertEqual(P.render_predicate(plain), plain)        # nothing else changes
+        c = build_protocol(with_u7()).criterion("U7")
+        self.assertEqual(c.holds_when(), "pain_present == true AND pain_relief_effect not answered")
+        self.assertEqual(c.predicate, "pain_present == true AND pain_relief_effect is null")
+
+    def test_validation(self):
+        errs = lambda raw: "\n".join(P.validate(raw, SYMPTOM_SCHEMA, rules.RED_FLAG_FIELDS))
+        self.assertEqual(errs(with_u7()), "")
+        raw = with_u7()
+        raw["criteria"][-1]["predicate"] = "pain_present AND tooth_wobbly is null"
+        self.assertIn("'U7': unknown field 'tooth_wobbly'", errs(raw))
+        raw = with_u7()
+        raw["questions"] = [q for q in raw["questions"] if q["id"] != "Q8"]
+        self.assertIn("'U7': field 'pain_relief_effect' is not asked", errs(raw))
+
+    def test_floor_criterion_may_not_use_is_null(self):
+        raw = protocol_raw()
+        raw["criteria"][0]["predicate"] = ("difficulty_swallowing_or_breathing == true "
+                                           "OR fever is null")
+        self.assertIn("'EM1': a floor criterion may not use 'is null'",
+                      "\n".join(P.validate(raw, SYMPTOM_SCHEMA, rules.RED_FLAG_FIELDS)))
+
+    def test_protocol_level(self):
+        protocol = build_protocol(with_u7())
+        level = lambda s: protocol.protocol_level(s, {})
+        self.assertEqual(level({"pain_present": True, "pain_relief_effect": None}), "URGENT")
+        self.assertEqual(level({"pain_present": True}), "URGENT")          # field absent
+        self.assertEqual(level({"pain_present": True, "pain_relief_effect": "helped"}), "SOON")
+        self.assertEqual(level({"pain_present": False, "pain_relief_effect": None}), "ROUTINE")
+        self.assertEqual(level({"pain_present": None, "pain_relief_effect": None}), "ROUTINE")
+        self.assertEqual([c.id for c in protocol.met({"pain_present": True}, {})], ["N1", "U7"])
+
+
+def with_u7() -> dict:
+    """The fixture plus a criterion that holds only through `is null`."""
+    raw = protocol_raw()
+    raw["criteria"].append({"id": "U7", "level": "URGENT", "kind": "structured",
+                            "predicate": "pain_present == true AND pain_relief_effect is null",
+                            "statement": "Tooth pain, pain relief question not answered",
+                            "source": "test"})
+    return raw
+
+
 class Validation(unittest.TestCase):
     def errors(self, raw):
         return P.validate(raw, SYMPTOM_SCHEMA, rules.RED_FLAG_FIELDS)

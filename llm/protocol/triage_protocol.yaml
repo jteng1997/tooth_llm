@@ -22,7 +22,9 @@
 #   USER-2026-09-22-n  item n of the user's "Phase 1–2 plan decisions"
 #
 # Predicate grammar (llm-dev): field == literal, field != literal,
-# field non-empty, field contains literal, AND, OR. Fields are symptoms 1.2
+# field non-empty, field contains literal, field is null, AND, OR. Every
+# comparison is false on an unanswered (null) field; `field is null` is the
+# only test that is true there (added for v0.3, U10). Fields are symptoms 1.2
 # fields (1.1 + broken_filling_or_tooth, pus_or_discharge) or visual_summary fields (images_usable, flagged_teeth,
 # unexpected_missing_teeth).
 
@@ -31,7 +33,19 @@
 # no pain never reached the chat and so could never report them.
 # Q20/Q21 wording approved by the user 2026-09-23 as drafted; clinical
 # content (incl. U8 with or without pain) still needs a dentist (Form C, C11).
-protocol_version: "0.2"
+# v0.3 (2026-09-26, user decisions 3 and 4, docs/decisions.md): pain relief
+# decides the pain level, as in the SDCEP-2026 pain pathway. Supersedes
+# USER-2026-09-22-5.
+#   relief helped      -> SOON    (S1)
+#   relief not tried   -> SOON    (S1)
+#   relief not helped  -> URGENT  (U1)
+#   relief unanswered  -> URGENT  (U10, new; lead's ruling, provisional)
+# U5 (lingering) and U6 (night or spontaneous) are retired: once "not tried"
+# gives SOON they could only hold together with U1, so they never changed a
+# level (see the note where they stood). Q13 and Q14 are still asked.
+# Provisional until a dentist confirms (Form C, C2 and C12). Final draft by
+# research-pm 2026-09-26; llm-dev switches it live.
+protocol_version: "0.3"
 review_status: DRAFT-UNREVIEWED
 reviewed_by: ""
 reviewed_date: ""
@@ -202,19 +216,19 @@ criteria:
     statement: "Pain after a tooth was taken out recently"
     source: "SDCEP-2026 Pain pathway ('Has the patient recently had a tooth extracted?' Yes -> Urgent Care: Dental)."
 
-  - id: U5
-    level: URGENT
-    kind: structured
-    predicate: "pain_lingers_over_30s == true"
-    statement: "Pain that keeps aching after the hot, cold or sweet trigger has gone"
-    source: "USER-2026-09-22-5 (stays URGENT for now). dentist's call: SDCEP-2026 Pulpitis gives Non-urgent when pain relief works; AAE-2009 'lingering thermal pain' gives no duration, so the 30 s is a project convention."
-
-  - id: U6
-    level: URGENT
-    kind: structured
-    predicate: "pain_wakes_at_night == true OR pain_triggers contains spontaneous"
-    statement: "Pain that starts on its own or wakes you at night"
-    source: "USER-2026-09-22-5 (stays URGENT for now). dentist's call: SDCEP-2026 Pulpitis (pain may keep the patient awake at night) gives Non-urgent when pain relief works; AAE-2009 spontaneous pain is a descriptor of irreversible pulpitis."
+  # U5 (lingering pain) and U6 (night or spontaneous pain) retired in v0.3
+  # (research-pm, 2026-09-26; docs/decisions.md). The ids are not reused.
+  # - SDCEP-2026 Pain pathway has no node for lingering, night or spontaneous
+  #   pain; they are pulpitis symptoms, and pain relief decides the level.
+  # - With "not tried" -> SOON (USER-2026-09-26), U5/U6 would read
+  #   "... AND pain_relief_effect == not_helped". Every such case already
+  #   meets U1 (Q10 is asked only with pain_present true), so they could never
+  #   change a level.
+  # - A criterion that never changes the level still invites the triage model
+  #   to cite lingering or night pain as the URGENT reason when relief helped,
+  #   which is the v0.2 behaviour the user has reversed.
+  # Q13 and Q14 are still asked: their answers go to the explanation and to
+  # the dentist review, and a dentist may reinstate the criteria (Form C, C2).
 
   - id: U7
     level: URGENT
@@ -236,6 +250,13 @@ criteria:
     predicate: "persistent_ulcer == true"
     statement: "A mouth ulcer, sore or lump that has lasted more than 3 weeks"
     source: "USER-2026-09-22 (ulcer question added). SDCEP-2026 Ulceration pathway (ulcer present more than 3 weeks -> dental assessment for possible urgent-suspicion-of-cancer referral -> Urgent Care: Dental); SDCEP-2013 Altered sensation or abnormal appearance pathway (red, white or pigmented lesion present more than 3 weeks -> Urgent Care: local rapid access pathway)."
+
+  - id: U10
+    level: URGENT
+    kind: structured
+    predicate: "pain_present == true AND pain_relief_effect is null"
+    statement: "Tooth pain, and it is not known whether pain relief has helped"
+    source: "USER-2026-09-26 (the user delegated 'the one closest to SDCEP'; ruled by the lead; provisional). SDCEP-2026 Pain pathway flowchart (re-read 2026-09-26): both Non-urgent exits need a known answer ('Has analgesic been taken?' No, or 'Has analgesic controlled the pain?' Yes); the pathway has no branch for an unknown answer, so URGENT here is the project's conservative reading, not SDCEP wording. Hard rule 7: an unanswered question is never reassuring. dentist's call (Form C, C12)."
 
   # --- SOON: within 7 days --------------------------------------------
   - id: S1

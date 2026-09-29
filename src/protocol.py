@@ -12,12 +12,16 @@ in a small fixed grammar, evaluated here rather than with eval():
     expr   := term ("OR" term)*
     term   := factor ("AND" factor)*
     factor := "(" expr ")" | field "==" lit | field "!=" lit
-            | field "contains" lit | field "non-empty" | field
-    lit    := true | false | null | a bare word | "a quoted string" | a number
+            | field "contains" lit | field "non-empty" | field "is" "null" | field
+    lit    := true | false | a bare word | "a quoted string" | a number
 
 A bare `field` means `field == true`. An unanswered field (null) satisfies
 no comparison at all, `!=` included: an unanswered question is never
-evidence for a criterion.
+evidence for a criterion. The one exception is `field is null`, which holds
+exactly when the field is unanswered (null or absent), so a criterion can
+name a blank as a reason on its own (user, 2026-09-26: pain with the relief
+question unanswered is URGENT). A floor criterion may not use it: the floor
+fires on a reported red flag, never on a missing answer.
 """
 import argparse
 import json
@@ -71,7 +75,8 @@ def most_urgent(levels) -> str | None:
 # --- Predicate grammar ------------------------------------------------------
 
 _TOKEN = re.compile(r'\s*(?:(\()|(\))|(==|!=)|("(?:[^"\\]|\\.)*")|([A-Za-z_][\w.\-]*)|(-?\d+))')
-_KEYWORDS = {"AND", "OR", "contains", "non-empty"}
+_KEYWORDS = {"AND", "OR", "contains", "non-empty", "is"}
+_OP_WORDS = ("contains", "non-empty", "is")
 
 
 def _tokenize(text: str) -> list:
@@ -91,7 +96,7 @@ def _tokenize(text: str) -> list:
         elif number:
             tokens.append(("lit", int(number)))
         elif word in _KEYWORDS:
-            tokens.append(("op" if word in ("contains", "non-empty") else "bool", word))
+            tokens.append(("op" if word in _OP_WORDS else "bool", word))
         else:
             tokens.append(("word", word))
         pos = m.end()
@@ -158,10 +163,19 @@ class _Parser:
         op = self._peek()
         if op in (("op", "=="), ("op", "!="), ("op", "contains")):
             self._take()
-            return (op[1], name, _literal(self._take()))
+            token = self._take()
+            if token == ("word", "null"):
+                # `== null` could never hold (null satisfies no comparison)
+                raise ProtocolError(f"compare with null using '{name} is null' in {self.text!r}")
+            return (op[1], name, _literal(token))
         if op == ("op", "non-empty"):
             self._take()
             return ("non-empty", name, None)
+        if op == ("op", "is"):
+            self._take()
+            if self._take() != ("word", "null"):
+                raise ProtocolError(f"'is' takes only 'null' in {self.text!r}")
+            return ("is null", name, None)
         return ("==", name, True)
 
 
@@ -173,6 +187,23 @@ def _fields_in(node) -> set:
     if node[0] in ("and", "or"):
         return _fields_in(node[1]) | _fields_in(node[2])
     return {node[1]}
+
+
+def _null_tested(node) -> set:
+    """Field names the predicate tests with `is null`."""
+    if node[0] in ("and", "or"):
+        return _null_tested(node[1]) | _null_tested(node[2])
+    return {node[1]} if node[0] == "is null" else set()
+
+
+_IS_NULL = re.compile(r"\b([A-Za-z_][\w.\-]*)\s+is\s+null\b")
+
+
+def render_predicate(text: str) -> str:
+    """A predicate as the triage model reads it (`holds_when`): unchanged,
+    except `x is null` reads "x not answered", which the model can match to
+    its symptoms_not_answered list; the bare word null would read as a value."""
+    return _IS_NULL.sub(r"\1 not answered", text)
 
 
 def _lookup(context: dict, name: str):
@@ -192,6 +223,8 @@ def evaluate(node, context: dict) -> bool:
     if op == "or":
         return evaluate(node[1], context) or evaluate(node[2], context)
     value = _lookup(context, node[1])
+    if op == "is null":
+        return value is None
     if value is None:
         return False  # unanswered is never evidence
     if op == "==":
@@ -226,6 +259,15 @@ class Criterion:
     def fields(self) -> list:
         """Field names the predicate reads, visual_summary prefix removed."""
         return sorted({_bare(n) for n in _fields_in(self.ast)}) if self.ast else []
+
+    def null_fields(self) -> list:
+        """Fields the predicate tests with `is null`: for these, being
+        unanswered is the evidence."""
+        return sorted({_bare(n) for n in _null_tested(self.ast)}) if self.ast else []
+
+    def holds_when(self) -> str | None:
+        """The condition as shown to the triage model."""
+        return render_predicate(self.predicate) if self.predicate else None
 
     def holds(self, symptoms: dict, visual_summary: dict) -> bool:
         """Structured criteria only; narrative ones need a quote and the LLM."""
@@ -398,7 +440,12 @@ def validate(raw: dict, symptom_schema: dict, red_flag_fields) -> list:
                 errors.append(f"{where}: structured criterion without a predicate")
             else:
                 try:
-                    _check_literals(parse_predicate(c["predicate"]), fields, where, errors)
+                    ast = parse_predicate(c["predicate"])
+                    _check_literals(ast, fields, where, errors)
+                    if c.get("floor") and _null_tested(ast):
+                        errors.append(f"{where}: a floor criterion may not use 'is null'; "
+                                      "the floor fires on a reported red flag, never on "
+                                      "a missing answer")
                 except ProtocolError as exc:
                     errors.append(f"{where}: {exc}")
         if c.get("kind") == "narrative" and c.get("predicate"):

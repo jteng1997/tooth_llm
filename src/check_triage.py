@@ -47,6 +47,7 @@ import hashlib
 import json
 import math
 import random
+import re
 import statistics
 import subprocess
 import sys
@@ -172,6 +173,33 @@ def load_cases(path: Path) -> dict:
             "protocol_version": str(meta.get("protocol_version", "?")),
             "note": f"converted on load from {Path(path).name}",
             "cases": [_case_from_key(k, meta) for k in data["keys"]]}
+
+
+def _version(v) -> tuple:
+    """'0.2' -> (0, 2); a suffix such as '0.0-test' is ignored."""
+    return tuple(int(part) for part in re.findall(r"\d+", str(v).split("-")[0]))
+
+
+def for_protocol(spec: dict, version) -> dict:
+    """The case file as keyed for protocol `version`. A case may carry
+    `key_until` ({"0.2": key}): that key applies while the protocol is at or
+    below the version named, so the sanity file can pin a protocol change
+    before it goes live and stay green on both sides of the switch. The
+    lowest version that still applies wins; `version` None keeps the primary
+    keys. Returns a copy without `key_until`, or `spec` itself if no case has one."""
+    if not any("key_until" in c for c in spec["cases"]):
+        return spec
+    out = copy.deepcopy(spec)
+    for case in out["cases"]:
+        until = case.pop("key_until", {})
+        if version is None:
+            continue
+        applies = sorted((v for v in until if _version(version) <= _version(v)), key=_version)
+        if applies:
+            case["key"] = until[applies[0]]
+    if version is not None and _version(version) < _version(spec["protocol_version"]):
+        out["protocol_version"] = str(version)
+    return out
 
 
 def findings_from_visual(visual: dict) -> dict:
@@ -1072,6 +1100,9 @@ def main() -> int:
         if heldout:
             print("ERROR: held-out keys are never scored without the protocol check")
             return 1
+    if any("key_until" in c for c in spec["cases"]):
+        spec = for_protocol(spec, protocol.version if protocol else None)
+        print(f"keys for protocol v{spec['protocol_version']} (key_until resolved)")
     errors, warnings = validate_cases(spec, protocol, need_words=args.system == "llm")
     for w in warnings:
         print(f"warning: {w}")

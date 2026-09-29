@@ -1,8 +1,8 @@
 {
  "schema_version": "1.0",
  "split": "sanity",
- "protocol_version": "0.1",
- "note": "Checker self-test, not a benchmark. Keys follow triage_protocol.yaml v0.1; each rationale states what rules.py returns, worked out by hand. check_triage.py on rules.py must find exactly, under the Test 5 spec §3 RETAKE rule: 19 scored, 11 under-triage (7 severe, 6 missed EMERGENCY), 1 over-triage, 7 agree, 1 RETAKE excluded (S012, ROUTINE key). A checker that reports otherwise is broken.",
+ "protocol_version": "0.3",
+ "note": "Checker self-test, not a benchmark. Keys follow triage_protocol.yaml v0.3 (the draft in docs/plans/protocol-v0.3/ until llm-dev switches it live); a case whose key differs under v0.2 carries it in key_until[\"0.2\"], and check_triage.for_protocol() picks the key for the loaded protocol. Each rationale states what rules.py returns, worked out by hand. check_triage.py on rules.py must find exactly, under the Test 5 spec §3 RETAKE rule, 25 cases, 24 scored, 1 RETAKE excluded (S012, ROUTINE key), 7 severe and 6 missed EMERGENCY, and: with the v0.3 keys 12 under-triage, 4 over-triage (S007, S010, S021, S022), 8 agree; with the v0.2 keys 11 under-triage, 1 over-triage (S010), 12 agree. A checker that reports otherwise is broken.",
  "cases": [
   {
    "id": "S001",
@@ -259,16 +259,29 @@
   {
    "id": "S007",
    "key": {
-    "level": "URGENT",
+    "level": "SOON",
     "criteria_met": [
-     "U5",
      "S1"
     ],
     "emergency_route": null,
     "author": "qa-engineer",
     "boundary": false,
-    "stratum": "lingering_pain",
-    "rationale": "Lingering pain; rules.py R3 URGENT (agree)."
+    "stratum": "lingering_pain_relief_helped",
+    "rationale": "Lingering pain, relief helped: v0.3 retires U5, S1 SOON (SDCEP pain pathway); rules.py R3 URGENT (over)."
+   },
+   "key_until": {
+    "0.2": {
+     "level": "URGENT",
+     "criteria_met": [
+      "U5",
+      "S1"
+     ],
+     "emergency_route": null,
+     "author": "qa-engineer",
+     "boundary": false,
+     "stratum": "lingering_pain",
+     "rationale": "Lingering pain, relief helped (v0.2: U5); rules.py R3 URGENT (agree)."
+    }
    },
    "symptoms": {
     "schema_version": "1.1",
@@ -795,6 +808,304 @@
     "bleeding_uncontrolled": false,
     "exceeded_pain_relief_dose": false,
     "pain_present": false
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S021",
+   "key": {
+    "level": "SOON",
+    "criteria_met": [
+     "S1"
+    ],
+    "emergency_route": null,
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "lingering_pain_relief_not_tried",
+    "rationale": "Lingering pain, relief not tried: SOON (user 2026-09-26, SDCEP: analgesic not yet taken -> Non-urgent); rules.py R3 URGENT (over)."
+   },
+   "key_until": {
+    "0.2": {
+     "level": "URGENT",
+     "criteria_met": [
+      "U5",
+      "S1"
+     ],
+     "emergency_route": null,
+     "author": "qa-engineer",
+     "boundary": false,
+     "stratum": "lingering_pain_relief_not_tried",
+     "rationale": "Lingering pain, relief not tried (v0.2: U5); rules.py R3 URGENT (agree)."
+    }
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": true,
+    "pain_relief_effect": "not_tried",
+    "pain_severity": "mild",
+    "pain_triggers": [
+     "cold"
+    ],
+    "pain_lingers_over_30s": true,
+    "pain_wakes_at_night": false,
+    "pain_on_biting": false,
+    "recent_extraction": false,
+    "location": "lower_right",
+    "duration_days": 3
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S022",
+   "key": {
+    "level": "SOON",
+    "criteria_met": [
+     "S1"
+    ],
+    "emergency_route": null,
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "night_pain_relief_not_tried",
+    "rationale": "Night and spontaneous pain, relief not tried: SOON (user 2026-09-26; U6 retired in v0.3); rules.py R3 URGENT (over)."
+   },
+   "key_until": {
+    "0.2": {
+     "level": "URGENT",
+     "criteria_met": [
+      "U6",
+      "S1"
+     ],
+     "emergency_route": null,
+     "author": "qa-engineer",
+     "boundary": false,
+     "stratum": "night_pain_relief_not_tried",
+     "rationale": "Night and spontaneous pain, relief not tried (v0.2: U6); rules.py R3 URGENT (agree)."
+    }
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": true,
+    "pain_relief_effect": "not_tried",
+    "pain_severity": "moderate",
+    "pain_triggers": [
+     "spontaneous"
+    ],
+    "pain_lingers_over_30s": false,
+    "pain_wakes_at_night": true,
+    "pain_on_biting": false,
+    "recent_extraction": false,
+    "location": "upper_right",
+    "duration_days": 4
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S023",
+   "key": {
+    "level": "URGENT",
+    "criteria_met": [
+     "U10",
+     "S1"
+    ],
+    "emergency_route": null,
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "pain_relief_unanswered",
+    "rationale": "Pain with the relief question unanswered: U10 URGENT (lead's ruling 2026-09-26, provisional; a blank is never reassuring); rules.py R6 SOON (under)."
+   },
+   "key_until": {
+    "0.2": {
+     "level": "SOON",
+     "criteria_met": [
+      "S1"
+     ],
+     "emergency_route": null,
+     "author": "qa-engineer",
+     "boundary": false,
+     "stratum": "pain_relief_unanswered",
+     "rationale": "Pain with the relief question unanswered: v0.2 has no criterion for it, S1 SOON; rules.py R6 SOON (agree)."
+    }
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": true,
+    "pain_relief_effect": null,
+    "pain_severity": "moderate",
+    "pain_triggers": [
+     "sweet"
+    ],
+    "pain_lingers_over_30s": false,
+    "pain_wakes_at_night": false,
+    "pain_on_biting": false,
+    "recent_extraction": false,
+    "location": "upper_left",
+    "duration_days": 6
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S024",
+   "key": {
+    "level": "URGENT",
+    "criteria_met": [
+     "U1",
+     "S1"
+    ],
+    "emergency_route": null,
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "lingering_pain_relief_not_helped",
+    "rationale": "Lingering pain that relief has not controlled: U1 URGENT, which v0.3 keeps when U5 goes; rules.py R3 URGENT (agree)."
+   },
+   "key_until": {
+    "0.2": {
+     "level": "URGENT",
+     "criteria_met": [
+      "U1",
+      "U5",
+      "S1"
+     ],
+     "emergency_route": null,
+     "author": "qa-engineer",
+     "boundary": false,
+     "stratum": "lingering_pain_relief_not_helped",
+     "rationale": "Lingering pain that relief has not controlled (v0.2: U1 and U5); rules.py R3 URGENT (agree)."
+    }
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": true,
+    "pain_relief_effect": "not_helped",
+    "pain_severity": "moderate",
+    "pain_triggers": [
+     "cold"
+    ],
+    "pain_lingers_over_30s": true,
+    "pain_wakes_at_night": false,
+    "pain_on_biting": false,
+    "recent_extraction": false,
+    "location": "lower_left",
+    "duration_days": 7
+   },
+   "visual_summary": {
+    "images_usable": true,
+    "flagged_teeth": [],
+    "unexpected_missing_teeth": []
+   },
+   "patient_words": [],
+   "style": null,
+   "dentist_label": null
+  },
+  {
+   "id": "S025",
+   "key": {
+    "level": "URGENT",
+    "criteria_met": [
+     "U10",
+     "S1"
+    ],
+    "emergency_route": null,
+    "author": "qa-engineer",
+    "boundary": false,
+    "stratum": "night_pain_relief_unanswered",
+    "rationale": "Pain that wakes them at night, relief unanswered: U10 URGENT, so retiring U6 does not lower it; rules.py R3 URGENT (agree)."
+   },
+   "key_until": {
+    "0.2": {
+     "level": "URGENT",
+     "criteria_met": [
+      "U6",
+      "S1"
+     ],
+     "emergency_route": null,
+     "author": "qa-engineer",
+     "boundary": false,
+     "stratum": "night_pain_relief_unanswered",
+     "rationale": "Pain that wakes them at night, relief unanswered (v0.2: U6); rules.py R3 URGENT (agree)."
+    }
+   },
+   "symptoms": {
+    "schema_version": "1.1",
+    "difficulty_swallowing_or_breathing": false,
+    "chest_pain_or_breathless": false,
+    "swelling": false,
+    "fever": false,
+    "systemically_unwell": false,
+    "recent_trauma": false,
+    "bleeding_uncontrolled": false,
+    "exceeded_pain_relief_dose": false,
+    "pain_present": true,
+    "pain_relief_effect": null,
+    "pain_severity": "mild",
+    "pain_triggers": [
+     "hot"
+    ],
+    "pain_lingers_over_30s": false,
+    "pain_wakes_at_night": true,
+    "pain_on_biting": false,
+    "recent_extraction": false,
+    "location": "lower_right",
+    "duration_days": 2
    },
    "visual_summary": {
     "images_usable": true,

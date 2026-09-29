@@ -147,7 +147,7 @@ def build_messages(protocol, symptoms: dict, visual: dict, words: list) -> list:
     # alone the model cited "A possible cavity seen in the photo" on a
     # patient's own guess, with flagged_teeth empty (dev Test 5, 2026-09-26).
     criteria = [{"id": c.id, "level": c.level, "kind": c.kind, "statement": c.statement,
-                 **({"holds_when": c.predicate} if c.kind == "structured" else {})}
+                 **({"holds_when": c.holds_when()} if c.kind == "structured" else {})}
                 for c in protocol.criteria]
     # Answered and unanswered are shown apart, because a null buried in a JSON
     # dump is easy to read past: in a live run the model cited a criterion about
@@ -158,7 +158,8 @@ def build_messages(protocol, symptoms: dict, visual: dict, words: list) -> list:
         "protocol_criteria:\n" + json.dumps(criteria, indent=1),
         "symptoms_answered:\n" + json.dumps(answered, indent=1, ensure_ascii=False),
         "symptoms_not_answered (the patient gave no answer for these; a criterion that "
-        "needs one of them is NOT met and must not be cited):\n" + json.dumps(unanswered, indent=1),
+        "needs one of them is NOT met and must not be cited, unless its holds_when says "
+        "that field is 'not answered'):\n" + json.dumps(unanswered, indent=1),
         "visual_summary:\n" + json.dumps(visual, indent=1),
         "patient_words:\n" + _fence(words),
         "Apply the protocol now and output the JSON.",
@@ -204,6 +205,12 @@ def check_proposal(proposal: dict, protocol, symptoms: dict, visual: dict,
             entry = {"source": source, "field": name}
             if source == "symptoms":
                 if (symptoms or {}).get(name) is None:
+                    if name in criterion.null_fields():
+                        # `name is null` in the predicate: the blank is the reason.
+                        # Whether the criterion holds is checked below as usual.
+                        entry["value"] = None
+                        evidence.append(entry)
+                        continue
                     errors.append(f"{cid}: symptom {name!r} is unanswered, so it is not evidence")
                     ok = False
                     continue
@@ -249,7 +256,8 @@ def _baseline_reason(baseline: dict) -> dict:
 
 def _code_reasons(criteria: list, symptoms: dict, visual: dict) -> list:
     """Reasons written by code, when the floor, the protocol check or the
-    fallback decides: each criterion with the answered fields it reads."""
+    fallback decides: each criterion with the answered fields it reads, and
+    the unanswered ones it tests with `is null`."""
     reasons = []
     for c in criteria:
         evidence = []
@@ -260,6 +268,8 @@ def _code_reasons(criteria: list, symptoms: dict, visual: dict) -> list:
                                      "value": visual[name]})
             elif symptoms.get(name) is not None:
                 evidence.append({"source": "symptoms", "field": name, "value": symptoms[name]})
+            elif name in c.null_fields():
+                evidence.append({"source": "symptoms", "field": name, "value": None})
         reasons.append({"criterion_id": c.id, "statement": c.statement, "evidence": evidence})
     return reasons
 

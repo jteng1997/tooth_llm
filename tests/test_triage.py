@@ -11,7 +11,7 @@ import json
 import random
 import unittest
 
-from fixtures import build_protocol
+from fixtures import build_protocol, protocol_raw
 
 import protocol as P  # noqa: E402
 import rules  # noqa: E402
@@ -477,6 +477,86 @@ class Inputs(TriageBase):
         self.assertIn("pain_relief_effect", fields)
         self.assertIn("flagged_teeth", fields)
         self.assertEqual(list(schema["properties"])[-2:], ["level", "uncertain"])
+
+
+class IsNullCriterion(unittest.TestCase):
+    """A criterion that holds only through `is null` (lead, 2026-09-26):
+    pain with the relief question unanswered is URGENT."""
+
+    @classmethod
+    def setUpClass(cls):
+        raw = protocol_raw()
+        raw["criteria"].append({"id": "U7", "level": "URGENT", "kind": "structured",
+                                "predicate": "pain_present == true AND pain_relief_effect is null",
+                                "statement": "Tooth pain, pain relief question not answered",
+                                "source": "test"})
+        cls.protocol = build_protocol(raw)
+
+    PAIN_NO_RELIEF = {"pain_present": True, "pain_relief_effect": None}
+
+    def run_triage(self, llm, symptoms, messages=None):
+        return triage.assess(GOOD, symptoms, messages or [], protocol=self.protocol, llm=llm)
+
+    def test_citing_the_blank_is_valid(self):
+        stub = Stub({"criteria_met": [{"criterion_id": "U7", "evidence": [
+                        {"source": "symptoms", "field": "pain_present", "quote": None},
+                        {"source": "symptoms", "field": "pain_relief_effect", "quote": None}]}],
+                     "level": "URGENT", "uncertain": False})
+        a = self.run_triage(stub, self.PAIN_NO_RELIEF)
+        self.assertEqual((a["urgency"], a["decided_by"], a["triage"]["attempts"]),
+                         ("URGENT", "llm", 1))
+        self.assertEqual(a["reasons"][0]["evidence"],
+                         [{"source": "symptoms", "field": "pain_present", "value": True},
+                          {"source": "symptoms", "field": "pain_relief_effect", "value": None}])
+
+    def test_citing_it_when_relief_was_answered_is_rejected(self):
+        bad = {"criteria_met": [cite("U7", "pain_relief_effect")], "level": "URGENT",
+               "uncertain": False}
+        good = {"criteria_met": [cite("N1", "pain_present")], "level": "SOON", "uncertain": False}
+        stub = Stub(bad, good)
+        a = self.run_triage(stub, {"pain_present": True, "pain_relief_effect": "helped"})
+        self.assertIn("U7: its condition does not hold", stub.calls[1]["messages"][-1]["content"])
+        self.assertEqual(a["urgency"], "SOON")
+
+    def test_the_blank_is_evidence_only_for_the_criterion_that_tests_it(self):
+        # U1 needs pain_relief_effect == not_helped; a null there is still no evidence.
+        bad = {"criteria_met": [cite("U1", "pain_relief_effect")], "level": "URGENT",
+               "uncertain": False}
+        good = {"criteria_met": [cite("U7", "pain_relief_effect")], "level": "URGENT",
+                "uncertain": False}
+        stub = Stub(bad, good)
+        a = self.run_triage(stub, self.PAIN_NO_RELIEF)
+        self.assertIn("'pain_relief_effect' is unanswered", stub.calls[1]["messages"][-1]["content"])
+        self.assertEqual([r["criterion_id"] for r in a["reasons"]], ["U7"])
+
+    def test_missed_is_fed_back_then_raised_by_the_protocol_check(self):
+        low = {"criteria_met": [cite("N1", "pain_present")], "level": "SOON", "uncertain": False}
+        stub = Stub(low, low)
+        a = self.run_triage(stub, self.PAIN_NO_RELIEF)
+        self.assertIn("U7", stub.calls[1]["messages"][-1]["content"])
+        self.assertEqual((a["urgency"], a["decided_by"]), ("URGENT", "protocol_check"))
+        self.assertEqual(a["triage"]["llm_proposed"], "SOON")
+        u7 = next(r for r in a["reasons"] if r["criterion_id"] == "U7")
+        self.assertIn({"source": "symptoms", "field": "pain_relief_effect", "value": None},
+                      u7["evidence"])
+
+    def test_fallback_is_raised_by_it(self):
+        a = self.run_triage(Stub("not json", "not json"), self.PAIN_NO_RELIEF)
+        self.assertEqual((a["urgency"], a["decided_by"]), ("URGENT", "protocol_check"))
+        self.assertEqual([r["criterion_id"] for r in a["reasons"]], ["U7"])
+
+    def test_red_flag_floor_is_untouched(self):
+        a = self.run_triage(NeverCalled(), {**self.PAIN_NO_RELIEF, "fever": True})
+        self.assertEqual((a["urgency"], a["decided_by"]), ("EMERGENCY", "red_flag_floor"))
+
+    def test_the_model_reads_it_in_plain_words(self):
+        stub = Stub({"criteria_met": [], "level": "ROUTINE", "uncertain": False})
+        self.run_triage(stub, {"pain_present": False})
+        prompt = stub.calls[0]["messages"][-1]["content"]
+        shown = json.loads(prompt.split("protocol_criteria:\n")[1].split("\n\n")[0])
+        u7 = next(c for c in shown if c["id"] == "U7")
+        self.assertEqual(u7["holds_when"], "pain_present == true AND pain_relief_effect not answered")
+        self.assertNotIn("is null", prompt)
 
 
 class OnlyRaises(TriageBase):

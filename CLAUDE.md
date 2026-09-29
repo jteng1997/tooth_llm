@@ -85,8 +85,9 @@ Report the numbers and sample sizes, not "tests pass".
 
 ## Where things stand
 
-**Resuming work? Start with `docs/plans/checkpoint-2026-09-26.md`** (branch
-`llm-triage-wave2`; held-out backup location, task states, resume order).
+**Resuming work? Start with `docs/plans/checkpoint-2026-09-29.md`** (branch
+`llm-triage-wave2`; protocol v0.3 state, known test failures, resume order),
+then `checkpoint-2026-09-26.md` for the held-out backup and background.
 System design: `docs/architecture.md`.
 
 Details and evidence in `docs/decisions.md`. In short: segmentation is reliable

@@ -1,6 +1,6 @@
 # Form C — open clinical questions
 
-Eleven questions no guideline settles for us. Each says what the system does
+Twelve questions no guideline settles for us. Each says what the system does
 today, why, and what we know. Please mark **Keep / Change**, and write the
 change. If a question needs the project owner rather than you, say so.
 
@@ -26,23 +26,31 @@ will teach people to ignore the tool.
 
 Keep / Change: ................................................
 
-## C2. Lingering or night pain: urgent only when pain relief is not working
+## C2. Lingering or night pain no longer changes the level; pain relief does
 
-**Today (protocol v0.3 draft, the project owner's provisional decision of
-2026-09-26):** pain that keeps aching for more than about half a minute, or
-wakes the patient, or starts on its own is URGENT (24 h) only when pain relief
-has not helped or has not been tried. When pain relief works, it is "within 7
-days", following SDCEP. (Until 2026-09-26 it was URGENT whenever present.)
-Still open for you: should "not tried yet" also be 7 days, as SDCEP's pain
-pathway implies?
+**Today (protocol v0.3, the project owner's provisional decisions of
+2026-09-26):**
+- For tooth pain, the pain relief answer alone sets the level:
+  - pain relief not helped → within 24 hours;
+  - pain relief helped → within 7 days;
+  - pain relief not yet tried → within 7 days.
+- Pain that keeps aching for more than about half a minute, wakes the
+  patient, or starts on its own is still asked about. It no longer changes
+  the level. Until 2026-09-26 it was "within 24 hours" whenever present.
 
-**What SDCEP does:** pulpitis is non-urgent (7 days) unless pain relief has
-failed; failing pain relief is the discriminator.
+**What SDCEP does:** the pain pathway asks "Has analgesic been taken?" and
+"Has analgesic controlled the pain?". Only failed pain relief leads to urgent
+care. Lingering, night and spontaneous pain are pulpitis symptoms, not steps
+on the pathway.
 
-**Also:** the "half a minute" is a convention of ours. The AAE terminology
-says "lingering thermal pain" with no duration at all.
+**Questions for you:**
+- Should lingering, night or spontaneous pain raise the level on its own,
+  for example to 24 hours when pain relief has not been tried?
+- If they should matter, is "about half a minute" the right line? It is a
+  convention of ours; the AAE terminology says "lingering thermal pain" with
+  no duration at all.
 
-Keep / Change (and if you keep a duration, which): ..............
+Keep / Change: ................................................
 
 ## C3. A possible cavity in the photo with no symptoms → within 7 days
 
@@ -178,6 +186,36 @@ checklist:
   decide whether it is sooner. Is anything about a broken tooth itself (sharp
   edge cutting the tongue, a large piece lost) more urgent than 7 days?
 - Are the two questions worded so a patient answers them correctly?
+
+Keep / Change: ................................................
+
+## C12. Tooth pain, but we do not know whether pain relief helped
+
+**Today (protocol v0.3, provisional; the project owner delegated this, and
+the project lead ruled it on 2026-09-26):**
+- The patient has tooth pain, but gives no usable answer to "Have you taken
+  any pain relief for it? If so, did it help?", even after one re-ask.
+  Examples: "not sure if it made a difference", or no answer at all.
+- We then send them to **within 24 hours**, however mild the pain.
+
+**Why:** both of SDCEP's 7-day routes need a known answer: relief not taken,
+or relief that controlled the pain. SDCEP has no route for "unknown". Our rule
+is that a missing answer is never treated as reassuring.
+
+**Cost:** someone with a mild twinge from sweet food, who answers the relief
+question vaguely, is told 24 hours. In our 100 practice cases, 1 mild case
+moved from 7 days to 24 hours this way (3 before the ruling below).
+
+**A borderline answer:** "I don't know what to take for it." The project
+lead's provisional ruling (2026-09-26) reads this as relief **not tried**,
+so the answer is 7 days. The patient is telling us they have taken nothing,
+which is an answer, not a blank. "I took something but I'm not sure if it
+helped" stays *unknown*, so the answer is 24 hours.
+
+**Questions for you:**
+- Should unknown pain relief with pain be within 24 hours, within 7 days, or
+  depend on how bad the pain is?
+- Do you agree that "I don't know what to take for it" means *not tried*?
 
 Keep / Change: ................................................
 

@@ -23,7 +23,10 @@ sys.path.insert(0, str(REPO_ROOT / "tests"))
 
 import check_triage as ct  # noqa: E402
 
-SANITY = json.loads((REPO_ROOT / "llm" / "eval" / "triage_sanity_cases.json").read_text(encoding="utf-8"))
+SANITY_RAW = json.loads((REPO_ROOT / "llm" / "eval" / "triage_sanity_cases.json").read_text(encoding="utf-8"))
+SANITY = ct.for_protocol(SANITY_RAW, "0.3")       # the primary keys
+SANITY_V02 = ct.for_protocol(SANITY_RAW, "0.2")   # the live protocol until the v0.3 switch
+DRAFT_V03 = REPO_ROOT / "docs" / "plans" / "protocol-v0.3" / "triage_protocol.yaml"
 HELDOUT = REPO_ROOT / "labels" / "heldout" / "triage_heldout_keys.json"
 
 
@@ -293,45 +296,127 @@ class CodeCeiling(unittest.TestCase):
 
 
 class SanityRun(unittest.TestCase):
-    """rules.py on the sanity file: the numbers in the file's note, by hand."""
+    """rules.py on the sanity file: the numbers in the file's note, by hand,
+    under the v0.3 keys and the v0.2 keys (key_until)."""
+
+    UNDER_V02 = ["S001", "S002", "S003", "S004", "S005", "S006", "S013", "S016", "S017", "S018",
+                 "S019"]
 
     @classmethod
     def setUpClass(cls):
-        cls.summary = ct.evaluate(SANITY, "rules", verbose=False)
-        cls.rules = cls.summary["systems"]["rules"]
+        cls.rules = ct.evaluate(SANITY, "rules", verbose=False)["systems"]["rules"]
+        cls.rules_v02 = ct.evaluate(SANITY_V02, "rules", verbose=False)["systems"]["rules"]
 
     def test_file_is_valid(self):
-        errors, _ = ct.validate_cases(SANITY)
-        self.assertEqual(errors, [])
+        for name, spec in (("raw", SANITY_RAW), ("v0.3", SANITY), ("v0.2", SANITY_V02)):
+            with self.subTest(keys=name):
+                errors, _ = ct.validate_cases(spec)
+                self.assertEqual(errors, [])
 
     def test_keys_agree_with_the_real_protocol(self):
         protocol, err = ct.load_protocol()
         if err:
             self.skipTest(f"protocol does not load: {err}")
-        errors, _ = ct.validate_cases(SANITY, protocol, need_words=False)
+        errors, _ = ct.validate_cases(ct.for_protocol(SANITY_RAW, protocol.version), protocol,
+                                      need_words=False)
         self.assertEqual(errors, [])
 
-    def test_hand_worked_result(self):
-        r = self.rules
-        self.assertEqual(r["n_scored"], 19)
+    def test_v03_keys_agree_with_the_v03_draft(self):
+        # Until the switch the live file is v0.2; the draft is what the v0.3 keys target.
+        if not DRAFT_V03.exists():
+            self.skipTest("no v0.3 draft (switched live, or moved)")
+        import protocol as protocol_mod
+        try:
+            draft = protocol_mod.load(DRAFT_V03, allow_unreviewed=True)
+        except Exception as exc:
+            self.skipTest(f"v0.3 draft does not load here: {type(exc).__name__}: {exc}")
+        self.assertEqual(draft.version, "0.3")
+        errors, _ = ct.validate_cases(SANITY, draft, need_words=False)
+        self.assertEqual(errors, [])
+
+    def check_shared(self, r):
+        self.assertEqual(r["n_scored"], 24)
         self.assertEqual(r["excluded_retake"], 1)
-        self.assertEqual(r["under_ids"], ["S001", "S002", "S003", "S004", "S005", "S006",
-                                          "S013", "S016", "S017", "S018", "S019"])
         self.assertEqual(r["severe_under_ids"], ["S001", "S002", "S003", "S013", "S017",
                                                  "S018", "S019"])
         self.assertEqual(r["missed_emergency_ids"], ["S001", "S002", "S003", "S013", "S017", "S018"])
+        self.assertEqual(r["kappa_n"], 22)  # S013, S019 answered RETAKE: not a level
+
+    def test_hand_worked_result_v03(self):
+        r = self.rules
+        self.check_shared(r)
+        # S023: relief unanswered is URGENT (U10); rules.py says SOON, one level down
+        self.assertEqual(r["under_ids"], sorted(self.UNDER_V02 + ["S023"]))
+        # rules.py R3 keeps lingering or night pain URGENT whatever the relief did
+        self.assertEqual(r["over_ids"], ["S007", "S010", "S021", "S022"])
+        self.assertEqual(r["agree"], 8)
+
+    def test_hand_worked_result_v02(self):
+        r = self.rules_v02
+        self.check_shared(r)
+        self.assertEqual(r["under_ids"], self.UNDER_V02)
         self.assertEqual(r["over_ids"], ["S010"])
-        self.assertEqual(r["agree"], 7)
-        self.assertEqual(r["kappa_n"], 17)  # S013, S019 answered RETAKE: not a level
+        self.assertEqual(r["agree"], 12)
+
+    def test_only_the_v03_cases_change_level(self):
+        changed = {c["id"]: (c2["key"]["level"], c["key"]["level"])
+                   for c, c2 in zip(SANITY["cases"], SANITY_V02["cases"])
+                   if c["key"]["level"] != c2["key"]["level"]}
+        self.assertEqual(changed, {"S007": ("URGENT", "SOON"), "S021": ("URGENT", "SOON"),
+                                   "S022": ("URGENT", "SOON"), "S023": ("SOON", "URGENT")})
 
     def test_every_rationale_names_the_outcome(self):
         # The rationale was written before the run; it must say the same thing.
         words = {"agree": "(agree)", "over": "(over)", "under": "under)",
                  "excluded_retake": "(excluded"}
-        for case in SANITY["cases"]:
-            outcome = self.rules["outcomes"][case["id"]]["outcome"]
-            with self.subTest(case=case["id"]):
-                self.assertIn(words[outcome], case["key"]["rationale"])
+        for name, spec, rules in (("v0.3", SANITY, self.rules), ("v0.2", SANITY_V02, self.rules_v02)):
+            for case in spec["cases"]:
+                outcome = rules["outcomes"][case["id"]]["outcome"]
+                with self.subTest(keys=name, case=case["id"]):
+                    self.assertIn(words[outcome], case["key"]["rationale"])
+
+
+class ForProtocol(unittest.TestCase):
+    """key_until: the sanity file's keys for the protocol that is loaded."""
+
+    def test_picks_the_key_for_the_version(self):
+        s007 = {c["id"]: c for c in SANITY["cases"]}["S007"]
+        self.assertEqual((s007["key"]["level"], s007["key"]["criteria_met"]), ("SOON", ["S1"]))
+        s007 = {c["id"]: c for c in SANITY_V02["cases"]}["S007"]
+        self.assertEqual((s007["key"]["level"], s007["key"]["criteria_met"]), ("URGENT", ["U5", "S1"]))
+        self.assertEqual((SANITY["protocol_version"], SANITY_V02["protocol_version"]), ("0.3", "0.2"))
+
+    def test_later_or_unknown_version_keeps_the_primary_keys(self):
+        for version in ("0.4", "1.0", None):
+            spec = ct.for_protocol(SANITY_RAW, version)
+            with self.subTest(version=version):
+                self.assertEqual([c["key"] for c in spec["cases"]], [c["key"] for c in SANITY["cases"]])
+                self.assertFalse(any("key_until" in c for c in spec["cases"]))
+
+    def test_lowest_applying_version_wins(self):
+        spec = {"protocol_version": "0.3", "cases": [
+            {"id": "X001", "key": {"level": "SOON"},
+             "key_until": {"0.1": {"level": "ROUTINE"}, "0.2": {"level": "URGENT"}}}]}
+        self.assertEqual(ct.for_protocol(spec, "0.1")["cases"][0]["key"]["level"], "ROUTINE")
+        self.assertEqual(ct.for_protocol(spec, "0.2")["cases"][0]["key"]["level"], "URGENT")
+        self.assertEqual(ct.for_protocol(spec, "0.3")["cases"][0]["key"]["level"], "SOON")
+        self.assertEqual(ct.for_protocol(spec, "0.0-test")["cases"][0]["key"]["level"], "ROUTINE")
+        self.assertIn("key_until", spec["cases"][0])                # input untouched
+
+    def test_file_without_key_until_is_returned_as_is(self):
+        spec = {"protocol_version": "0.2", "cases": [{"id": "X001", "key": {"level": "SOON"}}]}
+        self.assertIs(ct.for_protocol(spec, "0.2"), spec)
+
+    def test_wrong_keys_fail_against_the_protocol(self):
+        # The check can fail: the v0.3 keys against the v0.2 protocol, or the
+        # other way round, must be refused, and on exactly the cases that differ.
+        protocol, err = ct.load_protocol()
+        if err:
+            self.skipTest(f"protocol does not load: {err}")
+        wrong = SANITY if protocol.version == "0.2" else SANITY_V02
+        errors, _ = ct.validate_cases(wrong, protocol, need_words=False)
+        self.assertEqual(sorted({e.split(":")[0] for e in errors}),
+                         ["S007", "S021", "S022", "S023", "S024", "S025"])
 
 
 class CaveatVersion(unittest.TestCase):
@@ -405,9 +490,9 @@ class ReportFromSaved(unittest.TestCase):
         self.assertIn("sensitivity analysis (spec 9.5): the same runs without 2 exposed cases", out)
         block = out.split("sensitivity analysis")[1]
         row = next(l for l in block.splitlines() if l.strip().startswith("rules"))
-        # 19 scored (S012's designed retake is excluded), minus S001 and S010;
-        # S001 was one of the 7 severe cases
-        self.assertEqual(row.split()[1:4], ["17", "10", "6"])
+        # 24 scored (S012's designed retake is excluded), minus S001 and S010;
+        # S001 was one of the 12 under and the 7 severe cases
+        self.assertEqual(row.split()[1:4], ["22", "11", "6"])
 
     def test_unknown_id_is_refused(self):
         with tempfile.TemporaryDirectory() as d:
@@ -429,9 +514,9 @@ class Sensitivity(unittest.TestCase):
         sens = ct.sensitivity(summary, {"S001", "S010"})   # one under, one over
         r = sens["systems"]["rules"]
         self.assertEqual(sens["n_excluded"], 2)
-        self.assertEqual((r["n_scored"], r["under"], r["over"]), (17, 10, 0))
+        self.assertEqual((r["n_scored"], r["under"], r["over"]), (22, 11, 3))
         self.assertNotIn("S001", r["outcomes"])
-        self.assertEqual(summary["systems"]["rules"]["under"], 11)   # primary untouched
+        self.assertEqual(summary["systems"]["rules"]["under"], 12)   # primary untouched
 
     def test_stability_without_an_excluded_case(self):
         per_case = [{"id": i, "stability": True, "n_paraphrases": 0,
@@ -483,7 +568,8 @@ class CheckerMustFail(unittest.TestCase):
 
     def test_perfect_system_passes(self):
         r = self._stub_rules(lambda c: c["key"]["level"])
-        self.assertEqual((r["under"], r["over"], r["agree"], r["n_scored"]), (0, 0, 20, 20))
+        n = len(SANITY["cases"])
+        self.assertEqual((r["under"], r["over"], r["agree"], r["n_scored"]), (0, 0, n, n))
         self.assertAlmostEqual(r["kappa_linear"], 1.0)
 
 
@@ -744,7 +830,8 @@ class LlmPathWithStub(unittest.TestCase):
     def test_garbage_output_is_counted_as_fallback(self):
         s = self.run_with("not json")
         ops = s["operations"]
-        self.assertEqual(ops["first_runs_model_called"] + ops["first_runs_floor_skipped_model"], 20)
+        self.assertEqual(ops["first_runs_model_called"] + ops["first_runs_floor_skipped_model"],
+                         len(SANITY["cases"]))
         self.assertEqual(ops["fallback"], ops["triage_calls"])
         self.assertEqual(ops["fallback_rate"], 1.0)
         self.assertFalse(ops["fallback_bar_ok"])
