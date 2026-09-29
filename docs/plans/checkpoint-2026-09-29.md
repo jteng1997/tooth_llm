@@ -1,9 +1,10 @@
 # Checkpoint — 2026-09-29, protocol v0.3 switched, not yet verified
 
-## Update 2026-09-29 (evening) — read this section first
+## Update 2026-09-30 (morning) — read this section first
 
-Committed as a second WIP commit on `llm-triage-wave2`. Suite: **552 run, OK**.
-Test 1: **20/20**. The GPU evaluations of v0.3 are only partly done (below).
+HEAD `dcf2a72` and later on `llm-triage-wave2`, pushed. Suite: **558 run,
+OK**. Test 1: **20/20**. Live config: `interview.py` 23f41c60, protocol YAML
+6f933104. Only the last GPU runs are still open (see "Remaining" below).
 
 Done and verified by qa (resume steps 1–3):
 - The 8 failing tests are fixed. Held-out paths are explicitly pinned to
@@ -30,39 +31,43 @@ New guards (`src/explain.py`, `system_explain.md` rule 12):
   prompts. Recall is weak. Decide whether to widen it after Test 2 shows
   whether real explanations make such claims.
 
-`src/interview.py` (sha256 157228ca…):
-- The EXTRACTION line for the not_tried ruling is in.
-- The HEDGE exception is in: the ruled phrase "don't know what to take/use"
-  is no longer nulled when the value is not_tried. Before this, the HEDGE
-  test at verify() nulled it and so forced U10 URGENT.
-- **Not yet added:** the lead-approved synonyms "no idea what to take/use" and
-  "not sure what to take/use" (a one-line alternation in `NOT_TRIED_PHRASE`).
+`src/interview.py` (sha256 23f41c60):
+- not_tried ruling: the EXTRACTION line is in. HEDGE no longer nulls "don't
+  know / no idea / not sure what to take/use" for not_tried. Known gap: RP03
+  ("what I'm meant to take") and V041 ("not sure what to do") still null.
+- Severity, user-approved 2026-09-29:
+  - (a) a quoted "severe" with an un-negated ruled cue is not HEDGE-nulled;
+  - (b) the instruction says one of sleep/eating is enough, a contrast doesn't
+    make it moderate, and a self-correction uses the corrected answer.
+- Held-back set c (64 settled items), old → new:
+  - severe missed 6/36 → 2/36;
+  - false severe 0/28 → 4/28.
+  - The pre-declared 0-false-severe bar FAILED. The user kept the new config
+    (decisions 2026-09-30).
+- Relief phrases on the fixed config: 9/10.
+- Dev P7 is complete. V104/V106 are regenerated. The Gemini check shows
+  6/225 cells differing, all adjudicated as extractor or code faults.
 
-Phrase sets, qwen3:14b, on the config BEFORE the HEDGE exception (interview
-d57780c5, extraction prompt d3f40b3b, protocol 6f933104). Results are in
-`runs/evals/phrases_2026-09-29/`.
-- Severity A: 79/86. 6/50 severe phrases were read as moderate (SV05, SV16,
-  SV17, SV21, SV24, SV30). SP07 was read as severe.
-- Severity B: 27/36. 9/22 severe phrases were read as moderate.
-- Relief: 7/8 independent and 1/2 tuned. RP01 and RP03 are null: that is the
-  HEDGE bug, now fixed, so re-run.
-- **Open for the user:**
-  - Under-reading severe → moderate loses U2 URGENT (under-triage).
-  - Separately, HEDGE also nulls pain_severity ("I can't describe it, it's
-    unbearable"). A proposal is pending from llm-dev.
+Measured on the final config (runs/evals/*_2026-09-30):
+- dev Test 3: 12/12 dialogues, 60/60 fields. 0 guessed, 0 invented. Severity
+  errors 0/10 (n is small: CI to 30.8%).
+- dev Test 5, rules mode:
+  - protocol_check agrees on 106/106 with 0 under-triage;
+  - the legacy rules.py has 28/101 under-triage (baseline only).
+- qwen dev extraction (45 P7 texts, single pass): 12/225 cells differ.
+  V082 is a false severe ("pretty bad") and V086 a missed severe (broken
+  English).
 
-Remaining, in order (qa runs every GPU job, one at a time; never held-out):
-1. Add the two synonyms. Then qa turns llm-dev's HEDGE cases
-   (`hedge/cases.py`, 25) into unit tests and re-runs `relief_phrases.json`.
-2. `p7_generate.py regenerate --file dev --ids ["V104","V106"]` (both are text
-   faults, adjudicated), then extract, writeback, `--write-vignettes` and
-   validate.
-3. Dev Test 3. Watch V005/V031 (not_tried), V017 (null), and V077 ("no idea
-   what caused it" on a spontaneous key).
-4. Dev Test 5 on v0.3.
-5. Test 2, last.
-6. Bring the user the severity evidence and a decision. Then commit the
-   verified state and update `CLAUDE.md`.
+Remaining (qa-engineer-5 runs them, one at a time; never held-out):
+1. dev Test 5 in LLM mode, and check_e2e on dev.
+2. Test 2 (check_faithfulness) on dev. Afterwards, decide whether to widen
+   the relief guard (held-back recall is 9/20).
+3. Commit and push the results summary.
+
+Follow-ups, not this round:
+- severity over-triage (self-correction both ways; strong words alone =
+  moderate), measured on a NEW held-back set d;
+- the user rules on HU01–HU08 (decisions "Open").
 
 Teammate names: a bare `llm-dev` or `qa-engineer` resolves to OLD instances
 from earlier days. Address the current ones by full name.

@@ -85,10 +85,17 @@ Report the numbers and sample sizes, not "tests pass".
 
 ## Where things stand
 
-**Resuming work? Start with `docs/plans/checkpoint-2026-09-29.md`** (branch
-`llm-triage-wave2`; protocol v0.3 state, known test failures, resume order),
-then `checkpoint-2026-09-26.md` for the held-out backup and background.
-System design: `docs/architecture.md`.
+**Resuming work? Start with the "Update 2026-09-30" section of
+`docs/plans/checkpoint-2026-09-29.md`** (branch `llm-triage-wave2`).
+- Protocol v0.3 is live.
+- The suite is green (558) and Test 1 is 20/20.
+- dev Test 3 is 12/12. On dev Test 5, protocol_check gives 0 under-triage.
+- Still open: dev Test 5 in LLM mode, e2e, and Test 2.
+- The severity extraction change is kept by user decision, with a known
+  over-triage of 4/28 on held-back set c.
+
+Then read `checkpoint-2026-09-26.md` for the held-out backup (held-out Test 5
+is spent on v0.2). System design: `docs/architecture.md`.
 
 Details and evidence in `docs/decisions.md`. In short: segmentation is reliable
 (median 12 teeth/photo on Mendeley); the caries detector is the weakest link
