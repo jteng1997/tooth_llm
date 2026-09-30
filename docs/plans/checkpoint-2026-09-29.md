@@ -58,10 +58,29 @@ Measured on the final config (runs/evals/*_2026-09-30):
   V082 is a false severe ("pretty bad") and V086 a missed severe (broken
   English).
 
+- dev Test 5, LLM mode (`runs/evals/test5_dev_2026-09-30/`):
+  - final level: 0/101 under-triage, 101/101 exact, PASS;
+  - the model's own proposal under-triages 18/81, all raised by code
+    (15 of them SOON proposed as ROUTINE);
+  - 16/81 calls are raised to their own citations; fallback to rules 0/81;
+    retried 36/81;
+  - p50 8.2 s, p95 14.5 s.
+
 Remaining (qa-engineer-5 runs them, one at a time; never held-out):
-1. dev Test 5 in LLM mode, and check_e2e on dev.
-2. Test 2 (check_faithfulness) on dev. Afterwards, decide whether to widen
-   the relief guard (held-back recall is 9/20).
+1. Test 2 (check_faithfulness) on dev. It started around 11:50 on 09-30.
+   Afterwards, decide whether to widen the relief guard (held-back recall
+   is 9/20).
+2. **Dev end-to-end set (user asked 2026-09-30).**
+   - No dev e2e keys exist; the only e2e keys are held-out, spent on v0.2.
+     So v0.3 has not measured how extraction errors change the final level.
+   - Plan:
+     - research-pm builds a dev e2e key set from the existing dev P7 texts
+       (45 chat-reaching cases in `runs/p7/generated_dev.json` and
+       `labels/dev/triage_dev_keys.json`), in the format that `check_e2e.py`
+       reads (see `labels/heldout/e2e_keys.json` for the shape only; never
+       copy held-out content). It goes under `labels/dev/`.
+     - qa validates it, then runs `check_e2e` on dev (one GPU job).
+     - Report under-triage caused by extraction versus by triage.
 3. Commit and push the results summary.
 
 Follow-ups, not this round:
