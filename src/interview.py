@@ -27,6 +27,7 @@ uses record() and extract() and never starts the planned interview.
 """
 import argparse
 import json
+import logging
 import re
 import sys
 from pathlib import Path
@@ -48,14 +49,31 @@ SCHEMA_VERSION = SCHEMA["properties"]["schema_version"]["const"]
 OLLAMA_URL = "http://localhost:11434/api/chat"
 DEFAULT_MODEL = "qwen3:14b"
 
+log = logging.getLogger(__name__)
+# Failed extraction attempts in this process, for check_e2e / check_symptoms
+# to report ("extraction truncated N"). A fallback is a turn where both
+# attempts failed and no field was settled.
+EXTRACTION_STATS = {"truncated": 0, "unparsed": 0, "fallback": 0}
+
 # Every symptom field. Extraction asks for {value, quote} per field, so each
 # value can be checked against the transcript before it is kept.
 EVIDENCE_FIELDS = [f for f in SCHEMA["properties"] if f not in ("schema_version", "notes")]
 
 
+# Free text in the extraction JSON is bounded by the schema itself. Unbounded,
+# dev e2e V068 wrote one sentence into `notes` over and over until the output
+# cap (3/3 replays; with maxLength it stops at 292 tokens). A quote is a piece
+# of one patient message (longest dev e2e message: 453 characters); a quote
+# cut at the bound is still a piece of that message, so it can only lose a
+# value in verify(), never add one.
+QUOTE_MAX_CHARS = 500
+NOTES_MAX_CHARS = 300
+
+
 def evidence_schema(fields: list) -> dict:
     """The constrained-decoding schema for extracting `fields`, each as
     {value, quote}, plus free-text notes."""
+    quote = {"type": ["string", "null"], "maxLength": QUOTE_MAX_CHARS}
     return {
         "type": "object",
         "additionalProperties": False,
@@ -65,13 +83,14 @@ def evidence_schema(fields: list) -> dict:
                        "additionalProperties": False,
                        "required": ["value", "quote"],
                        "properties": {"value": SCHEMA["properties"][field],
-                                      "quote": {"type": ["string", "null"]}}}
+                                      "quote": quote}}
                for field in fields},
             "notes": {"type": "object",
                       "additionalProperties": False,
                       "required": ["value", "quote"],
-                      "properties": {"value": {"type": ["string", "null"]},
-                                     "quote": {"type": ["string", "null"]}}},
+                      "properties": {"value": {"type": ["string", "null"],
+                                               "maxLength": NOTES_MAX_CHARS},
+                                     "quote": quote}},
         },
     }
 
@@ -407,20 +426,41 @@ EXTRACTION_INSTRUCTION = (
 )
 
 
+class Truncated(ValueError):
+    """The model hit the output cap: the reply is cut off and never used.
+    A ValueError, so a caller that already treats unparsable output as a
+    failed call treats this the same way."""
+
+
+# Output caps (num_predict, tokens). Without one, a reply that starts to repeat
+# itself at temperature 0 never stops: dev e2e V068 (2026-09-30) generated
+# 9,747 tokens through four context shifts and hung for 300 s. Largest replies
+# measured the same day: extraction 395 (dev e2e, 123 calls; Test 3: 230, 76
+# calls), triage 401 (78 calls), explanation ~220 (871 characters, 1,420 stored
+# texts). 1024 is 2.5x the largest and ends a runaway in ~35 s.
+MAX_TOKENS = {"extract": 1024, "triage": 1024, "explain": 1024}
+# Every chat() call is capped, even one that passes no max_tokens.
+DEFAULT_MAX_TOKENS = 1024
+
+
 def chat(messages: list, model: str = DEFAULT_MODEL, schema: dict = None,
-         temperature: float = 0.0, timeout: int = 300) -> str:
+         temperature: float = 0.0, timeout: int = 300,
+         max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
     payload = {
         "model": model,
         "messages": messages,
         "stream": False,
         "think": False,
-        "options": {"temperature": temperature},
+        "options": {"temperature": temperature, "num_predict": max_tokens},
     }
     if schema:
         payload["format"] = schema
     r = requests.post(OLLAMA_URL, json=payload, timeout=timeout)
     r.raise_for_status()
-    return r.json()["message"]["content"]
+    body = r.json()
+    if body.get("done_reason") == "length":
+        raise Truncated(f"reply cut off at {max_tokens} tokens")
+    return body["message"]["content"]
 
 
 def check_plan(protocol) -> None:
@@ -449,8 +489,10 @@ class Interview:
         self.model = model
         self.allow_unreviewed = allow_unreviewed
         self.protocol = protocol
-        self.llm = llm or (lambda messages, schema: chat(messages, model, schema=schema))
+        self.llm = llm or (lambda messages, schema: chat(messages, model, schema=schema,
+                                                         max_tokens=MAX_TOKENS["extract"]))
         self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self.extraction_problems = []  # failed attempts, this interview
         self.reply_to = []      # per patient message: the chat question id it answered
         self.symptoms = {}
         self.checklist = {}     # field -> the patient's explicit Yes/No
@@ -574,6 +616,27 @@ class Interview:
     def _chat_fields(self) -> list:
         return [f for q in self.protocol.questions if q.input == "chat" for f in q.fields]
 
+    def _extract_raw(self, messages: list, schema: dict) -> dict:
+        """The model's evidence JSON, or {} when two attempts were cut off at
+        the cap or did not parse. {} settles no field: each stays what it was
+        (null, or a value verified on an earlier turn), never a default."""
+        for attempt in (1, 2):
+            try:
+                raw = json.loads(self.llm(messages, schema))
+                if isinstance(raw, dict):
+                    return raw
+                problem = "not a JSON object"
+            except Truncated as exc:
+                problem = f"truncated ({exc})"
+            except ValueError as exc:
+                problem = f"not JSON ({exc})"
+            self.extraction_problems.append(problem)
+            EXTRACTION_STATS["truncated" if problem.startswith("truncated") else "unparsed"] += 1
+            log.warning("extraction attempt %d failed: %s", attempt, problem)
+        EXTRACTION_STATS["fallback"] += 1
+        log.warning("extraction failed twice; no field is settled by this turn")
+        return {}
+
     def extract(self) -> dict:
         """Constrained-decode the transcript into the symptoms object.
 
@@ -588,7 +651,7 @@ class Interview:
             raise ValueError("checklist A must be answered before a result")
         fields = self._chat_fields() if self.planned else EVIDENCE_FIELDS
         messages = self.messages + [{"role": "user", "content": EXTRACTION_INSTRUCTION}]
-        raw = json.loads(self.llm(messages, evidence_schema(fields)))
+        raw = self._extract_raw(messages, evidence_schema(fields))
         turns = [m["content"] for m in self.messages if m["role"] == "user"]
         replies = list(zip(self.reply_to, turns))
         chat_questions = ([q for q in self.protocol.questions if q.input == "chat"]

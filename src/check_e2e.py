@@ -183,6 +183,7 @@ def run_case(key: dict, text: dict, protocol, extract_llm, triage_llm, model: st
         "rejections": len(ct.rejection_lines(t["validation_errors"])),
         "model_called": t["model"] is not None,
         "protocol_on_key_symptoms": protocol.protocol_level(key["symptoms"], visual),
+        "extraction_problems": list(getattr(iv, "extraction_problems", [])),
     }
 
 
@@ -243,11 +244,22 @@ def attribute(key: dict, result: dict, protocol, opening: str) -> dict:
 # --- Whole run ---------------------------------------------------------------------------
 
 def evaluate(keys: list, texts: dict, protocol, model: str, extract_llm_for, triage_llm,
-             opening: str = "drop") -> dict:
-    """extract_llm_for(key) -> the extraction callable for that case (None = Ollama)."""
+             opening: str = "drop", progress=None) -> dict:
+    """extract_llm_for(key) -> the extraction callable for that case (None = Ollama).
+    progress: called with one line per finished case (id, key, result, seconds),
+    so a long run can be watched; a case that raises stops the run."""
+    import time
+    stats_before = dict(getattr(interview_mod, "EXTRACTION_STATS", {}))
     results, attributions = [], {}
-    for key in keys:
+    for n, key in enumerate(keys, 1):
+        start = time.perf_counter()
         r = run_case(key, texts[key["id"]], protocol, extract_llm_for(key), triage_llm, model, opening)
+        r["seconds"] = round(time.perf_counter() - start, 1)
+        if progress:
+            progress(f"{n:3d}/{len(keys)} {key['id']}  key {key['key_level']:<9} final {r['final']:<9} "
+                     f"decided_by {r['decided_by']}  {r['seconds']:.0f}s"
+                     + (f"  extraction problems {r['extraction_problems']}"
+                        if r["extraction_problems"] else ""))
         results.append(r)
         if r["final"] != key["key_level"]:
             attributions[key["id"]] = attribute(key, r, protocol, opening)
@@ -280,9 +292,33 @@ def evaluate(keys: list, texts: dict, protocol, model: str, extract_llm_for, tri
                       "unscripted": sum(len(r["unscripted"]) for r in results)},
         "severity": severity_block(results, by_id),
         "triage_calls": triage_calls(results),
+        "latency_seconds": latency(results),
+        "extraction_stats": extraction_stats(stats_before, results),
         "cases": results,
     }
     return summary
+
+
+def extraction_stats(before: dict, results: list) -> dict:
+    """interview.EXTRACTION_STATS over this run (a diff: the counter runs from
+    process start), with the ids of the cases whose extraction had a failed
+    attempt. A failed attempt is counted, never skipped."""
+    now = getattr(interview_mod, "EXTRACTION_STATS", {})
+    out = {k: now.get(k, 0) - before.get(k, 0) for k in now}
+    out["truncated_ids"] = [r["id"] for r in results
+                            if any(p.startswith("truncated") for p in r.get("extraction_problems", []))]
+    out["problem_ids"] = [r["id"] for r in results if r.get("extraction_problems")]
+    return out
+
+
+def latency(results: list) -> dict:
+    """Whole-case wall time (interview + extraction + triage), nearest-rank
+    percentiles; empty when no case was timed."""
+    secs = sorted(r["seconds"] for r in results if r.get("seconds") is not None)
+    if not secs:
+        return {}
+    pick = lambda q: secs[min(len(secs) - 1, max(0, -(-q * len(secs) // 100) - 1))]  # noqa: E731
+    return {"n": len(secs), "p50": pick(50), "p95": pick(95), "max": secs[-1]}
 
 
 def interview_counts(results: list, by_id: dict, protocol) -> dict:
@@ -395,6 +431,15 @@ def print_report(summary: dict, mock: bool) -> None:
                   f"{ct._ci(tc['llm_raised_ci95'])}; sum, the rule as first registered "
                   f"{tc['fallback_as_first_registered']}/{n} {ct._ci(tc['fallback_as_first_registered_ci95'])}")
             print(f"  {ct.FALLBACK_RULE_NOTE}")
+    st = summary.get("extraction_stats")
+    if st is not None:
+        print(f"extraction truncated {st.get('truncated', 0)} {st.get('truncated_ids', [])}, "
+              f"unparsed {st.get('unparsed', 0)}, both attempts failed {st.get('fallback', 0)}; "
+              f"cases with any failed attempt {st.get('problem_ids', [])}")
+    lat = summary.get("latency_seconds")
+    if lat:
+        print(f"latency per case (interview + extraction + triage), n = {lat['n']}: "
+              f"p50 {lat['p50']:.0f}s, p95 {lat['p95']:.0f}s, max {lat['max']:.0f}s")
     sev = summary["severity"]
     cs.print_severity_errors(sev["errors"], "cases that reached the chat")
     sh = sev["level_shift"]
@@ -478,7 +523,8 @@ def main() -> int:
             print(f"REFUSED: {refusal}")
             return 2
 
-    summary = evaluate(keys, texts, protocol, model, extract_for, triage_llm, args.opening)
+    summary = evaluate(keys, texts, protocol, model, extract_for, triage_llm, args.opening,
+                       progress=lambda line: print(line, flush=True))
     summary.update(mock=args.mock, placeholder_text=args.placeholder_text, keys_file=str(path),
                    configuration=cfg)
     print_report(summary, args.mock)

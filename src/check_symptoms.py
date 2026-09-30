@@ -78,7 +78,8 @@ def run_case(case: dict, model: str, protocol, llm=None) -> dict:
         step = session.reply(answer)
 
     return {"symptoms": session.symptoms, "asked": asked, "unscripted": unscripted,
-            "unused": {qid: rest for qid, rest in pending.items() if rest}}
+            "unused": {qid: rest for qid, rest in pending.items() if rest},
+            "extraction_problems": list(getattr(session, "extraction_problems", []))}
 
 
 def evaluate(model: str = DEFAULT_MODEL, verbose: bool = True, protocol=None, llm=None,
@@ -115,6 +116,7 @@ def evaluate(model: str = DEFAULT_MODEL, verbose: bool = True, protocol=None, ll
                   "guessed": guessed, "missed": missed, "clicks_changed": clicks_changed,
                   "asked": played["asked"], "unscripted": played["unscripted"],
                   "unused": played["unused"], "got": got,
+                  "extraction_problems": played.get("extraction_problems", []),
                   "scored_fields": {f: (got.get(f) == want if not isinstance(want, list)
                                         else sorted(got.get(f) or []) == sorted(want))
                                     for f, want in case["expected"].items()}}
@@ -308,7 +310,18 @@ def main():
                     help="dialogue file (held-out: labels/heldout/symptom_dialogues_heldout.json; "
                          "never show its per-case output to llm-dev)")
     args = ap.parse_args()
+    import interview
+    stats = getattr(interview, "EXTRACTION_STATS", {})
+    before = dict(stats)
     results = evaluate(args.model, dialogues=Path(args.dialogues))
+    # interview.EXTRACTION_STATS counts from process start: this run's diff
+    results["extraction_stats"] = {k: stats.get(k, 0) - before.get(k, 0) for k in stats}
+    results["extraction_stats"]["problem_ids"] = [c["id"] for c in results["cases"]
+                                                  if c.get("extraction_problems")]
+    print(f"  extraction truncated {results['extraction_stats'].get('truncated', 0)}, "
+          f"unparsed {results['extraction_stats'].get('unparsed', 0)}, "
+          f"both attempts failed {results['extraction_stats'].get('fallback', 0)}; "
+          f"dialogues with any failed attempt {results['extraction_stats']['problem_ids']}")
     results["configuration"] = configuration(args.model, Path(args.dialogues))
     print(f"  configuration: {json.dumps(results['configuration'])}")
     if args.json:

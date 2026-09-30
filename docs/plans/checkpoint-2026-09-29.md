@@ -87,11 +87,50 @@ Measured on the final config (runs/evals/*_2026-09-30):
   6 over (a mock artifact: whole-paragraph quotes hit HEDGE), V039/V080 =
   designed RETAKE.
 
-Remaining (qa-engineer-5 runs them, one at a time; never held-out):
-1. ~~Test 2 on dev~~ done, above.
-2. **Dev end-to-end set (user asked 2026-09-30).** Keys built and validated;
-   the real run (`check_e2e.py --keys labels/dev/e2e_dev_keys.json --model
-   qwen3:14b`) started 13:03 on 09-30 → `runs/evals/e2e_dev_2026-09-30/`.
+- Runaway-extraction fix (llm-dev-4, 09-30 afternoon). The first dev e2e run
+  crashed at 13:25: V068's first extraction wrote one sentence into `notes`
+  over and over (9,747 tokens, 300 s ReadTimeout; log kept as
+  `e2e_dev_CRASHED_readtimeout.log`). Fix, with no prompt wording changed:
+  - schema maxLength: notes 300 chars, quotes 500 (extraction and triage);
+  - num_predict 1024 on every chat() call (about 2.5x the largest measured
+    reply);
+  - `interview.Truncated` on done_reason "length": extraction retries once,
+    then the turn settles no field (null, never a default) and the question
+    is re-asked. Triage falls back as before; explain uses the fixed text;
+  - counters `interview.EXTRACTION_STATS`, reported by check_e2e and
+    check_symptoms. tests/test_extraction_truncation.py (12 tests);
+  - open: `src/topic_classify_llm.py` (research script) would raise on
+    Truncated instead of returning "invalid". Not fixed.
+  - Hashes: interview.py 78f6c6e0…, triage.py 7181e1a3…, explain.py 8d28d851….
+  - Test 2 ran BEFORE this change. The explain cap is far above any measured
+    output, but a Test 2 re-run on the final config is still owed.
+- dev Test 3 on the final config (`runs/evals/test3_dev_2026-09-30_capfix/`):
+  12/12 dialogues, 60/60 fields, 0 guessed, 0 missed, severity errors 0/10;
+  truncated 0, unparsed 0.
+- **Dev e2e, final config** (`runs/evals/e2e_dev_2026-09-30/e2e_dev.json`,
+  45 cases, opening drop, qwen3:14b):
+  - final: n 43, under-triage 0, over 0, exact 43/43. The 2 excluded cases
+    are V039/V080, the designed RETAKE (both photos unusable → RETAKE
+    against a SOON key), attributed to triage by code; not a fault;
+  - protocol_check 45/45; legacy rules 11 under, 23/43 exact (McNemar
+    p = 0.00098 vs final);
+  - llm_proposed 12/45 under, all raised in code to the model's own
+    citations (llm_raised 12/45); fallback to rules 0/45;
+  - interview: 0 questions never asked, 0 extra, 0 unscripted, 38 re-asks;
+  - extraction 7/225 cells differ (triggers 3, severity 2, relief 1,
+    duration 1). None of them changed the level;
+  - severity: false severe 1/45 (V082, "pretty bad", seen before), missed
+    severe 0/45 (0/6 of key severe); level moved 0/2;
+  - HEDGE on whole-message answers: the mock's 6 HEDGE-nulled cases (V005,
+    V031, V050, V077, V101, V103) are all exact with the real extractor;
+  - truncated 0, unparsed 0; V068 completes in 21 s, URGENT = key;
+  - latency per case p50 40 s, p95 76 s, max 82 s.
+  - Caveat: the dev script is ONE whole P7 message per case, so this is not
+    comparable 1:1 with held-out e2e (per-question answers).
+
+Remaining:
+1. ~~Test 2 on dev~~ done, above. Re-run on the final config (owed, low risk).
+2. ~~Dev end-to-end set~~ done, above.
    - No dev e2e keys exist; the only e2e keys are held-out, spent on v0.2.
      So v0.3 has not measured how extraction errors change the final level.
    - Plan:

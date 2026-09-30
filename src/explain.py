@@ -638,7 +638,9 @@ class Explanation:
                     {"role": "user", "content": text},
                     {"role": "user", "content": interview.EXTRACTION_INSTRUCTION}]
         try:
-            raw = json.loads(chat(messages, self.model, schema=interview.evidence_schema(fields)))
+            # A cut-off reply (interview.Truncated) is a ValueError: no red flag found.
+            raw = json.loads(chat(messages, self.model, schema=interview.evidence_schema(fields),
+                                  max_tokens=interview.MAX_TOKENS["extract"]))
         except (ValueError, KeyError):
             return False
         said = interview._normalize(text)
@@ -685,6 +687,8 @@ class Explanation:
                             if v.get("present") is False)})
 
         def violations(text):
+            if not (text or "").strip():
+                return ["is empty or was cut off before it ended"]
             found = guardrail_violations(text, flagged_teeth)
             wrong = calls_missing_decay(text, missing)
             if wrong:
@@ -730,14 +734,22 @@ class Explanation:
             patched = text.rstrip() + " " + _retake_sentence(self.findings)
             return None if violations(patched) else patched
 
-        reply = chat(self.messages, self.model)
+        def ask_model(messages):
+            """The model's text; empty when it was cut off at the output cap,
+            which violations() then refuses like any other broken reply."""
+            try:
+                return chat(messages, self.model, max_tokens=interview.MAX_TOKENS["explain"])
+            except interview.Truncated:
+                return ""
+
+        reply = ask_model(self.messages)
         problems = violations(reply)
         if echo_of and echoes(reply, echo_of):
             retry = self.messages + [
                 {"role": "assistant", "content": reply},
                 {"role": "user", "content": "Rewrite your reply. It repeats your first response. "
                                             "Answer only the question, in a few sentences."}]
-            rewritten = chat(retry, self.model)
+            rewritten = ask_model(retry)
             self.guardrail_log.append({"first": ["repeats the first response"],
                                        "after_retry": ["repeats the first response"]
                                        if echoes(rewritten, echo_of) else []})
@@ -754,7 +766,7 @@ class Explanation:
                 ask += f" Use this sentence word for word: \"{decay_sentence(flagged_teeth)}\""
             retry = self.messages + [{"role": "assistant", "content": reply},
                                      {"role": "user", "content": ask}]
-            reply = chat(retry, self.model)
+            reply = ask_model(retry)
             later = violations(reply)
             if later == [RETAKE_MISSING] and with_retake(reply):
                 reply, later = with_retake(reply), []

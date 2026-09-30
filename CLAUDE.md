@@ -88,9 +88,14 @@ Report the numbers and sample sizes, not "tests pass".
 **Resuming work? Start with the "Update 2026-09-30" section of
 `docs/plans/checkpoint-2026-09-29.md`** (branch `llm-triage-wave2`).
 - Protocol v0.3 is live.
-- The suite is green (558) and Test 1 is 20/20.
-- dev Test 3 is 12/12. On dev Test 5, protocol_check gives 0 under-triage.
-- Still open: dev Test 5 in LLM mode, e2e, and Test 2.
+- The suite is green (573) and Test 1 is 20/20.
+- dev Test 3 is 12/12. Dev Test 5 in LLM mode: 0/101 under-triage.
+- Dev e2e (45 cases): final 0 under-triage, 43/43 exact (2 are designed
+  RETAKE). Dev Test 2: 0/68 invented, omitted, contradicted or
+  sub-threshold teeth.
+- Extraction output is capped (schema maxLength + num_predict 1024) after
+  a runaway hang on V068.
+- Still open: re-run Test 2 on the final config.
 - The severity extraction change is kept by user decision, with a known
   over-triage of 4/28 on held-back set c.
 

@@ -265,6 +265,56 @@ class Scoring(unittest.TestCase):
         self.assertEqual(tc["llm_decided"], sum(r["decided_by"] == "llm" for r in called))
         self.assertEqual(tc["level_raised"], 0)          # the stub's ROUTINE cites nothing
 
+    def test_progress_and_latency(self):
+        lines = []
+        keys = []
+        for i, k in enumerate((URGENT_KEY, ROUTINE_KEY), 1):
+            k = copy.deepcopy(k)
+            k["id"] = f"P{i:03d}"
+            keys.append(k)
+        texts = {k["id"]: e2e.placeholder_text(k) for k in keys}
+        s = e2e.evaluate(keys, texts, PROTOCOL, "mock", lambda k: e2e.oracle_extractor(k, PROTOCOL),
+                         e2e.mock_triage, "drop", progress=lines.append)
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(lines[0].startswith("  1/2 P001  key URGENT"))
+        self.assertIn("final URGENT", lines[0])
+        self.assertEqual(s["latency_seconds"]["n"], 2)
+        self.assertEqual(e2e.latency([{"seconds": x} for x in (1, 2, 3, 4, 10)]),
+                         {"n": 5, "p50": 3, "p95": 10, "max": 10})
+        self.assertEqual(e2e.latency([]), {})
+
+    def test_truncated_extraction_is_counted_with_its_case(self):
+        import interview
+        oracle = e2e.oracle_extractor(URGENT_KEY, PROTOCOL)
+        calls = []
+
+        def truncates_once(messages, schema):
+            calls.append(1)
+            if len(calls) == 1:
+                raise interview.Truncated("truncated at the token cap")
+            return oracle(messages, schema)
+        key = copy.deepcopy(URGENT_KEY)
+        key["id"] = "TR01"
+        other = copy.deepcopy(ROUTINE_KEY)
+        other["id"] = "TR02"
+        texts = {k["id"]: e2e.placeholder_text(k) for k in (key, other)}
+        s = e2e.evaluate([key, other], texts, PROTOCOL, "mock",
+                         lambda k: truncates_once if k["id"] == "TR01" else oracle,
+                         e2e.mock_triage, "drop")
+        st = s["extraction_stats"]
+        self.assertEqual((st["truncated"], st["truncated_ids"], st["problem_ids"]),
+                         (1, ["TR01"], ["TR01"]))
+        self.assertEqual(s["systems"]["final"]["n_scored"], 2)      # counted, never skipped
+        self.assertTrue(s["cases"][0]["extraction_problems"][0].startswith("truncated"))
+
+    def test_a_case_that_raises_stops_the_run(self):
+        def broken(messages, schema):
+            raise TimeoutError("extraction timed out")
+        keys = [copy.deepcopy(URGENT_KEY)]
+        with self.assertRaises(TimeoutError):
+            e2e.evaluate(keys, {keys[0]["id"]: e2e.placeholder_text(keys[0])}, PROTOCOL, "mock",
+                         lambda k: broken, e2e.mock_triage, "drop")
+
     def test_triage_calls_counts_raised_apart(self):
         results = [{"id": "A", "model_called": True, "decided_by": "llm", "level_raised_from": None,
                     "llm_valid": True, "rejections": 0},

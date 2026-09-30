@@ -33,7 +33,8 @@ from pathlib import Path
 
 import protocol as protocol_mod
 from assess import rules
-from interview import DEFAULT_MODEL, _is_bare, _normalize, chat
+from interview import (DEFAULT_MODEL, MAX_TOKENS, QUOTE_MAX_CHARS, Truncated, _is_bare,
+                       _normalize, chat)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SYSTEM_PROMPT = (REPO_ROOT / "llm" / "prompts" / "system_triage.md").read_text(encoding="utf-8")
@@ -123,7 +124,9 @@ def output_schema(protocol: protocol_mod.Protocol, symptom_fields: list) -> dict
                                     "source": {"enum": ["symptoms", "patient_words",
                                                         "visual_summary"]},
                                     "field": {"enum": fields},
-                                    "quote": {"type": ["string", "null"]},
+                                    # bounded, like the extraction's quotes
+                                    "quote": {"type": ["string", "null"],
+                                              "maxLength": QUOTE_MAX_CHARS},
                                 },
                             },
                         },
@@ -286,7 +289,11 @@ def _ask_model(llm, protocol, symptoms, visual, words, schema, log: dict):
     last_valid = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
         log["attempts"] = attempt
-        raw = llm(messages, schema)
+        try:
+            raw = llm(messages, schema)
+        except Truncated:
+            # Cut off at the output cap: a failed attempt, like unparsable output.
+            raw = ""
         try:
             proposal = json.loads(raw)
         except (TypeError, json.JSONDecodeError):
@@ -333,7 +340,8 @@ def _ask_model(llm, protocol, symptoms, visual, words, schema, log: dict):
 
 
 def _default_llm(model: str):
-    return lambda messages, schema: chat(messages, model, schema=schema)
+    return lambda messages, schema: chat(messages, model, schema=schema,
+                                         max_tokens=MAX_TOKENS["triage"])
 
 
 def assess(findings: dict, symptoms: dict = None, messages: list = None,
