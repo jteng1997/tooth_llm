@@ -95,7 +95,8 @@ Report the numbers and sample sizes, not "tests pass".
   sub-threshold teeth.
 - Extraction output is capped (schema maxLength + num_predict 1024) after
   a runaway hang on V068.
-- Still open: re-run Test 2 on the final config.
+- Test 2 re-run on the final config is unchanged.
+- Still open: severity over-triage (new held-back set d), HU01–HU08.
 - The severity extraction change is kept by user decision, with a known
   over-triage of 4/28 on held-back set c.
 

@@ -129,7 +129,14 @@ Measured on the final config (runs/evals/*_2026-09-30):
     comparable 1:1 with held-out e2e (per-question answers).
 
 Remaining:
-1. ~~Test 2 on dev~~ done, above. Re-run on the final config (owed, low risk).
+1. ~~Test 2 on dev~~ done, above. Re-run on the final config (ace7610,
+   `runs/evals/test2_dev_2026-09-30_capfix/`):
+   - fixed 8 and synthetic 60 are unchanged: all five headline metrics are
+     0, and unscoped absence is 1/14 (S0004 again);
+   - guardrail retry and fallback 3/60;
+   - follow-ups 0/120 on every safety metric, fallback 10/120 (was 11),
+     retry 16/120 (was 15);
+   - no "empty or cut off" refusals, so the cap never bit.
 2. ~~Dev end-to-end set~~ done, above.
    - No dev e2e keys exist; the only e2e keys are held-out, spent on v0.2.
      So v0.3 has not measured how extraction errors change the final level.
