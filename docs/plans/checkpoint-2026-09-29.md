@@ -66,11 +66,32 @@ Measured on the final config (runs/evals/*_2026-09-30):
     retried 36/81;
   - p50 8.2 s, p95 14.5 s.
 
+- Test 2, dev, qwen3:14b (`runs/evals/test2_dev_2026-09-30/`, 09-30 noon):
+  - fixed 8: hallucination, omission, contradiction, misstated and
+    unreported (sub-threshold) all 0/8;
+  - synthetic 60: all five 0/60. Unscoped absence 1/14 unusable-photo cases
+    (S0004, "nothing was found on your lower teeth", which is lower-scoped;
+    qa thinks the checker is strict, not yet checked in code). Guardrail
+    retry 3/60, fallback text 3/60, places_pain 2/60;
+  - follow-ups, 120 turns: hallucinated tooth, discourages care, misstated
+    and unreported all 0/120. Fallback 11/120, places_pain 7/120;
+  - relief claims: 4, all for patients who answered "not helped" (accurate).
+    10 cases had relief unanswered (guard armed): 0 claims in their 10 first
+    responses and 20 follow-ups, so the guard never fired. Widening it is
+    not urgent (held-back recall stays 9/20).
+- Dev e2e keys: `labels/dev/e2e_dev_keys.json` (45 cases, URGENT 20 /
+  SOON 25), builder `labels/dev/build_e2e_dev_keys.py`, byte-identical on
+  re-run (sha256 7d8863b7…), validated by qa-engineer-5. The script is ONE
+  whole P7 message per case, not per-question answers (`_meta.script_design`),
+  so it is not comparable 1:1 with held-out e2e. Mock run: final 0 under,
+  6 over (a mock artifact: whole-paragraph quotes hit HEDGE), V039/V080 =
+  designed RETAKE.
+
 Remaining (qa-engineer-5 runs them, one at a time; never held-out):
-1. Test 2 (check_faithfulness) on dev. It started around 11:50 on 09-30.
-   Afterwards, decide whether to widen the relief guard (held-back recall
-   is 9/20).
-2. **Dev end-to-end set (user asked 2026-09-30).**
+1. ~~Test 2 on dev~~ done, above.
+2. **Dev end-to-end set (user asked 2026-09-30).** Keys built and validated;
+   the real run (`check_e2e.py --keys labels/dev/e2e_dev_keys.json --model
+   qwen3:14b`) started 13:03 on 09-30 → `runs/evals/e2e_dev_2026-09-30/`.
    - No dev e2e keys exist; the only e2e keys are held-out, spent on v0.2.
      So v0.3 has not measured how extraction errors change the final level.
    - Plan:
