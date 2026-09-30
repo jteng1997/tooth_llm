@@ -280,6 +280,11 @@ Held-out data (`labels/heldout/`) is also gitignored. It is backed up in
   - HU07 moderate.
   These items are scored from now on. They agree with the run by
   construction, so they add no evidence of accuracy.
+  - Set c now has 72 items (42 severe, 30 not severe).
+  - Re-scored from the existing outputs (reference only): the final config
+    misses 2/42 severe and reads 4/30 as false severe; the old config
+    misses 7/42 (the old 6 plus HU05) with 0/30 false severe.
+  - The reportable result stays the pre-declared 64 items above.
 - **Relief:** RP03 ("what I'm meant to take") is still read as null, not as
   not_tried, which leads to URGENT. That errs on the safe side.
 

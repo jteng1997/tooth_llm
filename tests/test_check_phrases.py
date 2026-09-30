@@ -127,10 +127,14 @@ class RunPhrase(unittest.TestCase):
         cases = _json.loads(path.read_text(encoding="utf-8"))
         ids = {c["id"] for c in cases}
         self.assertTrue({"HS19", "HS20", "HS22", "HS23", "HS35"} <= ids)
-        unclear = [c for c in cases if c.get("unclear")]
-        self.assertEqual(len(unclear), 8)
-        self.assertTrue(all(c["severe"] is None for c in unclear))
-        self.assertTrue(all(isinstance(c["severe"], bool) for c in cases if not c.get("unclear")))
+        # HU01-HU08 were ruled by the user on 2026-09-30 (decisions.md): every
+        # item is now keyed, and the 8 post-hoc ones are marked for reporting apart
+        self.assertTrue(all(isinstance(c["severe"], bool) for c in cases))
+        post_hoc = {c["id"]: c for c in cases if c.get("post_hoc_ruling")}
+        self.assertEqual(sorted(post_hoc), [f"HU0{i}" for i in range(1, 9)])
+        self.assertEqual({i: c["ruled_value"] for i, c in post_hoc.items()},
+                         {"HU01": None, "HU02": "severe", "HU03": "severe", "HU04": "severe",
+                          "HU05": "severe", "HU06": "severe", "HU07": "moderate", "HU08": "severe"})
 
 
 if __name__ == "__main__":

@@ -23,27 +23,6 @@ checklist row. A dentist should decide whether trismus, visual disturbance and
 voice change belong in checklist A. Until then the protocol cannot detect
 them, and the evaluation cannot measure them.
 
-### Severity phrasings the rulings do not settle (for the user)
-Found while writing the held-back set `llm/eval/heldback/severity_phrases_c.json`
-(research-pm, 2026-09-29). The definition (severe = stops them sleeping or
-eating, or they call it unbearable) and SP01–SP09 do not decide these. They
-are kept in the set as `unclear` (`"severe": null`) and are not scored until
-the user rules:
-
-| Id | Phrase | Why unclear |
-|---|---|---|
-| HU01 | "I can't tell you how much it hurts." | intensifier idiom alone; no sleep or eating stated |
-| HU02 | "It's torture." | like agony (SP01), but not ruled |
-| HU03 | "If I had to score it, ten out of ten." | numeric scale not ruled |
-| HU04 | "I'm getting maybe four hours of sleep instead of eight." | sleep reduced, not stopped |
-| HU05 | "It takes me an hour longer than usual to fall asleep." | delayed sleep onset. Set a keyed a similar phrase (SV21) severe without a ruling |
-| HU06 | "The only way I can sleep is by taking painkillers before bed." | sleep kept only with pain relief |
-| HU07 | "I'm eating a bit less than usual." | slightly reduced eating. Set a keyed "much less" (SV10) severe |
-| HU08 | "It's so painful it brings tears to my eyes." | tears not ruled; no sleep or eating stated |
-
-A ruling moves a phrase into the scored set. It is not added to the
-extraction instruction, which would tune on held-back text.
-
 ### Caries threshold in `llm/rules.py`
 `CARIES_CONF_THRESHOLD = 0.50`. The file's own comment says to tune for
 sensitivity. Measured on 4,929 labelled Mendeley photos (photo-level labels):
@@ -64,6 +43,58 @@ step only runs with the development override until a dentist signs them off.
 The 20 rule cases in `llm/eval/rule_cases.json` also need blind dentist labels.
 
 ## Decided
+
+### 2026-09-30 — Severity phrasings HU01–HU08 ruled (user); held-back set c re-keyed
+**Decision (user, 2026-09-30 evening, relayed by the lead).** The user
+agrees with the current configuration's reading of the eight phrasings that
+the definition and SP01–SP09 did not settle (open item of 2026-09-29), and
+says it is right. Recorded as given:
+
+| Id | Phrase | User's ruling |
+|---|---|---|
+| HU01 | "I can't tell you how much it hurts." | null (not answered) |
+| HU02 | "It's torture." | severe |
+| HU03 | "If I had to score it, ten out of ten." | severe |
+| HU04 | "I'm getting maybe four hours of sleep instead of eight." | severe |
+| HU05 | "It takes me an hour longer than usual to fall asleep." | severe |
+| HU06 | "The only way I can sleep is by taking painkillers before bed." | severe |
+| HU07 | "I'm eating a bit less than usual." | moderate |
+| HU08 | "It's so painful it brings tears to my eyes." | severe |
+
+Clinical call by the user. A dentist has not reviewed it (Form C).
+
+**Not added to the extraction instruction.** This follows the rule set when
+these were opened: adding them would tune on held-back text.
+
+**Set c re-keyed** (research-pm, `llm/eval/heldback/severity_phrases_c.json`):
+- The 8 items now carry `severe` true/false, `ruled_value` and
+  `post_hoc_ruling`.
+- The set is now 42 severe and 30 not severe.
+- HU01 is keyed `severe: false`, the scoring direction for null. Its exact
+  ruled value is null, in `ruled_value`.
+- The phrase checker's severity score is severe / not severe. It cannot tell
+  a null from a moderate reading. Both runs read HU01 as null, so it is
+  exact either way.
+
+**Re-scored from the existing outputs** (`runs/evals/severity_c_2026-09-29/`
+and `_old/`; not re-run; qwen3:14b; exact 95% CIs):
+
+| | Old (interview 5c6427b4) | New (interview 23f41c60) |
+|---|---|---|
+| Severe → not severe, n = 42 | 7/42 = 16.7% (7.0–31.4): the 6 before + HU05 | **2/42 = 4.8% (0.6–16.2)**, unchanged ids (HS14, HS27) |
+| False severe, n = 30 | 0/30 (0–11.6) | **4/30 = 13.3% (3.8–30.7)**, unchanged ids |
+| Total wrong, n = 72 | 7/72 | 6/72 |
+
+- **Not an independent measurement for the eight.** The user ruled after
+  seeing both configurations' readings, and the ruling matches the new one.
+  So the new configuration is right on all 8 by construction, and the old
+  one is wrong only on HU05, which it read as moderate.
+- The pre-declared comparison is the 64 settled items (set c result, under the
+  2026-09-29 severity entry below): 2/36 and 4/28 new, 6/36 and 0/28 old. That stays the result to
+  report. The 72-item figures are for reference, reported with this caveat.
+- In the file, the eight carry `post_hoc_ruling` so they can be reported
+  apart. Set d, when written, should include fresh phrasings of these kinds
+  keyed before any run.
 
 ### 2026-09-29 — Severity extraction: HEDGE exception and instruction clarification (user)
 **Decision (user, relayed by the lead).** Both are approved. They apply the
@@ -143,8 +174,8 @@ configuration.**
     have now been seen, so set c no longer tests a change aimed at them.
 - Unclear items (not scored): the new configuration read 6 of HU01–HU08 as
   severe, HU07 as moderate, and HU01 as null. The old configuration differs
-  only on HU05 (moderate). They stay open for the user's ruling (Open
-  section).
+  only on HU05 (moderate). The user ruled on them on 2026-09-30 (entry
+  above).
 
 ### 2026-09-29 — P7 dev, fresh model-B run on v0.3: adjudication (research-pm)
 The fresh whole-dev B run (gemini-3.5-flash-lite, B prompt 239c718f…,
