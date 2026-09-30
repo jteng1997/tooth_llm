@@ -80,6 +80,14 @@ class RunPhrase(unittest.TestCase):
         self.assertEqual(s["independent"]["n"], 1)                  # not in n
         self.assertEqual(s["unclear_not_scored"], {"HU01": "moderate"})
 
+    def test_post_hoc_rulings_are_reported_apart(self):
+        rows = [{"id": "A", "tuned": False, "ok": True, "severe": True},
+                {"id": "HU01", "tuned": False, "post_hoc": True, "ok": True, "severe": True},
+                {"id": "T", "tuned": True, "ok": True, "severe": False}]
+        s = cp.summarise(rows)
+        self.assertEqual((s["independent"]["n"], s["tuned"]["n"], s["post_hoc"]["n"]), (1, 1, 1))
+        self.assertNotIn("HU01", s["independent"]["wrong_ids"] + [r["id"] for r in rows[:1]])
+
     def test_breakout_is_its_own_block(self):
         rows = [{"id": "H1", "tuned": False, "ok": False, "severe": True, "got": "moderate"},
                 {"id": "H2", "tuned": True, "ok": True, "severe": False, "got": "mild"},

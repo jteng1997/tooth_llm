@@ -188,8 +188,9 @@ _ARCH_FINE = re.compile(
     # not bare "clear": "the photos of your lower teeth were clear" is photo quality
     r"(?:fine|okay|ok|healthy|normal|good|in good (?:shape|condition)|clear of|free of"
     r"|problem-free)\b", re.I)
-_NOT_A_CLAIM = re.compile(r"\b(?:not|n't) (?:mean|necessarily|say|tell)\b|\bnot that\b|\beven if\b"
-                          r"|\bcannot say\b|\bcan'?t say\b|\bdoes not prove\b"
+# ’ as well as ': Test 2 capfix S0027 "it doesn’t mean your teeth are completely fine"
+_NOT_A_CLAIM = re.compile(r"(?:\bnot|n['’]t) (?:mean|necessarily|say|tell)\b|\bnot that\b|\beven if\b"
+                          r"|\bcannot say\b|\bcan['’]?t say\b|\bdoes not prove\b"
                           # advice, not a finding: "a check-up is the way to make sure your
                           # teeth are healthy"
                           r"|\b(?:make sure|ensure|keep|keeping|check (?:that|whether|if)|help)\b", re.I)

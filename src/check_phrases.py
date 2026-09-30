@@ -112,9 +112,14 @@ def summarise(rows: list, breakout: dict = None) -> dict:
     `unclear` cases only as raw readings; each named breakout (e.g. the HEDGE
     probes) as its own block, which is also inside the numbers above."""
     scored = [r for r in rows if r["ok"] is not None]
+    post = [r for r in scored if r.get("post_hoc")]
+    scored_ex = [r for r in scored if not r.get("post_hoc")]
     out = {}
-    for label, part in (("independent", [r for r in scored if not r["tuned"]]),
-                        ("tuned", [r for r in scored if r["tuned"]])):
+    # post_hoc: keyed by a ruling made after its reading was seen (set c
+    # HU01-HU08, 2026-09-30) -- never independent evidence, reported apart
+    for label, part in (("independent", [r for r in scored_ex if not r["tuned"]]),
+                        ("tuned", [r for r in scored_ex if r["tuned"]]),
+                        ("post_hoc", post)):
         if part:
             out[label] = _block(part)
     unclear = [r for r in rows if r["ok"] is None]
@@ -174,6 +179,7 @@ def main() -> int:
         for case in cases:
             r = run_phrase(case, args.model, protocol)
             row = {"id": case["id"], "text": case["text"], "tuned": bool(case.get("tuned")),
+                   "post_hoc": bool(case.get("post_hoc_ruling")),
                    "got": r["got"], "reasked": r["reasked"], "ok": score(case, r["got"])}
             row.update({k: case[k] for k in ("severe", "expected") if k in case})
             rows.append(row)

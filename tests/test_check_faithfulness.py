@@ -186,8 +186,15 @@ class ArchReassurance(unittest.TestCase):
                      "However, the photos of your lower teeth were clear and showed 14 teeth.",
                      "Retake the photos so they show all your teeth and are clear and well-lit.",
                      "Regular checkups are still the best way to make sure your teeth are healthy.",
-                     "Nothing in these photos reached the level we report."):
+                     "Nothing in these photos reached the level we report.",
+                     # Test 2 capfix S0027: a curly apostrophe
+                     "This result means that nothing urgent was found in the photos, but it "
+                     "doesn’t mean your teeth are completely fine.",
+                     "It doesn't mean your teeth are fine."):
             self.assertEqual(cf.arch_reassurance(text), [], text)
+        # the negation must still be a negation: a plain claim with a curly
+        # apostrophe elsewhere is counted
+        self.assertEqual(len(cf.arch_reassurance("Don’t worry, your teeth look fine.")), 1)
 
 
 class NoKnowledge:

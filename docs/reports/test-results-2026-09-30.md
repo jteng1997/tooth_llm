@@ -103,8 +103,14 @@ Held-out data (`labels/heldout/`) is also gitignored. It is backed up in
   and asks for the upper photo again. The checker flags it because the
   absence is not worded as covering only the usable photo. This is
   borderline wording, not a claim about unseen teeth.
-- **Pain-relief claims:** 4 texts say the relief did not help (S0026, S0058,
-  S0059, and one S0058 follow-up). All four patients answered "not helped",
+- **Checker fix:** one follow-up "arch called fine" flag (S0027, "it
+  doesn’t mean your teeth are completely fine") was a checker false
+  positive: the negation list missed the curly apostrophe. After the fix,
+  both runs rescore to 0/60 and 0/120. Side by side:
+  `compare_morning_vs_capfix.txt`.
+- **Pain-relief claims:** in the morning run, 4 texts say the relief did not
+  help (S0026, S0058, S0059, and one S0058 follow-up). In the final-config
+  run there are 3 (S0025, S0026, S0059). All four patients answered "not helped",
   so the claims are true. 10 cases had relief unanswered, which arms the
   relief guard; they made 0 relief claims in 30 texts. The guard never
   fired.
