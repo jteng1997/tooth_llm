@@ -4,70 +4,129 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dental screening demo</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:wght@600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400&display=swap">
 <style>
+  /* Fully local: system fonts only (Segoe UI Variable on Windows 11), no web-font download. */
   :root{
-    --ground:#F4F6F7; --surface:#FFFFFF; --ink:#16232B; --muted:#5B6C76;
-    --rule:#DCE3E7; --accent:#0E5E6E; --accent-soft:#E2EEF0;
-    --emergency:#A8503C; --urgent:#B0762A; --soon:#0E5E6E; --routine:#2F7D5B; --retake:#5B6C76;
-    --display:"Spectral",Georgia,serif; --body:"IBM Plex Sans",system-ui,sans-serif;
-    --mono:"IBM Plex Mono",ui-monospace,monospace;
+    --ground:#F2F8FD; --surface:#FFFFFF; --ink:#102A3D; --muted:#5A7186;
+    --rule:#D6E6F2; --accent:#0284C7; --accent-hover:#0369A1; --on-accent:#FFFFFF;
+    --accent-soft:#E3F3FD; --accent-tint:#BAE3FA;
+    --shadow:0 1px 2px rgba(16,42,61,.05),0 6px 20px rgba(2,132,199,.07);
+    --emergency:#B4473A; --urgent:#B7791F; --soon:#0284C7; --routine:#4F5BD5; --retake:#5A7186;
+    --display:"Segoe UI Variable Display","Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+    --body:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+    --mono:"Cascadia Mono",Consolas,ui-monospace,monospace;
+    --radius:12px;
   }
   @media (prefers-color-scheme:dark){
-    :root{--ground:#0F1519; --surface:#161F25; --ink:#E7EDF1; --muted:#95A5AF;
-          --rule:#25323A; --accent:#5FB9C8; --accent-soft:#16302F;
-          --emergency:#D9846F; --urgent:#D7A055; --soon:#5FB9C8; --routine:#5FB98C;}
+    :root{--ground:#0A1622; --surface:#0F2131; --ink:#E4F1FA; --muted:#93AEC2;
+          --rule:#1E3A50; --accent:#7DD3FC; --accent-hover:#BAE6FD; --on-accent:#06263A;
+          --accent-soft:#12324A; --accent-tint:#1B4A6B;
+          --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.25);
+          --emergency:#E58A79; --urgent:#E2AE5E; --soon:#7DD3FC; --routine:#A5AEF5; --retake:#93AEC2;}
   }
   *{box-sizing:border-box;}
-  body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--body);line-height:1.6;}
-  .wrap{max-width:900px;margin:0 auto;padding:2rem 20px 4rem;}
-  h1{font-family:var(--display);font-size:1.9rem;margin:0 0 .2rem;}
-  .sub{color:var(--muted);margin:0 0 1.6rem;}
-  h2{font-family:var(--display);font-size:1.25rem;margin:0 0 .6rem;}
-  section{background:var(--surface);border:1px solid var(--rule);border-radius:4px;padding:1.1rem 1.2rem;margin-bottom:1.1rem;}
-  label{display:block;font-size:.85rem;font-weight:500;margin-bottom:.35rem;}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--body);line-height:1.6;
+    -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:900px;margin:0 auto;padding:0 20px 4rem;}
+  header.hero{background:linear-gradient(135deg,var(--accent-soft),var(--accent-tint));
+    margin:0 -20px 1.6rem;padding:2.2rem 20px 1.6rem;border-bottom:1px solid var(--rule);}
+  .brand{display:flex;align-items:center;gap:.8rem;}
+  .brand svg{flex:none;width:44px;height:44px;}
+  h1{font-family:var(--display);font-weight:600;font-size:1.9rem;letter-spacing:-.01em;margin:0;}
+  .sub{color:var(--muted);margin:.5rem 0 0;max-width:62ch;}
+  h2{font-family:var(--display);font-weight:600;font-size:1.2rem;margin:0 0 .8rem;display:flex;align-items:center;gap:.6rem;}
+  h2 .step{display:inline-grid;place-items:center;width:1.8rem;height:1.8rem;border-radius:50%;
+    background:var(--accent-soft);color:var(--accent);font-size:.9rem;font-weight:700;}
+  section{background:var(--surface);border:1px solid var(--rule);border-radius:var(--radius);padding:1.3rem 1.4rem;
+    margin-bottom:1.2rem;box-shadow:var(--shadow);animation:rise .35s ease-out;}
+  @keyframes rise{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+  label{display:block;font-size:.85rem;font-weight:600;margin-bottom:.35rem;}
   .row{display:flex;gap:1rem;flex-wrap:wrap;}
   .row > div{flex:1 1 240px;}
-  input[type=file]{width:100%;font-size:.85rem;}
-  button{background:var(--accent);color:#fff;border:0;border-radius:3px;padding:.6rem 1.1rem;font:inherit;font-weight:600;cursor:pointer;}
+  input[type=file]{width:100%;font:inherit;font-size:.85rem;color:var(--muted);padding:.5rem;
+    border:1.5px dashed var(--accent-tint);border-radius:10px;background:var(--ground);}
+  input[type=file]::file-selector-button{font:inherit;font-weight:600;border:0;border-radius:8px;padding:.4rem .8rem;
+    margin-right:.7rem;background:var(--accent-soft);color:var(--accent);cursor:pointer;}
+  button{background:var(--accent);color:var(--on-accent);border:0;border-radius:10px;padding:.65rem 1.2rem;font:inherit;
+    font-weight:600;cursor:pointer;transition:background .15s,transform .1s,box-shadow .15s;}
+  button:hover:not(:disabled){background:var(--accent-hover);box-shadow:0 4px 12px rgba(2,132,199,.25);}
+  button:active:not(:disabled){transform:translateY(1px);}
+  button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
   button:disabled{opacity:.5;cursor:default;}
-  button.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent);}
+  button.ghost{background:transparent;color:var(--accent);border:1.5px solid var(--accent);}
+  button.ghost:hover:not(:disabled){background:var(--accent-soft);box-shadow:none;}
   .views{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem;}
-  .view img{width:100%;border:1px solid var(--rule);border-radius:3px;display:block;}
-  .meta{font-family:var(--mono);font-size:.72rem;color:var(--muted);margin-top:.3rem;}
+  .view img{width:100%;border:1px solid var(--rule);border-radius:10px;display:block;}
+  .meta{font-family:var(--mono);font-size:.72rem;color:var(--muted);margin-top:.35rem;}
   .crops{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.6rem;}
   .crop{width:104px;}
-  .crop img{width:100%;border:2px solid var(--emergency);border-radius:3px;display:block;}
+  .crop img{width:100%;border:2px solid var(--emergency);border-radius:8px;display:block;}
   .crop span{font-family:var(--mono);font-size:.66rem;color:var(--muted);display:block;}
   .chat{display:flex;flex-direction:column;gap:.55rem;margin-bottom:.8rem;}
-  .msg{padding:.5rem .75rem;border-radius:10px;max-width:85%;font-size:.92rem;}
-  .msg.bot{background:var(--accent-soft);align-self:flex-start;}
-  .msg.me{background:var(--rule);align-self:flex-end;}
+  .msg{padding:.55rem .85rem;border-radius:14px;max-width:85%;font-size:.93rem;animation:rise .25s ease-out;}
+  .msg.bot{background:var(--accent-soft);align-self:flex-start;border-bottom-left-radius:4px;}
+  .msg.me{background:var(--accent);color:var(--on-accent);align-self:flex-end;border-bottom-right-radius:4px;}
   .ask{display:flex;gap:.5rem;}
-  .ask input{flex:1;padding:.55rem .7rem;border:1px solid var(--rule);border-radius:3px;background:var(--ground);color:var(--ink);font:inherit;}
-  .badge{display:inline-block;padding:.2rem .6rem;border-radius:999px;color:#fff;font-size:.75rem;font-weight:600;letter-spacing:.04em;}
+  .ask input{flex:1;padding:.6rem .8rem;border:1.5px solid var(--rule);border-radius:10px;background:var(--ground);color:var(--ink);font:inherit;
+    transition:border-color .15s,box-shadow .15s;}
+  .ask input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+  .badge{display:inline-block;padding:.22rem .7rem;border-radius:999px;color:#fff;font-size:.75rem;font-weight:700;letter-spacing:.05em;}
   .teeth{font-family:var(--mono);font-size:.8rem;color:var(--muted);margin-top:.4rem;}
   .note{font-size:.8rem;color:var(--muted);}
-  pre{font-family:var(--mono);font-size:.72rem;background:var(--ground);border:1px solid var(--rule);border-radius:3px;padding:.7rem;overflow-x:auto;max-height:260px;}
+  summary.note{cursor:pointer;}
+  pre{font-family:var(--mono);font-size:.72rem;background:var(--ground);border:1px solid var(--rule);border-radius:8px;padding:.7rem;overflow-x:auto;max-height:260px;}
   .spinner{font-size:.85rem;color:var(--muted);}
-  .disclaimer{font-size:.85rem;border-left:3px solid var(--accent);padding:.35rem .7rem;background:var(--accent-soft);margin:0 0 .9rem;}
+  .disclaimer{font-size:.85rem;border-left:3px solid var(--accent);padding:.45rem .8rem;background:var(--accent-soft);
+    border-radius:0 8px 8px 0;margin:0 0 .9rem;}
   .disclaimer:empty,.safety:empty{display:none;}
-  .safety{font-size:.9rem;border-left:3px solid var(--urgent);padding:.35rem .7rem;margin:.8rem 0;}
+  .safety{font-size:.9rem;border-left:3px solid var(--urgent);padding:.35rem .8rem;margin:.8rem 0;}
   .checklist{margin:0 0 1rem;}
   .checklist fieldset{border:0;border-bottom:1px solid var(--rule);margin:0;padding:.6rem 0;
     display:grid;grid-template-columns:1fr auto;gap:.4rem 1rem;align-items:center;}
   .checklist legend{float:left;padding:0;font-size:.95rem;}  /* float lets legend sit in the grid */
   .checklist .yn{display:flex;gap:.4rem;}
   .checklist .yn label{display:flex;align-items:center;justify-content:center;gap:.35rem;margin:0;
-    min-width:4.5rem;min-height:44px;padding:0 .8rem;border:1px solid var(--rule);border-radius:3px;
-    font-size:.95rem;font-weight:500;cursor:pointer;background:var(--ground);}
+    min-width:4.5rem;min-height:44px;padding:0 .8rem;border:1.5px solid var(--rule);border-radius:10px;
+    font-size:.95rem;font-weight:500;cursor:pointer;background:var(--ground);transition:border-color .15s,background .15s;}
+  .checklist .yn label:hover{border-color:var(--accent-tint);}
   .checklist .yn input{margin:0;width:1.1rem;height:1.1rem;accent-color:var(--accent);}
   .checklist .yn label:has(input:checked){border-color:var(--accent);background:var(--accent-soft);}
   .checklist .yn label:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:2px;}
   .checklist .actions{display:flex;align-items:center;gap:.8rem;margin-top:.9rem;flex-wrap:wrap;}
+
+  /* Loading: a ring + an indeterminate bar for the photo analysis, and
+     "typing" dots in the chat while the model works. */
+  .loading{display:flex;flex-direction:column;gap:.7rem;margin-top:1rem;padding:1rem 1.1rem;border-radius:10px;
+    background:var(--accent-soft);color:var(--ink);font-size:.9rem;}
+  .loading .line{display:flex;align-items:center;gap:.75rem;}
+  .ring{flex:none;width:1.4rem;height:1.4rem;border-radius:50%;border:3px solid var(--accent-tint);
+    border-top-color:var(--accent);animation:spin .8s linear infinite;}
+  .bar{position:relative;height:6px;border-radius:999px;background:var(--accent-tint);overflow:hidden;}
+  .bar::after{content:"";position:absolute;top:0;bottom:0;left:-40%;width:40%;border-radius:inherit;background:var(--accent);
+    animation:slide 1.4s ease-in-out infinite;}
+  .elapsed{font-family:var(--mono);font-size:.75rem;color:var(--muted);margin-left:auto;}
+  .typing{display:inline-flex;align-items:center;gap:.3rem;}
+  .typing .label{margin-right:.2rem;}
+  .typing i{width:.45rem;height:.45rem;border-radius:50%;background:var(--accent);opacity:.35;
+    animation:blink 1.2s infinite ease-in-out;}
+  .typing i:nth-of-type(2){animation-delay:.2s;}
+  .typing i:nth-of-type(3){animation-delay:.4s;}
+  .is-loading::before{content:"";display:inline-block;vertical-align:-.2em;width:.95rem;height:.95rem;margin-right:.45rem;
+    border-radius:50%;border:2px solid var(--accent-tint);border-top-color:var(--accent);animation:spin .8s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  @keyframes slide{0%{left:-40%;}100%{left:100%;}}
+  @keyframes blink{0%,80%,100%{opacity:.25;transform:translateY(0);}40%{opacity:1;transform:translateY(-3px);}}
+  @media (prefers-reduced-motion:reduce){
+    section,.msg{animation:none !important;}
+    .ring,.is-loading::before,.bar::after,.typing i{animation-duration:2.4s !important;}
+    *{transition:none !important;}
+  }
+
   @media (max-width:560px){
-    .wrap{padding:1.2rem 12px 3rem;}
-    section{padding:.9rem .8rem;}
+    .wrap{padding:0 12px 3rem;}
+    header.hero{margin:0 -12px 1.2rem;padding:1.6rem 12px 1.2rem;}
+    h1{font-size:1.5rem;}
+    section{padding:1rem .9rem;}
     .checklist fieldset{grid-template-columns:1fr;}
     .checklist .yn label{flex:1;min-width:0;padding:0 .4rem;white-space:nowrap;}
     .checklist .actions button{width:100%;}
@@ -75,23 +134,37 @@
     .ask input{flex:1 1 100%;}
   }
   #emergency-card{border:2px solid var(--emergency);}
-  #emergency-card .headline{font-family:var(--display);font-size:1.6rem;line-height:1.3;margin:.5rem 0 1rem;}
+  #emergency-card .headline{font-family:var(--display);font-weight:600;font-size:1.6rem;line-height:1.3;margin:.5rem 0 1rem;}
   [hidden]{display:none !important;}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Dental screening demo</h1>
-  <p class="sub">Upload an upper and a lower occlusal photo. Everything runs on this machine — vision models locally, Qwen3 14B through Ollama.</p>
+  <header class="hero">
+    <div class="brand">
+      <svg viewBox="0 0 48 48" aria-hidden="true">
+        <rect width="48" height="48" rx="12" fill="var(--accent)"/>
+        <path d="M17 11c-4.4 0-7 3.3-7 7.6 0 3.3 1.3 5.4 2.3 8 1 2.7 1.3 6.4 2.2 9 .6 1.8 1.6 2.4 2.6 2.4 1.7 0 2.2-1.6 2.7-3.8.6-2.6 1.2-5.2 4.2-5.2s3.6 2.6 4.2 5.2c.5 2.2 1 3.8 2.7 3.8 1 0 2-.6 2.6-2.4.9-2.6 1.2-6.3 2.2-9 1-2.6 2.3-4.7 2.3-8C38 14.3 35.4 11 31 11c-3 0-4.4 1.6-7 1.6S20 11 17 11z" fill="var(--on-accent)"/>
+      </svg>
+      <h1>Dental screening demo</h1>
+    </div>
+    <p class="sub">Upload an upper and a lower occlusal photo. Everything runs on this machine — vision models locally, Qwen3 14B through Ollama.</p>
+  </header>
 
   <section id="upload-card">
-    <h2>1 · Photos</h2>
+    <h2><span class="step">1</span> Photos</h2>
     <div class="row">
       <div><label for="upper">Upper occlusal</label><input id="upper" type="file" accept="image/*"></div>
       <div><label for="lower">Lower occlusal</label><input id="lower" type="file" accept="image/*"></div>
     </div>
     <p style="margin-top:.9rem"><button id="analyse">Analyse photos</button>
       <span id="upload-status" class="spinner"></span></p>
+    <div class="loading" id="upload-loading" role="status" aria-live="polite" hidden>
+      <div class="line"><span class="ring"></span>
+        <span id="upload-loading-text">Segmenting teeth and checking for caries… (about a minute)</span>
+        <span class="elapsed" id="upload-elapsed"></span></div>
+      <div class="bar"></div>
+    </div>
   </section>
 
   <section id="emergency-card" role="alert" hidden>
@@ -102,14 +175,14 @@
   </section>
 
   <section id="vision-card" hidden>
-    <h2>2 · What the vision models found</h2>
+    <h2><span class="step">2</span> What the vision models found</h2>
     <div class="views" id="views"></div>
     <p class="note" id="vision-note"></p>
     <details style="margin-top:.6rem"><summary class="note">findings JSON</summary><pre id="findings-json"></pre></details>
   </section>
 
   <section id="interview-card" hidden>
-    <h2>3 · A few questions</h2>
+    <h2><span class="step">3</span> A few questions</h2>
     <p class="disclaimer" id="interview-disclaimer"></p>
     <form class="checklist" id="checklist" hidden novalidate>
       <p class="note" id="checklist-intro"></p>
@@ -129,7 +202,7 @@
   </section>
 
   <section id="result-card" hidden>
-    <h2>4 · Result</h2>
+    <h2><span class="step">4</span> Result</h2>
     <p><span id="badge" class="badge"></span> <strong id="headline"></strong></p>
     <p class="disclaimer" id="result-disclaimer"></p>
     <p id="explanation"></p>
@@ -158,6 +231,43 @@ function bubble(container, text, who){
   div.scrollIntoView({block:"nearest"});
 }
 
+// Loading indicators. typing() puts animated dots in a chat while the model
+// works and returns a function that removes them; the photo analysis gets a
+// ring, a moving bar and a seconds counter.
+function typing(container, label){
+  const div = document.createElement("div");
+  div.className = "msg bot";
+  div.setAttribute("role", "status");
+  div.setAttribute("aria-label", label || "Working");
+  const dots = document.createElement("span");
+  dots.className = "typing";
+  if(label){
+    const text = document.createElement("span");
+    text.className = "label";
+    text.textContent = label;
+    dots.appendChild(text);
+  }
+  for(let i = 0; i < 3; i++) dots.appendChild(document.createElement("i"));
+  div.appendChild(dots);
+  $(container).appendChild(div);
+  div.scrollIntoView({block:"nearest"});
+  return () => div.remove();
+}
+
+let uploadTimer = null;
+function setUploadLoading(on){
+  clearInterval(uploadTimer);
+  uploadTimer = null;
+  $("upload-loading").hidden = !on;
+  $("upload-elapsed").textContent = "";
+  if(on){
+    const t0 = Date.now();
+    uploadTimer = setInterval(() => {
+      $("upload-elapsed").textContent = Math.round((Date.now() - t0) / 1000) + " s";
+    }, 1000);
+  }
+}
+
 async function post(url, form){
   const res = await fetch(url, {method:"POST", body:form});
   if(!res.ok) throw new Error((await res.json().catch(()=>({detail:res.statusText}))).detail);
@@ -184,6 +294,7 @@ function resetPage(){
   $("badge").style.background = "";
   for(const id of ["emergency-card", "vision-card", "interview-card", "result-card"]) $(id).hidden = true;
   $("answer").value = ""; $("question").value = "";
+  setUploadLoading(false);
   hideChecklist();
   setInterviewEnabled(true);
 }
@@ -277,6 +388,7 @@ $("checklist").addEventListener("submit", async e => {
   const mine = session, group = checklistGroup;
   setChecklistEnabled(false);
   $("checklist-status").textContent = "Sending…";
+  $("checklist-status").classList.add("is-loading");
   try{
     const form = new FormData();
     form.append("session", mine); form.append("group", group);
@@ -289,6 +401,8 @@ $("checklist").addEventListener("submit", async e => {
     if(mine !== session) return;
     $("checklist-status").textContent = "Error: " + err.message;
     setChecklistEnabled(true);
+  }finally{
+    $("checklist-status").classList.remove("is-loading");
   }
 });
 
@@ -326,7 +440,7 @@ $("analyse").onclick = async () => {
   resetPage();
   const mine = generation;
   $("analyse").disabled = true;
-  $("upload-status").textContent = "Segmenting teeth and checking for caries… (about a minute)";
+  setUploadLoading(true);
   try{
     const data = await post("/api/analyse", form);
     if(mine !== generation){  // new photos were picked while this ran
@@ -345,6 +459,7 @@ $("analyse").onclick = async () => {
     if(mine !== generation) return;  // a newer screening owns the page now
     $("upload-status").textContent = "Failed: " + err.message;
   }finally{
+    if(mine === generation) setUploadLoading(false);
     $("analyse").disabled = false;
   }
 };
@@ -399,12 +514,15 @@ $("send").onclick = async () => {
   bubble("chat", text, "me");
   $("answer").value = "";
   setInterviewEnabled(false);
+  const stop = typing("chat");
   try{
     const form = new FormData(); form.append("session", mine); form.append("message", text);
     const data = await post("/api/answer", form);
+    stop();
     if(mine !== session) return;  // page was reset while waiting
     await renderStep(data.step);
   }catch(err){
+    stop();
     if(mine !== session) return;
     bubble("chat", "Error: " + err.message, "bot");
     setInterviewEnabled(true);
@@ -420,10 +538,11 @@ $("finish").onclick = async () => {
 
 async function showResult(){
   const mine = session;
-  bubble("chat", "Working out your result…", "bot");
+  const stop = typing("chat", "Working out your result");
   try{
     const form = new FormData(); form.append("session", mine);
     const data = await post("/api/result", form);
+    stop();
     if(mine !== session) return;
     if(data.assessment.urgency === "EMERGENCY"){
       showEmergency(data.assessment, data.symptoms, data.disclaimer);
@@ -444,6 +563,7 @@ async function showResult(){
     $("result-card").hidden = false;
     $("result-card").scrollIntoView({behavior:"smooth", block:"start"});
   }catch(err){
+    stop();
     if(mine !== session) return;
     bubble("chat", "Error: " + err.message, "bot");
     setInterviewEnabled(true);  // let them retry; the interview itself isn't lost
@@ -470,16 +590,18 @@ $("ask").onclick = async () => {
   bubble("followups", text, "me");
   $("question").value = "";
   $("ask").disabled = true;
+  const stop = typing("followups");
   try{
     const form = new FormData(); form.append("session", mine); form.append("message", text);
     const data = await post("/api/ask", form);
+    stop();
     if(mine !== session) return;  // page was reset while waiting
     if(data.assessment && data.assessment.urgency === "EMERGENCY"){
       showEmergency(data.assessment, null, $("result-disclaimer").textContent);
       return;
     }
     bubble("followups", data.answer, "bot");
-  }catch(err){ if(mine === session) bubble("followups", "Error: " + err.message, "bot"); }
+  }catch(err){ stop(); if(mine === session) bubble("followups", "Error: " + err.message, "bot"); }
   finally{ $("ask").disabled = false; $("question").focus(); }
 };
 $("question").addEventListener("keydown", e => { if(e.key === "Enter") $("ask").click(); });
